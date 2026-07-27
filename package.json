@@ -1,6 +1,6 @@
 {
   "name": "internship-application-agent",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "description": "Local-first Chrome extension and agent server that analyzes and fills job application forms without submitting them.",

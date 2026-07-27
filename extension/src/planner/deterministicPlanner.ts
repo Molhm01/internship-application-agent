@@ -8,6 +8,7 @@ import {
   type DetectedField,
   type FieldMatch,
   type Profile,
+  type SavedDocument,
 } from '@internship-agent/shared';
 import { isLegalAttestation, matchField } from '../matcher/deterministicMatcher.js';
 
@@ -18,6 +19,7 @@ const ACTIONABLE = new Set<DeterministicFillAction['action']>([
   'choose_radio',
   'toggle_checkbox',
   'set_date',
+  'upload_file',
 ]);
 
 export function actionIdForField(value: string): string {
@@ -29,7 +31,11 @@ export function actionIdForField(value: string): string {
   return `action-${(hash >>> 0).toString(36)}`;
 }
 
-function actionFor(field: DetectedField, match: FieldMatch): DeterministicFillAction {
+function actionFor(
+  field: DetectedField,
+  match: FieldMatch,
+  selectedDocument?: SavedDocument,
+): DeterministicFillAction {
   const base = {
     id: actionIdForField(field.id),
     fieldId: field.id,
@@ -52,10 +58,30 @@ function actionFor(field: DetectedField, match: FieldMatch): DeterministicFillAc
     return { ...base, action: 'manual_review', reason: 'Scanned field is disabled.' };
   }
   if (field.fieldType === 'file') {
+    const isResumeField =
+      field.canonicalKey === 'resume' || /\b(resume|cv|curriculum vitae)\b/i.test(field.question);
+    if (selectedDocument?.type === 'resume' && isResumeField) {
+      return {
+        ...base,
+        action: 'upload_file',
+        source: 'document',
+        sourceReference: `documents.${selectedDocument.id}`,
+        confidence: 1,
+        requiresReview: true,
+        approved: false,
+        documentId: selectedDocument.id,
+        documentName: selectedDocument.name,
+        reason: `Attach ${selectedDocument.name} only after explicit approval.`,
+        warnings: [
+          ...base.warnings,
+          'Document uploads always require explicit approval and never submit the application.',
+        ],
+      };
+    }
     return {
       ...base,
       action: 'unsupported',
-      reason: 'Document upload is intentionally unavailable in Milestone 3.',
+      reason: 'No approved document is selected for this upload field.',
     };
   }
   if (['combobox', 'contenteditable', 'unknown'].includes(field.fieldType)) {
@@ -196,8 +222,11 @@ export function buildDeterministicPlan(
   scan: ApplicationScanResult,
   profile: Profile,
   answers: readonly ApprovedAnswer[],
+  selectedDocument?: SavedDocument,
 ): DeterministicFillPlan {
-  const actions = scan.fields.map((field) => actionFor(field, matchField(field, profile, answers)));
+  const actions = scan.fields.map((field) =>
+    actionFor(field, matchField(field, profile, answers), selectedDocument),
+  );
   const now = new Date().toISOString();
   return deterministicFillPlanSchema.parse({
     id: `plan-${crypto.randomUUID()}`,
@@ -229,9 +258,11 @@ export function setActionApproval(
       if (action.id !== actionId) return action;
       const canApprove =
         ACTIONABLE.has(action.action) &&
-        (action.action === 'fill_generated_text'
-          ? action.answerValidationPassed === true
-          : action.confidence >= 0.8);
+        (action.action === 'upload_file'
+          ? action.requiresReview
+          : action.action === 'fill_generated_text'
+            ? action.answerValidationPassed === true
+            : action.confidence >= 0.8);
       return { ...action, approved: approved && canApprove };
     }),
   );

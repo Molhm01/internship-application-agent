@@ -309,6 +309,86 @@ test('scan builds, reviews, fills, verifies, and reports deterministic approved 
   await application.close();
 });
 
+test('an explicitly approved resume is attached and its filename is verified', async () => {
+  const created = (await api('/documents', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'E2E Approved Resume',
+      type: 'resume',
+      fileName: 'approved-resume.pdf',
+      mimeType: 'application/pdf',
+      contentBase64: Buffer.from('%PDF-1.4\n% local e2e resume\n%%EOF').toString('base64'),
+      tags: [],
+      targetRoles: [],
+      targetIndustries: [],
+      isDefault: true,
+    }),
+  })) as { id: string; fileName: string };
+  const application = await context.newPage();
+  await application.goto(`${FIXTURES}/file-upload.html`);
+  await application.evaluate(() => {
+    (window as unknown as { submitted: boolean }).submitted = false;
+    document.querySelector('form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      (window as unknown as { submitted: boolean }).submitted = true;
+    });
+  });
+  const extension = await extensionPage();
+  await extension.evaluate(async (documentId) => {
+    const current = (await chrome.storage.local.get('settings')).settings as Record<
+      string,
+      unknown
+    >;
+    await chrome.storage.local.set({
+      settings: { ...current, selectedDocumentId: documentId },
+    });
+  }, created.id);
+
+  const scan = await message<{
+    type: string;
+    result: { id: string };
+  }>(extension, { type: 'SCAN_APPLICATION', targetUrl: application.url() });
+  const built = await message<{
+    plan: { actions: Array<{ id: string; question: string; action: string; approved: boolean }> };
+  }>(extension, { type: 'BUILD_DETERMINISTIC_PLAN', scanId: scan.result.id });
+  const upload = built.plan.actions.find((action) => action.action === 'upload_file');
+  expect(upload?.question).toContain('Resume');
+  expect(upload?.approved).toBe(false);
+
+  await message(extension, {
+    type: 'APPROVE_FILL_ACTION',
+    actionId: upload!.id,
+    approved: true,
+  });
+  const result = await message<{
+    type: string;
+    report: {
+      submitted: boolean;
+      verifiedActions: number;
+      results: Array<{ actionId: string; status: string; uploadedFileName?: string }>;
+    };
+  }>(extension, {
+    type: 'EXECUTE_APPROVED_ACTIONS',
+    targetUrl: application.url(),
+  });
+  expect(result.type).toBe('FILL_COMPLETE');
+  expect(result.report.submitted).toBe(false);
+  expect(result.report.results.find((entry) => entry.actionId === upload!.id)).toMatchObject({
+    status: 'verified',
+    uploadedFileName: created.fileName,
+  });
+  expect(
+    await application
+      .locator('#resume')
+      .evaluate((input: HTMLInputElement) => input.files?.[0]?.name),
+  ).toBe(created.fileName);
+  expect(
+    await application.evaluate(() => (window as unknown as { submitted: boolean }).submitted),
+  ).toBe(false);
+  await extension.close();
+  await application.close();
+});
+
 for (const fixture of [
   { name: 'greenhouse.html', selector: '#first_name', expected: 'Jordan' },
   { name: 'lever.html', selector: 'input[name="email"]', expected: 'jordan@example.com' },

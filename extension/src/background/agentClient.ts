@@ -20,6 +20,7 @@ import {
   generateBatchResponseSchema,
   generationCancelResponseSchema,
   documentExtractionSchema,
+  documentContentResponseSchema,
   type AgentError,
   type ApprovedAnswer,
   type ApprovedAnswerInput,
@@ -31,6 +32,7 @@ import {
   type GenerateAnswerRequest,
   type AnswerGenerationRecord,
   type DocumentExtraction,
+  type DocumentContentResponse,
   type ModelsResponse,
   type AiGenerationTestResponse,
 } from '@internship-agent/shared';
@@ -374,6 +376,17 @@ export function extractDocument(documentId: string): Promise<AgentResult<Documen
     schema: documentExtractionSchema,
     body: {},
     timeoutMs: 60_000,
+  });
+}
+
+export function getDocumentContent(
+  documentId: string,
+): Promise<AgentResult<DocumentContentResponse>> {
+  return request({
+    method: 'GET',
+    path: `/documents/${encodeURIComponent(documentId)}/content`,
+    schema: documentContentResponseSchema,
+    timeoutMs: 30_000,
   });
 }
 

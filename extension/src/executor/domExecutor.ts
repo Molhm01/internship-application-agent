@@ -5,6 +5,7 @@ import {
   type DeterministicFillAction,
   type DetectedField,
   type FillExecutionResult,
+  type DocumentContentResponse,
 } from '@internship-agent/shared';
 import {
   allDocumentRoots,
@@ -163,6 +164,36 @@ function applyValue(
   dispatchValueEvents(element);
 }
 
+function decodeBase64(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const buffer = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buffer);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return buffer;
+}
+
+function attachApprovedFile(
+  element: HTMLElement,
+  action: DeterministicFillAction,
+  contents: readonly DocumentContentResponse[],
+): string {
+  if (!(element instanceof HTMLInputElement) || element.type !== 'file') {
+    throw new Error('UNSUPPORTED_CONTROL');
+  }
+  const content = contents.find((candidate) => candidate.id === action.documentId);
+  if (!content) throw new Error('DOCUMENT_MISSING');
+  const file = new File([decodeBase64(content.contentBase64)], content.fileName, {
+    type: content.mimeType,
+  });
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  element.files = transfer.files;
+  dispatchValueEvents(element);
+  return file.name;
+}
+
 const waitForFramework = (): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, 40));
 
@@ -171,6 +202,7 @@ export async function executeDomAction(
   field: DetectedField,
   action: DeterministicFillAction,
   signal: AbortSignal,
+  documentContents: readonly DocumentContentResponse[] = [],
 ): Promise<FillExecutionResult> {
   const started = performance.now();
   const generated = action.action === 'fill_generated_text';
@@ -272,7 +304,11 @@ export async function executeDomAction(
           attempts,
         );
       }
-      applyValue(document, currentElement, action);
+      const uploadedFileName =
+        action.action === 'upload_file'
+          ? attachApprovedFile(currentElement, action, documentContents)
+          : undefined;
+      if (action.action !== 'upload_file') applyValue(document, currentElement, action);
       await waitForFramework();
       const verification = verifyDomAction(document, field, action);
       if (verification.verified) {
@@ -282,6 +318,7 @@ export async function executeDomAction(
           status: 'verified',
           expectedValue: action.proposedValue,
           actualValue: verification.actualValue,
+          ...(uploadedFileName ? { uploadedFileName } : {}),
           attempts,
           durationMs: Math.round(performance.now() - started),
         });
@@ -300,9 +337,13 @@ export async function executeDomAction(
       const baseCode =
         detail === 'OPTION_NOT_FOUND'
           ? 'OPTION_NOT_FOUND'
-          : detail === 'UNSUPPORTED_CONTROL'
-            ? 'UNSUPPORTED_CONTROL'
-            : 'VALUE_NOT_VERIFIED';
+          : detail === 'DOCUMENT_MISSING'
+            ? 'DOCUMENT_MISSING'
+            : detail === 'UNSUPPORTED_CONTROL'
+              ? 'UNSUPPORTED_CONTROL'
+              : action.action === 'upload_file'
+                ? 'UPLOAD_FAILED'
+                : 'VALUE_NOT_VERIFIED';
       const code =
         generated && baseCode === 'UNSUPPORTED_CONTROL'
           ? 'UNSUPPORTED_GENERATED_FIELD'

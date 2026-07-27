@@ -3,6 +3,7 @@ import { agentErrorSchema } from './error.js';
 import { applicationScanResultSchema, scanProgressSchema } from './scan.js';
 import { deterministicFillPlanSchema, fillProgressSchema, fillRunReportSchema } from './fill.js';
 import { fieldValueSchema } from './fields.js';
+import { documentContentResponseSchema } from './documents.js';
 import {
   answerGenerationRecordSchema,
   answerGenerationStateSchema,
@@ -106,6 +107,8 @@ export const executeFillPlanMessageSchema = z.object({
   runId: z.string().min(1).max(128),
   scan: applicationScanResultSchema,
   plan: deterministicFillPlanSchema,
+  /** Only files referenced by approved upload actions are included. */
+  documentContents: z.array(documentContentResponseSchema).max(10).default([]),
 });
 export const fillProgressMessageSchema = z.object({
   type: z.literal('FILL_PROGRESS'),

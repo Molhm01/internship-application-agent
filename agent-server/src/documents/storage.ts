@@ -1,4 +1,4 @@
-import { mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
   LIMITS,
@@ -40,6 +40,7 @@ export interface DocumentStorage {
   /** Returns false when the row existed but the file was already gone. */
   remove(fileName: string): boolean;
   exists(fileName: string): boolean;
+  read(fileName: string): Buffer;
 }
 
 /** Magic-byte prefixes for the formats where a cheap check is meaningful. */
@@ -131,6 +132,10 @@ export function createDocumentStorage(root: string): DocumentStorage {
       } catch {
         return false;
       }
+    },
+
+    read(fileName): Buffer {
+      return readFileSync(resolveInsideRoot(root, fileName));
     },
   };
 }

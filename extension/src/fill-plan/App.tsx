@@ -24,6 +24,7 @@ function openScan(): void {
 }
 
 function shownValue(action: DeterministicFillAction): string {
+  if (action.action === 'upload_file') return action.documentName ?? 'Selected document';
   if (action.proposedValue === undefined) return 'No proposed value';
   if (Array.isArray(action.proposedValue)) return action.proposedValue.join(', ');
   return String(action.proposedValue);
@@ -113,25 +114,36 @@ function ActionCard({
           <code>{action.matchedOption.value}</code>
         </p>
       ) : null}
-      <label className="override">
-        Proposed value / override
-        <input
-          value={override}
-          disabled={busy || action.action === 'unsupported'}
-          onChange={(event) => setOverride(event.target.value)}
-        />
-      </label>
+      {action.action === 'upload_file' ? (
+        <p>
+          Proposed document: <strong>{action.documentName}</strong>. The file is fetched locally
+          only after you approve this action.
+        </p>
+      ) : (
+        <label className="override">
+          Proposed value / override
+          <input
+            value={override}
+            disabled={busy || action.action === 'unsupported'}
+            onChange={(event) => setOverride(event.target.value)}
+          />
+        </label>
+      )}
       <div className="card-actions">
-        <button type="button" disabled={busy} onClick={() => onOverride(override)}>
-          Save override
-        </button>
-        <button
-          type="button"
-          disabled={busy || action.source !== 'user_override'}
-          onClick={onReset}
-        >
-          Reset override
-        </button>
+        {action.action !== 'upload_file' ? (
+          <>
+            <button type="button" disabled={busy} onClick={() => onOverride(override)}>
+              Save override
+            </button>
+            <button
+              type="button"
+              disabled={busy || action.source !== 'user_override'}
+              onClick={onReset}
+            >
+              Reset override
+            </button>
+          </>
+        ) : null}
         <button type="button" disabled={busy || action.action === 'skip'} onClick={onSkip}>
           Skip
         </button>

@@ -96,6 +96,13 @@ function actualFor(
   field: DetectedField,
   action: DeterministicFillAction,
 ): string | string[] | boolean | undefined {
+  if (
+    action.action === 'upload_file' &&
+    element instanceof HTMLInputElement &&
+    element.type === 'file'
+  ) {
+    return element.files?.[0]?.name;
+  }
   if (element instanceof HTMLSelectElement) return selectedOption(element)?.value;
   if (field.fieldType === 'radio' && element instanceof HTMLInputElement) {
     const name = element.name;
@@ -176,17 +183,22 @@ export function verifyDomAction(
       element instanceof HTMLTextAreaElement ||
       element instanceof HTMLSelectElement
     ) || element.validity.valid;
-  const verified = sameValue(action.proposedValue, actual) && valid;
+  const verified =
+    action.action === 'upload_file'
+      ? typeof actual === 'string' && actual.length > 0 && valid
+      : sameValue(action.proposedValue, actual) && valid;
   const method =
-    field.fieldType === 'select'
-      ? 'selected_option'
-      : field.fieldType === 'radio' ||
-          field.fieldType === 'checkbox' ||
-          field.fieldType === 'multi_select'
-        ? 'checked_state'
-        : valid
-          ? 'input_value'
-          : 'validation_state';
+    action.action === 'upload_file'
+      ? 'uploaded_filename'
+      : field.fieldType === 'select'
+        ? 'selected_option'
+        : field.fieldType === 'radio' ||
+            field.fieldType === 'checkbox' ||
+            field.fieldType === 'multi_select'
+          ? 'checked_state'
+          : valid
+            ? 'input_value'
+            : 'validation_state';
   return fillVerificationResultSchema.parse({
     fieldId: field.id,
     verified,

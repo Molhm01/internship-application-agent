@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   LIMITS,
   documentDeleteResponseSchema,
+  documentContentResponseSchema,
   documentListResponseSchema,
   documentUpdateSchema,
   documentUploadSchema,
@@ -25,6 +26,26 @@ export async function registerDocumentRoutes(
       defaultResumeId: ctx.documents.defaultResumeId(),
     }),
   );
+
+  app.get<{ Params: { id: string } }>('/documents/:id/content', (request, reply) => {
+    const document = ctx.documents.find(request.params.id);
+    if (!document || !ctx.documentStorage.exists(document.fileName)) {
+      return fail(reply, {
+        code: 'DOCUMENT_MISSING',
+        message: `No readable document with id ${request.params.id} is registered.`,
+        recoverable: true,
+        suggestedAction: 'Refresh the document library and choose an available document.',
+      });
+    }
+    const content = ctx.documentStorage.read(document.fileName);
+    return sendValidated(reply, documentContentResponseSchema, {
+      id: document.id,
+      fileName: document.fileName,
+      mimeType: document.mimeType,
+      sizeBytes: content.byteLength,
+      contentBase64: content.toString('base64'),
+    });
+  });
 
   app.route({
     method: 'POST',

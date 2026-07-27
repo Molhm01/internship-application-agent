@@ -1,6 +1,7 @@
 import type { AtsId } from '../constants/ats.js';
 import type { JobContext } from '../schemas/common.js';
 import type { DetectedField } from '../schemas/fields.js';
+import type { DocumentContentResponse } from '../schemas/documents.js';
 import type {
   DeterministicFillAction,
   FillExecutionResult,
@@ -32,6 +33,7 @@ export interface AdapterDetection {
 export interface ExecutionContext {
   document: unknown;
   signal: unknown;
+  documentContents?: readonly DocumentContentResponse[];
 }
 
 /** Scanner and deterministic executor contract. */

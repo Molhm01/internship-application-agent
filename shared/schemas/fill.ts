@@ -7,6 +7,7 @@ import { fieldTypeSchema, fieldValueSchema } from './fields.js';
 export const deterministicAnswerSourceSchema = z.enum([
   'profile',
   'approved_answer',
+  'document',
   'user_override',
   'ai_generated',
   'none',
@@ -39,6 +40,7 @@ export const deterministicFillActionKindSchema = z.enum([
   'choose_radio',
   'toggle_checkbox',
   'set_date',
+  'upload_file',
   'skip',
   'manual_review',
   'unsupported',
@@ -74,6 +76,8 @@ export const deterministicFillActionSchema = z
     wordCount: z.number().int().nonnegative().optional(),
     characterCount: z.number().int().nonnegative().optional(),
     answerValidationPassed: z.boolean().optional(),
+    documentId: idSchema.optional(),
+    documentName: z.string().min(1).max(255).optional(),
   })
   .superRefine((action, ctx) => {
     const actionable: readonly DeterministicFillActionKind[] = [
@@ -83,12 +87,24 @@ export const deterministicFillActionSchema = z
       'choose_radio',
       'toggle_checkbox',
       'set_date',
+      'upload_file',
     ];
-    if (actionable.includes(action.action) && action.proposedValue === undefined) {
+    if (
+      actionable.includes(action.action) &&
+      action.action !== 'upload_file' &&
+      action.proposedValue === undefined
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['proposedValue'],
         message: `action "${action.action}" requires a proposed value`,
+      });
+    }
+    if (action.action === 'upload_file' && (!action.documentId || !action.documentName)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['documentId'],
+        message: 'upload_file requires an approved document reference',
       });
     }
     if (
@@ -191,6 +207,7 @@ export const fillVerificationResultSchema = z.object({
     'selected_option',
     'checked_state',
     'validation_state',
+    'uploaded_filename',
     'not_verifiable',
   ]),
   message: z.string().max(2000).optional(),
@@ -214,6 +231,7 @@ export const fillExecutionResultSchema = z.object({
   status: fillExecutionStatusSchema,
   expectedValue: fieldValueSchema.optional(),
   actualValue: fieldValueSchema.optional(),
+  uploadedFileName: z.string().min(1).max(255).optional(),
   attempts: z.number().int().min(0).max(2),
   durationMs: z.number().nonnegative(),
   error: agentErrorSchema.optional(),

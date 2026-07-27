@@ -135,3 +135,21 @@ export const documentDeleteResponseSchema = z.object({
   /** False when the row existed but the file was already gone from disk. */
   fileRemoved: z.boolean(),
 });
+
+/**
+ * Authenticated, short-lived payload used only when an explicitly approved
+ * upload action is about to run. It is never persisted in extension storage.
+ */
+export const documentContentResponseSchema = z.object({
+  id: idSchema,
+  fileName: z.string().min(1).max(255),
+  mimeType: documentMimeTypeSchema,
+  sizeBytes: z.number().int().positive().max(LIMITS.maxDocumentBytes),
+  contentBase64: z
+    .string()
+    .min(1)
+    .max(Math.ceil((LIMITS.maxDocumentBytes * 4) / 3) + 1024)
+    .regex(BASE64_PATTERN),
+});
+
+export type DocumentContentResponse = z.infer<typeof documentContentResponseSchema>;

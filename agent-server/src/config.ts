@@ -64,5 +64,5 @@ export const config: AgentServerConfig = {
   allowLocalOrigins: envString('AGENT_ALLOW_LOCAL_ORIGINS', 'true') === 'true',
 };
 
-export const SERVER_VERSION = '0.1.0';
-export const CURRENT_MILESTONE = 'Milestone 4 — grounded local AI answer generation';
+export const SERVER_VERSION = '0.6.0';
+export const CURRENT_MILESTONE = 'Milestone 5 — approved document attachment';

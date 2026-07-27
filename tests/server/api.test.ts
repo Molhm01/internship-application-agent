@@ -96,7 +96,7 @@ describe('GET /version', () => {
 
     const version = versionResponseSchema.parse(response.json<{ data: unknown }>().data);
     expect(version.name).toBe('internship-application-agent');
-    expect(version.milestone).toContain('Milestone 4');
+    expect(version.milestone).toContain('Milestone 5');
   });
 });
 

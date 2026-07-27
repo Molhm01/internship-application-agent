@@ -4,6 +4,7 @@ import {
   deterministicFillPlanSchema,
   profileSchema,
   type ApplicationScanResult,
+  type SavedDocument,
 } from '@internship-agent/shared';
 import {
   approveSafeActions,
@@ -96,6 +97,21 @@ const profile = profileSchema.parse({
   updatedAt: NOW,
   personal: { legalFirstName: 'Jordan', address: {} },
 });
+const selectedResume: SavedDocument = {
+  id: 'document-1',
+  name: 'Internship Resume',
+  type: 'resume',
+  filePath: 'C:\\private\\document-1-resume.pdf',
+  fileName: 'document-1-resume.pdf',
+  mimeType: 'application/pdf',
+  sizeBytes: 100,
+  tags: [],
+  targetRoles: [],
+  targetIndustries: [],
+  isDefault: true,
+  createdAt: NOW,
+  updatedAt: NOW,
+};
 
 describe('deterministic fill planner', () => {
   it('validates plans and separates ready, review, and unsupported actions', () => {
@@ -112,6 +128,25 @@ describe('deterministic fill planner', () => {
     expect(approved.actions.find((action) => action.fieldId === 'first')?.approved).toBe(true);
     expect(approved.actions.find((action) => action.fieldId === 'legal')?.approved).toBe(false);
     expect(approved.actions.find((action) => action.fieldId === 'file')?.approved).toBe(false);
+  });
+
+  it('proposes a selected resume but requires explicit upload approval', () => {
+    const plan = buildDeterministicPlan(scan, profile, [], selectedResume);
+    const upload = plan.actions.find((action) => action.fieldId === 'file');
+    expect(upload).toMatchObject({
+      action: 'upload_file',
+      source: 'document',
+      documentId: 'document-1',
+      documentName: 'Internship Resume',
+      requiresReview: true,
+      approved: false,
+    });
+    expect(
+      approveSafeActions(plan).actions.find((action) => action.fieldId === 'file')?.approved,
+    ).toBe(false);
+    expect(
+      setActionApproval(plan, upload!.id, true).actions.find((action) => action.id === upload!.id),
+    ).toMatchObject({ approved: true });
   });
 
   it('persists approval mutations and resets user overrides', () => {

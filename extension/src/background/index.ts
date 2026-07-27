@@ -17,6 +17,7 @@ import {
   type FillRunReport,
   type AgentError,
   type DeterministicFillPlan,
+  type DocumentContentResponse,
 } from '@internship-agent/shared';
 import type { ExtensionMessage } from '../messaging/messages.js';
 import { trace, traceFailure } from '../utils/trace.js';
@@ -36,6 +37,7 @@ import {
   generateAnswerBatch,
   cancelAnswerGeneration,
   extractDocument,
+  getDocumentContent,
   listOllamaModels,
   testAiGeneration,
   workerFailure,
@@ -174,10 +176,28 @@ async function buildPlan(scanId?: string): Promise<unknown> {
   if (!scan || (scanId && scan.id !== scanId)) {
     return { error: fillFailure('INVALID_FILL_PLAN', 'No matching completed scan exists.').error };
   }
-  const [profileResult, answersResult] = await Promise.all([getProfile(), listAnswers()]);
+  const [profileResult, answersResult, documentsResult, settings] = await Promise.all([
+    getProfile(),
+    listAnswers(),
+    listDocuments(),
+    loadSettings(),
+  ]);
   if (profileResult.error) return { error: profileResult.error };
   if (answersResult.error) return { error: answersResult.error };
-  const plan = buildDeterministicPlan(scan, profileResult.data.profile, answersResult.data.answers);
+  if (documentsResult.error) return { error: documentsResult.error };
+  const selectedDocument =
+    documentsResult.data.documents.find(
+      (document) => document.id === settings.selectedDocumentId,
+    ) ??
+    documentsResult.data.documents.find(
+      (document) => document.id === documentsResult.data.defaultResumeId,
+    );
+  const plan = buildDeterministicPlan(
+    scan,
+    profileResult.data.profile,
+    answersResult.data.answers,
+    selectedDocument,
+  );
   await persistPlan(plan);
   await clearAnswerGenerationStore();
   return { plan };
@@ -729,6 +749,17 @@ async function executeApproved(targetUrl?: string): Promise<unknown> {
   if (!plan.actions.some((action) => action.approved)) {
     return fillFailure('ACTION_NOT_APPROVED', 'No fill action is approved.');
   }
+  const documentContents: DocumentContentResponse[] = [];
+  for (const action of plan.actions.filter(
+    (candidate) => candidate.action === 'upload_file' && candidate.approved,
+  )) {
+    if (!action.documentId) {
+      return fillFailure('DOCUMENT_MISSING', 'An approved upload has no document reference.');
+    }
+    const content = await getDocumentContent(action.documentId);
+    if (content.error) return { error: content.error };
+    documentContents.push(content.data);
+  }
   let tab: chrome.tabs.Tab;
   try {
     tab = await activeApplicationTab(targetUrl ?? plan.url);
@@ -761,6 +792,7 @@ async function executeApproved(targetUrl?: string): Promise<unknown> {
         runId,
         scan,
         plan,
+        documentContents,
       }),
       new Promise((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error('FILL_TIMEOUT')), FILL_TIMEOUT_MS);

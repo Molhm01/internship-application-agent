@@ -111,7 +111,13 @@ class BrowserAdapter implements AtsAdapter {
     if (!(context.document instanceof Document) || !(context.signal instanceof AbortSignal)) {
       throw new Error('Browser adapter received a non-browser execution context.');
     }
-    return executeDomAction(context.document, field, action, context.signal);
+    return executeDomAction(
+      context.document,
+      field,
+      action,
+      context.signal,
+      context.documentContents ?? [],
+    );
   }
 
   verifyAction(

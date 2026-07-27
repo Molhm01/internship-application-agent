@@ -144,7 +144,11 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
           result = passiveResult(action, 'skipped');
         } else {
           result = await adapter.executeAction(
-            { document, signal: controller.signal },
+            {
+              document,
+              signal: controller.signal,
+              documentContents: message.documentContents,
+            },
             field,
             action,
           );

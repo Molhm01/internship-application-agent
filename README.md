@@ -11,7 +11,7 @@ The extension works with the website closed; optional integration comes much lat
 
 ---
 
-## Current status: Milestone 4 — grounded local AI answer generation
+## Current status: Milestone 5 — approved document attachment
 
 What works right now, verified end to end:
 

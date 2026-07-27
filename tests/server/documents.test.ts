@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   documentListResponseSchema,
+  documentContentResponseSchema,
   errorResponseSchema,
   savedDocumentSchema,
 } from '@internship-agent/shared';
@@ -73,6 +74,29 @@ describe('document registration', () => {
       payload: documentUploadBody(),
     });
     expect(response.statusCode).toBe(401);
+  });
+
+  it('returns file bytes only through the authenticated content route', async () => {
+    server = await createTestServer();
+    const created = savedDocumentSchema.parse(
+      (await post(documentUploadBody())).json<{ data: unknown }>().data,
+    );
+    const unauthorized = await server.app.inject({
+      method: 'GET',
+      url: `/documents/${created.id}/content`,
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const response = await server.app.inject({
+      method: 'GET',
+      url: `/documents/${created.id}/content`,
+      headers: authHeaders,
+    });
+    expect(response.statusCode).toBe(200);
+    const payload = documentContentResponseSchema.parse(response.json<{ data: unknown }>().data);
+    expect(payload.id).toBe(created.id);
+    expect(payload.fileName).toBe(created.fileName);
+    expect(payload.contentBase64).toBe(PDF_BASE64);
   });
 
   it('rejects a mime type outside the allowlist', async () => {
