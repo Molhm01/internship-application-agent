@@ -64,5 +64,5 @@ export const config: AgentServerConfig = {
   allowLocalOrigins: envString('AGENT_ALLOW_LOCAL_ORIGINS', 'true') === 'true',
 };
 
-export const SERVER_VERSION = '0.6.0';
-export const CURRENT_MILESTONE = 'Milestone 5 — approved document attachment';
+export const SERVER_VERSION = '1.0.0';
+export const CURRENT_MILESTONE = 'Milestone 6 — production hardening';

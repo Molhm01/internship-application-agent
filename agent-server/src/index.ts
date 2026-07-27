@@ -107,6 +107,8 @@ async function main(): Promise<void> {
       `  Token:  ${token}`,
       `  Paste that token into the extension options page (header: ${AUTH_HEADER}).`,
       `  It is also stored at ${config.tokenPath}`,
+      `  Database:  ${config.databasePath}`,
+      `  Documents: ${config.documentsDir}`,
       '',
     ].join('\n'),
   );

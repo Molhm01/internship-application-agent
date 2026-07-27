@@ -13,6 +13,7 @@ import { DocumentsSection } from './sections/DocumentsSection.js';
 import { AnswersSection } from './sections/AnswersSection.js';
 import { ConnectionSection } from './sections/ConnectionSection.js';
 import { AiSettingsSection } from './sections/AiSettingsSection.js';
+import { DiagnosticsSection } from './sections/DiagnosticsSection.js';
 
 /** Tabs whose content is part of the profile record and share one save button. */
 const PROFILE_TABS = [
@@ -39,6 +40,7 @@ const TABS = [
   { id: 'answers', label: 'Approved answers' },
   { id: 'ai', label: 'AI answers' },
   { id: 'connection', label: 'Connection' },
+  { id: 'diagnostics', label: 'Diagnostics' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -131,6 +133,7 @@ export function App(): JSX.Element {
         {tab === 'connection' ? (
           <ConnectionSection onConnectionChanged={controller.reload} />
         ) : null}
+        {tab === 'diagnostics' ? <DiagnosticsSection /> : null}
       </main>
 
       {isProfileTab(tab) && !loading && !loadError ? (

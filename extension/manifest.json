@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Internship Application Agent",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "description": "Analyzes job application forms and fills them from your saved profile using a local model. Never submits an application.",
   "minimum_chrome_version": "116",
   "action": {

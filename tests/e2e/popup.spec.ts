@@ -110,7 +110,9 @@ test('settings page exposes every profile area and loads without error', async (
     'Sensitive answers',
     'Documents',
     'Approved answers',
+    'AI answers',
     'Connection',
+    'Diagnostics',
   ]) {
     await expect(page.getByRole('button', { name: tab })).toBeVisible();
   }
@@ -123,7 +125,47 @@ test('settings page exposes every profile area and loads without error', async (
     /^(none|approved_auto_fill|review_required|decline_to_answer|leave_blank)$/,
   );
 
+  await page.getByRole('button', { name: 'Diagnostics' }).click();
+  const diagnostics = page.getByRole('region', { name: 'Diagnostics' });
+  await expect(diagnostics.getByRole('heading', { name: 'Diagnostics' })).toBeVisible();
+  await expect(diagnostics.getByText('Extension version')).toBeVisible();
+  await expect(diagnostics.getByText('Database path')).toBeVisible();
+  await expect(
+    diagnostics.getByText('No authentication token or answer text is shown here.'),
+  ).toBeVisible();
+  await expect(diagnostics.locator('input, textarea')).toHaveCount(0);
+
   // Nothing in this build may offer to fill or submit an application.
   await expect(page.getByRole('button', { name: /Fill|Analyze|Submit/i })).toHaveCount(0);
   await page.close();
+});
+
+test('connection settings survive a Chromium profile restart', async () => {
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/options.html`);
+  await page.getByRole('button', { name: 'Connection' }).click();
+  await page.getByLabel('Server URL').fill('http://127.0.0.1:4318');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Settings saved.')).toBeVisible();
+  await page.close();
+
+  await context.close();
+  context = await chromium.launchPersistentContext(userDataDir, {
+    channel: 'chromium',
+    headless: true,
+    args: [
+      `--disable-extensions-except=${EXTENSION_PATH}`,
+      `--load-extension=${EXTENSION_PATH}`,
+      '--no-first-run',
+    ],
+  });
+
+  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+  expect(new URL(worker.url()).host).toBe(extensionId);
+
+  const reopened = await context.newPage();
+  await reopened.goto(`chrome-extension://${extensionId}/options.html`);
+  await reopened.getByRole('button', { name: 'Connection' }).click();
+  await expect(reopened.getByLabel('Server URL')).toHaveValue('http://127.0.0.1:4318');
+  await reopened.close();
 });

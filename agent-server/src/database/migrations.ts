@@ -149,6 +149,79 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE approved_answers ADD COLUMN created_at TEXT;
     `,
   },
+  {
+    version: 4,
+    name: 'production_recovery_and_persistence_catalog',
+    sql: `
+      CREATE TABLE IF NOT EXISTS settings (
+        key        TEXT PRIMARY KEY,
+        data       TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS education (
+        id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS experience (
+        id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS activities (
+        id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS volunteering (
+        id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS eligibility (
+        profile_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS scans (
+        id TEXT PRIMARY KEY, url TEXT NOT NULL, ats TEXT NOT NULL, data TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS detected_fields (
+        id TEXT PRIMARY KEY, scan_id TEXT NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+        data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_detected_fields_scan ON detected_fields(scan_id);
+
+      CREATE TABLE IF NOT EXISTS fill_plans (
+        id TEXT PRIMARY KEY, scan_id TEXT NOT NULL, data TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS fill_actions (
+        id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES fill_plans(id) ON DELETE CASCADE,
+        field_id TEXT NOT NULL, data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_fill_actions_plan ON fill_actions(plan_id);
+
+      CREATE TABLE IF NOT EXISTS evidence_items (
+        id TEXT PRIMARY KEY, generation_id TEXT, source TEXT NOT NULL,
+        data TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS fill_runs (
+        id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, status TEXT NOT NULL,
+        started_at TEXT NOT NULL, completed_at TEXT, submitted INTEGER NOT NULL DEFAULT 0
+          CHECK (submitted = 0)
+      );
+      CREATE TABLE IF NOT EXISTS fill_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL REFERENCES fill_runs(id) ON DELETE CASCADE,
+        action_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_fill_results_run ON fill_results(run_id);
+
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        occurred_at TEXT NOT NULL, event_type TEXT NOT NULL,
+        entity_id TEXT, safe_context TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(occurred_at DESC);
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(

@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../../agent-server/src/database/db.js';
 import { LATEST_SCHEMA_VERSION } from '../../agent-server/src/database/migrations.js';
@@ -28,14 +31,32 @@ describe('database initialization', () => {
   });
 
   it('is idempotent across reopens of the same file', () => {
-    const first = openDatabase(':memory:', silentLogger);
-    const applied = first.handle
-      .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
-      .get() as {
-      count: number;
-    };
-    expect(applied.count).toBe(LATEST_SCHEMA_VERSION);
-    first.close();
+    const directory = mkdtempSync(join(tmpdir(), 'internship-agent-db-reopen-'));
+    const databasePath = join(directory, 'agent.db');
+
+    try {
+      const first = openDatabase(databasePath, silentLogger);
+      first.handle
+        .prepare('INSERT INTO profile (id, data, updated_at) VALUES (?, ?, ?)')
+        .run('primary', '{"persisted":true}', new Date().toISOString());
+      first.close();
+
+      const reopened = openDatabase(databasePath, silentLogger);
+      const applied = reopened.handle
+        .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
+        .get() as {
+        count: number;
+      };
+      const profile = reopened.handle
+        .prepare('SELECT data FROM profile WHERE id = ?')
+        .get('primary') as { data: string };
+
+      expect(applied.count).toBe(LATEST_SCHEMA_VERSION);
+      expect(JSON.parse(profile.data)).toEqual({ persisted: true });
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('reports whether a profile exists', () => {

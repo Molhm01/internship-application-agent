@@ -20,17 +20,17 @@ closed.
 
 Work on exactly one milestone at a time and do not build ahead.
 
-| #   | Scope                                  | Status      |
-| --- | -------------------------------------- | ----------- |
-| 0   | Architecture and scaffold              | Complete    |
-| 1   | Profile and document management        | Complete    |
-| 2   | Form analysis (scanner, review screen) | Not started |
-| 3   | Deterministic basic autofill           | Not started |
-| 4   | Ollama planning                        | Not started |
-| 5   | Resume upload                          | Not started |
-| 6   | Generated written answers              | Not started |
-| 7   | ATS adapters (Greenhouse → Lever → …)  | Not started |
-| 8   | Optional Internship-AI integration     | Not started |
+| #   | Scope                                              | Status       |
+| --- | -------------------------------------------------- | ------------ |
+| 0   | Architecture and scaffold                          | Complete     |
+| 1   | Profile, approved answers, and document management | Complete     |
+| 2   | Form analysis and scan review                      | Complete     |
+| 3   | Deterministic reviewed autofill                    | Complete     |
+| 4   | Grounded Ollama answer generation                  | Complete     |
+| 5   | Explicitly approved resume upload                  | Complete     |
+| 6   | Production hardening, diagnostics, and recovery    | Complete     |
+| 7   | Generic, Greenhouse, Lever, and Workday adapters   | Complete     |
+| 8   | Optional external website integration              | Out of scope |
 
 Endpoints belonging to a future milestone are registered in `agent-server/src/api/planned.ts` and
 return HTTP 501 naming that milestone. When you implement one, delete its entry from that list —

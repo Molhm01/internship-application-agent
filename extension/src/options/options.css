@@ -237,6 +237,28 @@ button.danger:hover:not(:disabled) {
   background: #fdecea;
 }
 
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.diagnostics-grid > div {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-grid dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.diagnostics-grid dd {
+  margin: 0.25rem 0 0;
+}
+
 .result {
   margin: 12px 0 0;
   padding: 10px 12px;
