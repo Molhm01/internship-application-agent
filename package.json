@@ -1,0 +1,60 @@
+{
+  "name": "internship-application-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first Chrome extension and agent server that analyzes and fills job application forms without submitting them.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "workspaces": [
+    "shared",
+    "agent-server",
+    "extension"
+  ],
+  "scripts": {
+    "build": "npm run build:shared && npm run build:server && npm run build:extension",
+    "build:shared": "npm run build -w @internship-agent/shared",
+    "build:server": "npm run build:shared && npm run build -w @internship-agent/agent-server",
+    "build:extension": "npm run build:shared && npm run build -w @internship-agent/extension",
+    "dev": "npm run build:shared && concurrently -n server,extension -c cyan,magenta \"npm:dev:server\" \"npm:dev:extension\"",
+    "dev:server": "npm run dev -w @internship-agent/agent-server",
+    "dev:extension": "npm run dev -w @internship-agent/extension",
+    "start:server": "npm run start -w @internship-agent/agent-server",
+    "start:fixtures": "node scripts/fixture-server.mjs",
+    "start:mock-ollama": "node scripts/mock-ollama.mjs",
+    "clean": "node scripts/clean.mjs",
+    "check:ollama": "node scripts/check-ollama.mjs",
+    "lint": "npm run build:shared && eslint .",
+    "lint:fix": "npm run build:shared && eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --build --force tsconfig.json && tsc -p tests/tsconfig.json",
+    "test": "npm run build:shared && vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "validate": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.49.1",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "docx": "^9.7.1",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.14.0",
+    "jsdom": "^25.0.1",
+    "pdf-lib": "^1.17.1",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.19.0",
+    "vitest": "^3.2.4"
+  }
+}

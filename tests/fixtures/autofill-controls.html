@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Deterministic Autofill Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Software Engineering Intern</h1>
+      <p class="company-name">Fixture Labs</p>
+      <form id="application">
+        <section>
+          <h2>Personal Information</h2>
+          <label for="firstName">First Name</label>
+          <input id="firstName" required />
+
+          <label for="lastName">Last Name</label>
+          <textarea id="lastName"></textarea>
+
+          <label for="middleName">Middle Name</label>
+          <textarea id="middleName"></textarea>
+
+          <label for="preferredName">Preferred Name</label>
+          <input id="preferredName" data-react-controlled />
+
+          <label for="email">Email Address</label>
+          <input id="email" type="email" />
+
+          <label for="phone">Telephone Number</label>
+          <input id="phone" type="tel" placeholder="(555) 555-5555" />
+
+          <label for="github">GitHub profile</label>
+          <input id="github" type="url" />
+        </section>
+
+        <section>
+          <h2>Education</h2>
+          <label for="gpa">GPA</label>
+          <input id="gpa" type="number" step="0.01" />
+        </section>
+
+        <section>
+          <h2>Eligibility</h2>
+          <label for="country">Country</label>
+          <select id="country">
+            <option value="">Choose</option>
+            <option value="US">United States of America</option>
+            <option value="CA">Canada</option>
+          </select>
+
+          <label for="authorized">Are you legally authorized to work in the United States?</label>
+          <select id="authorized">
+            <option value="">Choose</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+
+          <fieldset>
+            <legend>Are you willing to relocate?</legend>
+            <label><input type="radio" name="relocate" value="yes" /> Yes</label>
+            <label><input type="radio" name="relocate" value="no" /> No</label>
+          </fieldset>
+
+          <label>
+            <input id="driversLicense" type="checkbox" />
+            Do you have a driver's license?
+          </label>
+
+          <label for="startDate">Earliest start date</label>
+          <input id="startDate" type="date" />
+        </section>
+
+        <fieldset>
+          <legend>Programming languages</legend>
+          <label><input type="checkbox" name="languages" value="typescript" /> TypeScript</label>
+          <label><input type="checkbox" name="languages" value="python" /> Python</label>
+          <label><input type="checkbox" name="languages" value="rust" /> Rust</label>
+        </fieldset>
+
+        <section>
+          <h2>Demographics</h2>
+          <label for="gender">Gender</label>
+          <select id="gender">
+            <option value="">Choose</option>
+            <option value="woman">Woman</option>
+            <option value="man">Man</option>
+            <option value="decline">Prefer not to answer</option>
+          </select>
+        </section>
+
+        <label>
+          <input id="attestation" type="checkbox" />
+          I certify that the information in this application is accurate.
+        </label>
+
+        <label for="portfolio">Portfolio URL</label>
+        <input id="portfolio" type="url" />
+
+        <label for="resume">Resume</label>
+        <input id="resume" type="file" />
+
+        <label id="customLabel">Custom location</label>
+        <button id="custom" type="button" role="combobox" aria-labelledby="customLabel"></button>
+
+        <label for="hiddenField">First Name hidden</label>
+        <input id="hiddenField" hidden />
+        <label for="disabledField">Last Name disabled</label>
+        <input id="disabledField" disabled />
+
+        <label for="ambiguous">Degree</label>
+        <select id="ambiguous">
+          <option value="">Choose</option>
+          <option value="bs">Bachelor's Degree</option>
+          <option value="ba">Bachelor’s Degree</option>
+        </select>
+
+        <button id="next" type="button">Next</button>
+        <button id="submit" type="submit">Submit application</button>
+      </form>
+    </main>
+    <script>
+      window.fixtureState = { submitted: false, nextClicked: false, reactValue: '' };
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.fixtureState.submitted = true;
+      });
+      document.getElementById('next').addEventListener('click', () => {
+        window.fixtureState.nextClicked = true;
+      });
+      const controlled = document.getElementById('preferredName');
+      controlled.addEventListener('input', (event) => {
+        window.fixtureState.reactValue = event.target.value;
+        queueMicrotask(() => {
+          controlled.value = window.fixtureState.reactValue;
+          controlled.dataset.rerendered = 'true';
+        });
+      });
+      const rejected = document.getElementById('portfolio');
+      rejected.addEventListener('input', () => {
+        queueMicrotask(() => {
+          rejected.value = '';
+          rejected.setCustomValidity('Fixture rejects this value');
+        });
+      });
+    </script>
+  </body>
+</html>

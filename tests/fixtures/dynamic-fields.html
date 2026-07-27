@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <body>
+    <form id="application">
+      <label>First Name<input name="first_name" /></label>
+    </form>
+    <script>
+      setTimeout(() => {
+        const label = document.createElement('label');
+        label.textContent = 'LinkedIn URL';
+        const input = document.createElement('input');
+        input.type = 'url';
+        input.name = 'linkedin';
+        label.append(input);
+        document.querySelector('#application').append(label);
+      }, 50);
+    </script>
+  </body>
+</html>

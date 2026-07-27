@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AI plan integration regression fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Engineering internship application</h1>
+      <form id="application">
+        <label for="firstName">First name</label>
+        <input id="firstName" name="first_name" autocomplete="given-name" required />
+
+        <label for="lastName">Last name</label>
+        <input id="lastName" name="last_name" autocomplete="family-name" required />
+
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" required />
+
+        <label for="heard">How did you hear about us?</label>
+        <select id="heard" name="heard_about_us">
+          <option value="">Choose one</option>
+          <option value="university">University career center</option>
+          <option value="referral">Employee referral</option>
+          <option value="job_board">Job board</option>
+        </select>
+
+        <label for="availability">Are you available for this internship?</label>
+        <select id="availability" name="internship_availability" required>
+          <option value="">Choose one</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+          <option value="discuss">Need to discuss</option>
+        </select>
+
+        <label for="achievements">
+          Tell me 2 or 3 personal engineering achievements that you are most proud of and why?
+        </label>
+        <textarea
+          id="achievements"
+          name="engineering_achievements"
+          maxlength="2000"
+          required
+        ></textarea>
+
+        <button id="submit" type="submit">Submit application</button>
+      </form>
+    </main>
+    <script>
+      window.fixtureState = { submitted: false };
+      document.querySelector('#application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.fixtureState.submitted = true;
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,33 @@
+node_modules/
+dist/
+dist-types/
+build/
+coverage/
+*.tsbuildinfo
+.eslintcache
+
+# Local runtime data — never commit personal profile data, resumes, or logs.
+local-data/**
+!local-data/**/.gitkeep
+!local-data/README.md
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.token
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json

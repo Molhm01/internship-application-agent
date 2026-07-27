@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <body>
+    <form>
+      <h1>Engineering Internship</h1>
+      <div id="fields"></div>
+    </form>
+    <script>
+      const root = document.querySelector('#fields');
+      for (let i = 1; i <= 80; i++) {
+        const label = document.createElement('label');
+        label.textContent = `Additional Question ${i}`;
+        const input = document.createElement(i % 5 === 0 ? 'textarea' : 'input');
+        input.name = `question_${i}`;
+        label.append(input);
+        root.append(label);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "chrome"],
+    "jsx": "react-jsx",
+    // Tests are checked as a standalone (non-composite) project so they can pull
+    // in sources from every workspace without joining the build graph.
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../vitest.config.ts", "../playwright.config.ts"],
+  "exclude": ["dist"]
+}
