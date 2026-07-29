@@ -47,6 +47,22 @@ export const ERROR_CODES = [
   'FIELD_MISMATCH',
   'FIELD_DISABLED',
   'OPTION_NOT_FOUND',
+  // Live option discovery and selection. Each names a distinct stage, so a
+  // failed dropdown says which step it failed at instead of disappearing.
+  'CONTROL_NOT_FOUND',
+  'CONTROL_NOT_VISIBLE',
+  'CONTROL_DISABLED',
+  'LISTBOX_NOT_FOUND',
+  'OPTIONS_NOT_DISCOVERED',
+  'NO_OPTION_MATCH',
+  'AMBIGUOUS_OPTION_MATCH',
+  'OPTION_NOT_SELECTABLE',
+  'OPTION_SELECTION_REVERTED',
+  'OPTION_VALUE_NOT_VERIFIED',
+  'LOCATION_NOT_FOUND',
+  'LOCATION_AMBIGUOUS',
+  'PHONE_COUNTRY_CODE_NOT_FOUND',
+  'PROTECTED_POLICY_MISSING',
   'VALUE_NOT_VERIFIED',
   'ACTION_NOT_APPROVED',
   'SENSITIVE_REVIEW_REQUIRED',
@@ -168,6 +184,33 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
   SENSITIVE_REVIEW_REQUIRED:
     'Review this sensitive answer and approve it explicitly, or leave it blank.',
   UNSUPPORTED_CONTROL: 'Fill this control manually. Its browser behavior is not safely supported.',
+  CONTROL_NOT_FOUND:
+    'The control is no longer on the page. Re-analyze the application and try again.',
+  CONTROL_NOT_VISIBLE:
+    'The control is hidden. Scroll to it or open the section that contains it, then retry.',
+  CONTROL_DISABLED: 'The control is disabled. Complete whatever unlocks it, then retry.',
+  LISTBOX_NOT_FOUND:
+    'The option list never opened, so no choices could be read. Open it yourself and pick a value.',
+  OPTIONS_NOT_DISCOVERED:
+    'The list opened but offered no choices. It may still be loading — retry, or choose a value yourself.',
+  NO_OPTION_MATCH:
+    'None of the choices on this control correspond to your saved answer. Pick the right one yourself.',
+  AMBIGUOUS_OPTION_MATCH:
+    'Several choices matched your saved answer equally. Choose the correct one yourself.',
+  OPTION_NOT_SELECTABLE:
+    'The matching choice could not be selected. Select it yourself and continue.',
+  OPTION_SELECTION_REVERTED:
+    'The page discarded the selection after it was made. Select it yourself and check it stays.',
+  OPTION_VALUE_NOT_VERIFIED:
+    'The control does not show the choice that was selected. Check its current value.',
+  LOCATION_NOT_FOUND:
+    'This list offers no location matching your saved city, state, and country. Choose one yourself.',
+  LOCATION_AMBIGUOUS:
+    'Several locations matched your saved address equally. Choose the correct one yourself.',
+  PHONE_COUNTRY_CODE_NOT_FOUND:
+    'No dialling code on this control matches your saved country. Select it yourself.',
+  PROTECTED_POLICY_MISSING:
+    'This question is never answered without an explicit saved policy. Set one in settings, or answer it yourself.',
   EXECUTION_CANCELLED: 'Return to the fill plan and start a new fill run when ready.',
   INVALID_FILL_PLAN: 'Rebuild the fill plan from a fresh application scan.',
   FILL_TIMEOUT:

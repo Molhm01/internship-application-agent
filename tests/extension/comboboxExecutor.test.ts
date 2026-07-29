@@ -190,7 +190,11 @@ describe('combobox helpers', () => {
       <ul id="list" role="listbox"><li role="option">One</li></ul>`;
     const listbox = findListbox(document.getElementById('t') as HTMLElement);
     expect(listbox?.id).toBe('list');
-    expect(readOptions(listbox as HTMLElement)).toEqual([{ label: 'One', value: 'One' }]);
+    // Discovery now records whether each option is disabled or already selected
+    // alongside its wording.
+    expect(readOptions(listbox as HTMLElement)).toEqual([
+      { label: 'One', value: 'One', disabled: false, selected: false, elementFingerprint: 'One' },
+    ]);
   });
 
   it('reads a hidden input value as the displayed value', () => {

@@ -308,9 +308,13 @@ export async function executeDomAction(
       }
       // A custom combobox has its own open → read → match → click → verify
       // sequence, and verifies itself against what the control displays.
-      if (action.action === 'select_suggested_option') {
+      if (
+        action.action === 'select_suggested_option' ||
+        action.action === 'select_resolved_option'
+      ) {
         const outcome = await selectComboboxOption({
           root: currentElement,
+          field,
           proposedValue: String(action.matchedOption?.value ?? action.proposedValue ?? ''),
           ...(action.matchedOption ? { matchedLabel: action.matchedOption.label } : {}),
           allowRegionSuffix: allowsRegionSuffix(field.canonicalKey),
@@ -331,9 +335,14 @@ export async function executeDomAction(
           });
         }
         if (attempts === 2) {
+          // The executor names the stage it stopped at, so the report can say
+          // "the list never opened" rather than a generic option failure.
           return failure(
             action,
-            outcome.discoveredOptions.length === 0 ? 'UNSUPPORTED_CONTROL' : 'OPTION_NOT_FOUND',
+            outcome.code ??
+              (outcome.discoveredOptions.length === 0
+                ? 'OPTIONS_NOT_DISCOVERED'
+                : 'NO_OPTION_MATCH'),
             outcome.reason,
             started,
             attempts,

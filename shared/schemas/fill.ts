@@ -45,6 +45,13 @@ export const deterministicFillActionKindSchema = z.enum([
   'select_option',
   /** A custom (non-`<select>`) combobox whose option list was read off the page. */
   'select_suggested_option',
+  /**
+   * An option-based control whose live choices were discovered and matched to
+   * exactly one real option before the plan was built. Distinct from
+   * `select_suggested_option`, where the list is unknown until fill time: here
+   * the matched option is evidence, not a prediction.
+   */
+  'select_resolved_option',
   'choose_radio',
   'toggle_checkbox',
   'set_date',
@@ -126,6 +133,7 @@ export const deterministicFillActionSchema = z
       'fill_generated_text',
       'select_option',
       'select_suggested_option',
+      'select_resolved_option',
       'choose_radio',
       'toggle_checkbox',
       'set_date',
@@ -152,6 +160,7 @@ export const deterministicFillActionSchema = z
     if (
       (action.action === 'select_option' ||
         action.action === 'select_suggested_option' ||
+        action.action === 'select_resolved_option' ||
         action.action === 'choose_radio') &&
       !action.matchedOption
     ) {
@@ -164,6 +173,7 @@ export const deterministicFillActionSchema = z
     if (
       (action.action === 'select_option' ||
         action.action === 'select_suggested_option' ||
+        action.action === 'select_resolved_option' ||
         action.action === 'choose_radio') &&
       action.matchedOption &&
       action.proposedValue !== action.matchedOption.value

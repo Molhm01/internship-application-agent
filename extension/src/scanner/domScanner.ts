@@ -247,8 +247,17 @@ function optionsFor(elements: HTMLElement[], fieldType: FieldType): FieldOption[
     }));
   }
   if (fieldType === 'radio' || fieldType === 'multi_select') {
-    return elements.map((element) => {
-      const input = element as HTMLInputElement;
+    // Only real inputs carry group options. A custom multi-select combobox is a
+    // single button whose choices live in a listbox it has not opened yet;
+    // treating it as an input invented one option labelled with the question
+    // itself, which then looked like a complete option list to the planner.
+    const inputs = elements.filter(
+      (element): element is HTMLInputElement =>
+        element instanceof HTMLInputElement &&
+        (element.type === 'radio' || element.type === 'checkbox'),
+    );
+    if (inputs.length === 0) return undefined;
+    return inputs.map((input) => {
       const label = extractAccessibleLabel(input).label || input.value;
       return { label, value: input.value, ...(input.checked ? { selected: true } : {}) };
     });

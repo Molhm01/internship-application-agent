@@ -2,9 +2,24 @@ import {
   matchLocationOption,
   matchOption,
   normalizeOptionText,
+  type DetectedField,
+  type DiscoveredOption,
+  type DiscoveredOptionSet,
+  type ErrorCode,
   type FieldOption,
   type LocationTarget,
 } from '@internship-agent/shared';
+import {
+  closeControl,
+  discoverLiveOptions,
+  findListbox,
+  isVisible,
+  openControl,
+  readOptions,
+  resolveTrigger,
+  selectableOptions,
+  waitFor,
+} from '../scanner/optionDiscovery.js';
 
 /**
  * Deterministic driver for custom (non-`<select>`) comboboxes — the pattern
@@ -13,146 +28,31 @@ import {
  *
  * Everything here is browser code. The model never supplies a selector, an
  * index, or a command; it supplies a value, and this module decides whether an
- * option on the page exactly matches it.
+ * option the page actually rendered corresponds to it.
+ *
+ * Selection is never by position. An option is found by matching its own label
+ * against the intended answer, so a list that reorders between discovery and
+ * selection cannot cause the wrong choice.
  */
+
+// Re-exported so callers and tests have one place to reach the DOM primitives.
+export { findListbox, readOptions, resolveTrigger } from '../scanner/optionDiscovery.js';
 
 export interface ComboboxOutcome {
   ok: boolean;
   /** Text the control displayed after selection, read back from the DOM. */
   observedValue?: string;
   matchedLabel?: string;
+  /** Every label selected, for a control that accepts more than one. */
+  matchedLabels?: string[];
   reason: string;
+  /** Names the stage that failed, so the report can be specific. */
+  code?: ErrorCode;
   /** Options actually discovered on the page, for honest reporting. */
-  discoveredOptions: FieldOption[];
+  discoveredOptions: DiscoveredOption[];
 }
 
-const OPEN_WAIT_MS = 1500;
-const RERENDER_WAIT_MS = 700;
-const POLL_MS = 25;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor<T>(produce: () => T | null, timeoutMs: number): Promise<T | null> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = produce();
-    if (value) return value;
-    if (Date.now() >= deadline) return null;
-    await sleep(POLL_MS);
-  }
-}
-
-function isVisible(element: Element): boolean {
-  const node = element as HTMLElement;
-  if (!node.isConnected) return false;
-  const style = window.getComputedStyle(node);
-  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-    return false;
-  }
-  const rect = node.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0;
-}
-
-/**
- * Finds the control that actually receives interaction. A combobox is often a
- * wrapper whose inner `input[role=combobox]` or `button[aria-haspopup]` is the
- * real trigger.
- */
-export function resolveTrigger(root: HTMLElement): HTMLElement {
-  if (root.matches('input,button,[role="combobox"]')) return root;
-  const inner = root.querySelector<HTMLElement>(
-    'input[role="combobox"], [role="combobox"], button[aria-haspopup], input:not([type="hidden"]), button',
-  );
-  return inner ?? root;
-}
-
-/**
- * Locates the popup listbox. Tries the ARIA relationship first, then a
- * portal-mounted listbox elsewhere in the document — React libraries frequently
- * render the popup at `document.body`, far from the trigger.
- */
-export function findListbox(trigger: HTMLElement): HTMLElement | null {
-  const controls = trigger.getAttribute('aria-controls') ?? trigger.getAttribute('aria-owns') ?? '';
-  for (const id of controls.split(/\s+/).filter(Boolean)) {
-    const byId = document.getElementById(id);
-    if (byId && isVisible(byId)) return byId;
-  }
-
-  const activeDescendant = trigger.getAttribute('aria-activedescendant');
-  if (activeDescendant) {
-    const option = document.getElementById(activeDescendant);
-    const owner = option?.closest<HTMLElement>('[role="listbox"]');
-    if (owner && isVisible(owner)) return owner;
-  }
-
-  // Same container first — a portal listbox is the fallback, not the default.
-  const local = trigger
-    .closest('div,fieldset,section,form')
-    ?.querySelector<HTMLElement>('[role="listbox"]');
-  if (local && isVisible(local)) return local;
-
-  const portals = Array.from(document.querySelectorAll<HTMLElement>('[role="listbox"]')).filter(
-    (candidate) => isVisible(candidate),
-  );
-  return portals.length === 1 ? (portals[0] ?? null) : null;
-}
-
-export function readOptions(listbox: HTMLElement): FieldOption[] {
-  return Array.from(listbox.querySelectorAll<HTMLElement>('[role="option"]'))
-    .filter(isVisible)
-    .map((element) => ({
-      label: (element.textContent ?? '').replace(/\s+/g, ' ').trim(),
-      value:
-        element.getAttribute('data-value') ??
-        element.getAttribute('value') ??
-        (element.textContent ?? '').replace(/\s+/g, ' ').trim(),
-    }))
-    .filter((option) => option.label.length > 0);
-}
-
-async function openCombobox(trigger: HTMLElement): Promise<HTMLElement | null> {
-  const already = findListbox(trigger);
-  if (already && trigger.getAttribute('aria-expanded') === 'true') return already;
-
-  trigger.focus();
-  trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-  trigger.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-  trigger.click();
-
-  const listbox = await waitFor(() => findListbox(trigger), OPEN_WAIT_MS);
-  if (listbox) return listbox;
-
-  // Some implementations only open on keyboard interaction.
-  trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-  return waitFor(() => findListbox(trigger), OPEN_WAIT_MS);
-}
-
-/**
- * Types into a searchable combobox to load remote or filtered options. Uses the
- * native value setter so React's controlled inputs observe the change.
- */
-async function typeSearch(trigger: HTMLElement, text: string): Promise<void> {
-  if (!(trigger instanceof HTMLInputElement)) return;
-  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-  if (!descriptor?.set) return;
-  descriptor.set.call(trigger, text);
-  trigger.dispatchEvent(new Event('input', { bubbles: true }));
-  trigger.dispatchEvent(new Event('change', { bubbles: true }));
-  // Wait for results to appear rather than for a fixed interval, so a fast
-  // autocomplete costs milliseconds instead of most of the run's budget.
-  await waitFor(() => {
-    const listbox = findListbox(trigger);
-    return listbox && readOptions(listbox).length > 0 ? listbox : null;
-  }, RERENDER_WAIT_MS);
-}
-
-function closePopup(trigger: HTMLElement): void {
-  // Escape is the accessible close path and never activates anything.
-  trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  if (trigger instanceof HTMLElement) trigger.blur();
-}
+const RERENDER_WAIT_MS = 1500;
 
 /** Text the control shows after selection, for verification. */
 export function readDisplayedValue(root: HTMLElement, trigger: HTMLElement): string {
@@ -188,29 +88,71 @@ export interface SelectComboboxInput {
   locationTarget?: LocationTarget | undefined;
   /** What to type into a searchable control. Derived only from saved values. */
   searchText?: string | undefined;
+  /** The scanned field, so discovery can classify the control correctly. */
+  field?: DetectedField | undefined;
+  /** Every value to select on a control that accepts more than one. */
+  multipleValues?: readonly string[] | undefined;
+}
+
+function asFieldOptions(options: readonly DiscoveredOption[]): FieldOption[] {
+  return options.map((option) => ({
+    label: option.label,
+    value: option.value,
+    ...(option.disabled ? { disabled: true } : {}),
+    ...(option.selected ? { selected: true } : {}),
+  }));
+}
+
+interface Choice {
+  option?: FieldOption;
+  reason: string;
+  code?: ErrorCode;
 }
 
 /**
  * Picks the one option that the saved answer supports, from the options the
- * page actually rendered. Location controls use structured city/state/country
- * matching; everything else uses literal-then-documented-alias matching.
+ * page actually rendered. Location controls are matched on city, state, and
+ * country together; everything else on a literal or documented alias.
  */
 function chooseOption(
-  input: SelectComboboxInput,
+  input: Pick<SelectComboboxInput, 'proposedValue' | 'locationTarget' | 'allowRegionSuffix'>,
   discovered: readonly FieldOption[],
-): { option?: FieldOption; reason: string } {
+): Choice {
   if (input.locationTarget?.city) {
     const located = matchLocationOption(input.locationTarget, discovered);
-    if (located.matched && located.option)
+    if (located.matched && located.option) {
       return { option: located.option, reason: located.reason };
-    return { reason: located.reason };
+    }
+    return {
+      reason: located.reason,
+      code: located.ambiguous ? 'LOCATION_AMBIGUOUS' : 'LOCATION_NOT_FOUND',
+    };
   }
   const match = matchOption(input.proposedValue, discovered, {
     allowRegionSuffix: input.allowRegionSuffix ?? false,
   });
-  return match.matched && match.option
-    ? { option: match.option, reason: match.reason }
-    : { reason: match.reason };
+  if (match.matched && match.option) return { option: match.option, reason: match.reason };
+  return {
+    reason: match.reason,
+    code: match.ambiguous ? 'AMBIGUOUS_OPTION_MATCH' : 'NO_OPTION_MATCH',
+  };
+}
+
+/** Finds the live element for a matched option by its own label, never by index. */
+function optionElementFor(listbox: HTMLElement, label: string): HTMLElement | undefined {
+  const wanted = normalizeOptionText(label);
+  return Array.from(listbox.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (element) => normalizeOptionText((element.textContent ?? '').trim()) === wanted,
+  );
+}
+
+function activate(target: HTMLElement): void {
+  // Scrolling is a convenience for virtualized lists; its absence must never
+  // abort a selection that is otherwise valid.
+  target.scrollIntoView?.({ block: 'nearest' });
+  target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  target.click();
 }
 
 /**
@@ -219,132 +161,169 @@ function chooseOption(
  * control displays afterwards.
  *
  * Refuses to act on an ambiguous or absent match rather than picking by index or
- * partial text.
+ * partial text, and reports the stage it stopped at.
  */
 export async function selectComboboxOption(input: SelectComboboxInput): Promise<ComboboxOutcome> {
-  const { root, proposedValue } = input;
+  const { root } = input;
 
   if (!isVisible(root)) {
-    return { ok: false, reason: 'The combobox is not visible on the page.', discoveredOptions: [] };
+    return {
+      ok: false,
+      code: 'CONTROL_NOT_VISIBLE',
+      reason: 'The combobox is not visible on the page.',
+      discoveredOptions: [],
+    };
   }
   if (root.getAttribute('aria-disabled') === 'true' || root.matches(':disabled')) {
-    return { ok: false, reason: 'The combobox is disabled.', discoveredOptions: [] };
+    return {
+      ok: false,
+      code: 'CONTROL_DISABLED',
+      reason: 'The combobox is disabled.',
+      discoveredOptions: [],
+    };
   }
 
   const trigger = resolveTrigger(root);
-  // The search text is a saved value, never a pattern: a city the profile
-  // states, or the proposed answer itself.
-  const query = input.locationTarget?.city ?? input.searchText ?? proposedValue;
+  // Search text is a saved value, never a pattern: a city the profile states, or
+  // the proposed answer itself.
+  const searchText = input.locationTarget?.city ?? input.searchText ?? input.proposedValue;
 
-  // An autocomplete renders no list at all until it has a query, so clicking it
-  // can never open anything — typing is the only way in. Declaring itself with
-  // `aria-autocomplete` lets that be handled directly instead of after two
-  // fruitless open attempts.
-  const autocomplete =
-    trigger instanceof HTMLInputElement && trigger.getAttribute('aria-autocomplete') === 'list';
+  const field = input.field;
+  let discovered: DiscoveredOptionSet | null = null;
+  if (field) {
+    discovered = await discoverLiveOptions(field, root, { searchText, keepOpen: true });
+  } else {
+    // Without a scanned field there is nothing to classify the control by, so
+    // open it directly and read whatever it reveals.
+    await openControl(trigger, searchText);
+  }
 
-  let listbox: HTMLElement | null = null;
-  if (autocomplete && trigger instanceof HTMLInputElement) {
-    trigger.focus();
-    await typeSearch(trigger, query);
-    listbox = await waitFor(() => findListbox(trigger), OPEN_WAIT_MS);
-  }
-  listbox ??= await openCombobox(trigger);
-  if (!listbox && trigger instanceof HTMLInputElement) {
-    await typeSearch(trigger, query);
-    listbox = await waitFor(() => findListbox(trigger), OPEN_WAIT_MS);
-  }
+  let listbox = findListbox(trigger);
   if (!listbox) {
     return {
       ok: false,
+      code: 'LISTBOX_NOT_FOUND',
       reason: 'The option list did not open, so no options could be read.',
-      discoveredOptions: [],
+      discoveredOptions: discovered ? discovered.options : [],
     };
   }
 
-  let discovered = readOptions(listbox);
-
-  // A searchable combobox may render nothing until it receives input, and may
-  // hide the wanted entry behind a filter. An autocomplete typically renders
-  // nothing at all until it has a query.
-  const needsSearch =
-    discovered.length === 0 || chooseOption(input, discovered).option === undefined;
-  if (needsSearch && trigger instanceof HTMLInputElement) {
-    // For a location the city alone is the broader query: it surfaces every
-    // candidate so the wrong regions can be seen and rejected, rather than
-    // relying on the page to interpret a fuller string.
-    await typeSearch(trigger, query);
-    listbox = findListbox(trigger) ?? listbox;
-    const filtered = readOptions(listbox);
-    if (filtered.length > 0) discovered = filtered;
-  }
-
-  if (discovered.length === 0) {
-    closePopup(trigger);
+  let live = discovered ? selectableOptions(discovered) : readOptions(listbox);
+  if (live.length === 0) {
+    closeControl(trigger);
     return {
       ok: false,
-      reason: 'The option list opened but contained no options.',
-      discoveredOptions: [],
+      code: 'OPTIONS_NOT_DISCOVERED',
+      reason: 'The option list opened but contained no selectable options.',
+      discoveredOptions: discovered?.options ?? [],
     };
   }
 
-  const chosen = chooseOption(input, discovered);
-  if (!chosen.option) {
-    closePopup(trigger);
-    return { ok: false, reason: chosen.reason, discoveredOptions: discovered };
+  // A filtered list may hide the wanted entry behind the query already typed.
+  if (
+    chooseOption(input, asFieldOptions(live)).option === undefined &&
+    trigger instanceof HTMLInputElement
+  ) {
+    const refreshed = findListbox(trigger);
+    if (refreshed) {
+      listbox = refreshed;
+      const reread = readOptions(refreshed);
+      if (reread.length > 0) live = reread.filter((option) => !option.disabled);
+    }
   }
 
-  const wantedLabel = chosen.option.label;
-  const target = Array.from(listbox.querySelectorAll<HTMLElement>('[role="option"]')).find(
-    (element) =>
-      normalizeOptionText((element.textContent ?? '').trim()) === normalizeOptionText(wantedLabel),
-  );
-  if (!target) {
-    closePopup(trigger);
-    return {
-      ok: false,
-      reason: `The matched option "${wantedLabel}" was no longer in the list.`,
-      discoveredOptions: discovered,
-    };
+  const wanted = input.multipleValues?.length ? [...input.multipleValues] : [input.proposedValue];
+  const selectedLabels: string[] = [];
+
+  for (const value of wanted) {
+    const choice = chooseOption(
+      {
+        proposedValue: value,
+        ...(input.locationTarget ? { locationTarget: input.locationTarget } : {}),
+        ...(input.allowRegionSuffix === undefined
+          ? {}
+          : { allowRegionSuffix: input.allowRegionSuffix }),
+      },
+      asFieldOptions(live),
+    );
+    if (!choice.option) {
+      closeControl(trigger);
+      return {
+        ok: false,
+        ...(choice.code ? { code: choice.code } : {}),
+        reason: choice.reason,
+        discoveredOptions: live,
+      };
+    }
+
+    const target = optionElementFor(listbox, choice.option.label);
+    if (!target) {
+      closeControl(trigger);
+      return {
+        ok: false,
+        code: 'OPTION_NOT_SELECTABLE',
+        reason: `The matched option "${choice.option.label}" was no longer in the list.`,
+        discoveredOptions: live,
+      };
+    }
+
+    activate(target);
+    selectedLabels.push(choice.option.label);
+
+    // A multi-select usually keeps its list open; reopen it if it closed, so the
+    // next value is matched against a live list rather than a stale reference.
+    if (wanted.length > 1) {
+      const stillOpen = findListbox(trigger);
+      if (!stillOpen) break;
+      listbox = stillOpen;
+    }
   }
 
-  // Scrolling is a convenience for virtualized lists; its absence must never
-  // abort a selection that is otherwise valid.
-  target.scrollIntoView?.({ block: 'nearest' });
-  target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-  target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-  target.click();
+  const firstLabel = selectedLabels[0] ?? input.proposedValue;
+  const expected = selectedLabels.map(normalizeOptionText);
 
-  // Wait for the control to show the choice rather than for a fixed interval:
-  // a fast page proceeds immediately, and a slow one still gets its full budget.
-  // Always re-read from the live DOM, since a stale reference verifies nothing.
-  const wanted = normalizeOptionText(wantedLabel);
+  // Wait for the control to show the choice rather than for a fixed interval: a
+  // fast page proceeds immediately, a slow one still gets its full budget.
   const observed =
     (await waitFor(() => {
       if (!root.isConnected) return null;
       const text = readDisplayedValue(root, resolveTrigger(root));
-      return normalizeOptionText(text).includes(wanted) ? text : null;
+      const normalized = normalizeOptionText(text);
+      return expected.every((label) => normalized.includes(label)) ? text : null;
     }, RERENDER_WAIT_MS)) ??
     (root.isConnected ? readDisplayedValue(root, resolveTrigger(root)) : null);
 
   if (observed === null) {
     return {
       ok: false,
+      code: 'CONTROL_NOT_FOUND',
       reason: 'The combobox was removed from the page after selection.',
-      discoveredOptions: discovered,
+      discoveredOptions: live,
     };
   }
 
-  closePopup(resolveTrigger(root));
+  closeControl(resolveTrigger(root));
 
-  const verified = normalizeOptionText(observed).includes(wanted);
+  const normalizedObserved = normalizeOptionText(observed);
+  const verified = expected.every((label) => normalizedObserved.includes(label));
   return {
     ok: verified,
     observedValue: observed,
-    matchedLabel: wantedLabel,
+    matchedLabel: firstLabel,
+    matchedLabels: selectedLabels,
+    ...(verified
+      ? {}
+      : {
+          // The click landed but the page did not keep it. That is a different
+          // failure from never having matched, and worth saying so.
+          code:
+            normalizedObserved.length === 0
+              ? ('OPTION_SELECTION_REVERTED' as const)
+              : ('OPTION_VALUE_NOT_VERIFIED' as const),
+        }),
     reason: verified
-      ? `Selected "${wantedLabel}" and the control now displays it.`
-      : `Clicked "${wantedLabel}" but the control displays "${observed}".`,
-    discoveredOptions: discovered,
+      ? `Selected ${selectedLabels.map((label) => `"${label}"`).join(', ')} and the control now displays it.`
+      : `Clicked "${firstLabel}" but the control displays "${observed}".`,
+    discoveredOptions: live,
   };
 }

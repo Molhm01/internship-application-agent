@@ -13,3 +13,4 @@ export * from './fill.js';
 export * from './ai.js';
 export * from './settings.js';
 export * from './semanticOption.js';
+export * from './discoveredOptions.js';

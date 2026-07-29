@@ -1,6 +1,7 @@
 import {
   allowsRegionSuffix,
   deterministicFillPlanSchema,
+  isDeclinePhrasing,
   isLocationQuestion,
   locationSearchText,
   matchLocationOption,
@@ -30,6 +31,16 @@ export interface PlanContext {
 /** True when the scan found a control that takes the dialling code by itself. */
 export function hasPhoneCountryCodeField(scan: ApplicationScanResult): boolean {
   return scan.fields.some((field) => field.canonicalKey === 'phone_country_code');
+}
+
+/** True when a saved answer is a decline rather than a substantive value. */
+function isDeclineValue(value: unknown): value is string {
+  return typeof value === 'string' && isDeclinePhrasing(value);
+}
+
+/** True when this field answers by choosing from a list rather than by typing. */
+function isOptionControl(field: DetectedField): boolean {
+  return ['select', 'combobox', 'radio', 'multi_select'].includes(field.fieldType);
 }
 
 function locationOf(profile: Profile): LocationTarget {
@@ -62,6 +73,7 @@ const ACTIONABLE = new Set<DeterministicFillAction['action']>([
   'fill_generated_text',
   'select_option',
   'select_suggested_option',
+  'select_resolved_option',
   'choose_radio',
   'toggle_checkbox',
   'set_date',
@@ -155,9 +167,20 @@ function actionFor(
     // Nothing grounded this field. If an executor exists for the control, say so
     // — the blocker is a missing value, not a missing strategy.
     if (match.requiresReview) return { ...base, action: 'manual_review' };
+    // A question the matcher did not recognize is not a question to discard.
+    // Previously every unrecognized non-sensitive field became `skip` here,
+    // which hid it from the resolver, from option discovery, and from the user.
+    // It is reported as needing information, so its real choices still get read.
     return {
       ...base,
-      action: match.sensitive ? 'missing_information' : 'skip',
+      action: 'missing_information',
+      reason: match.matched ? match.reason : `No saved answer applies to "${field.question}" yet.`,
+      warnings: [
+        ...base.warnings,
+        ...(isOptionControl(field)
+          ? ['Its available choices are read when the control is opened.']
+          : []),
+      ],
     };
   }
   const existing = field.currentValue;
@@ -186,11 +209,17 @@ function actionFor(
       };
     }
     const options = field.options ?? [];
+    // A combobox whose options were already visible was matched against real
+    // choices, so it is `select_resolved_option` — the matched option is
+    // evidence. One whose list is still unknown stays `select_suggested_option`,
+    // where the match is confirmed against the live list at fill time.
     const selectKind =
       field.fieldType === 'radio'
         ? ('choose_radio' as const)
         : field.fieldType === 'combobox'
-          ? ('select_suggested_option' as const)
+          ? options.length > 0
+            ? ('select_resolved_option' as const)
+            : ('select_suggested_option' as const)
           : ('select_option' as const);
 
     // A custom combobox often renders its list only once opened, so the scanner
@@ -278,6 +307,48 @@ function actionFor(
       };
     }
     if (field.fieldType === 'multi_select') {
+      // "Mark all that apply" still accepts a single answer, and declining is
+      // exactly that: one option, chosen instead of the categories, never
+      // alongside them. A scalar decline is therefore a valid one-item set.
+      if (!Array.isArray(match.formattedValue) && isDeclineValue(match.formattedValue)) {
+        const declineOptions = field.options ?? [];
+        const declineMatch = matchOption(match.formattedValue, declineOptions);
+        if (declineMatch.matched && declineMatch.option) {
+          return {
+            ...base,
+            action: 'toggle_checkbox',
+            proposedValue: [declineMatch.option.value],
+            reason: `Your saved preference corresponds to "${declineMatch.option.label}".`,
+            warnings: [
+              ...base.warnings,
+              'Only the decline option is selected; no category is marked.',
+            ],
+          };
+        }
+        if (declineOptions.length === 0) {
+          // A custom multi-select reveals its choices only once opened, so the
+          // decline option is matched against the live list at fill time.
+          const deferred = String(match.formattedValue);
+          return {
+            ...base,
+            action: 'select_suggested_option',
+            proposedValue: deferred,
+            matchedOption: { label: deferred, value: deferred },
+            requiresReview: true,
+            warnings: [
+              ...base.warnings,
+              'Options are read when the list opens; only the decline option is selected.',
+            ],
+          };
+        }
+        return {
+          ...base,
+          action: 'missing_information',
+          requiresReview: true,
+          reason: 'This form offers no way to decline this question.',
+          warnings: [...base.warnings, 'A category is never marked on your behalf.'],
+        };
+      }
       if (!Array.isArray(match.formattedValue)) {
         return {
           ...base,
@@ -429,8 +500,11 @@ export function setActionApproval(
           ? action.requiresReview
           : action.action === 'fill_generated_text'
             ? action.answerValidationPassed === true
-            : action.action === 'select_suggested_option'
-              ? true
+            : action.action === 'select_suggested_option' ||
+                action.action === 'select_resolved_option'
+              ? // Both carry an exact option; the resolved one was matched
+                // against choices the page really offered.
+                true
               : action.confidence >= 0.8);
       return { ...action, approved: approved && canApprove };
     }),

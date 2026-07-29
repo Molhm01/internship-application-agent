@@ -84,6 +84,13 @@ const LABEL_SYNONYMS: Readonly<Record<string, CanonicalQuestion>> = {
 
 const SENSITIVE_CATEGORY: Partial<Record<CanonicalQuestion, SensitiveCategory>> = {
   gender: 'gender',
+  // Transgender status is a gender-identity question, so the gender disclosure
+  // policy governs it. Without this mapping it had no category at all and fell
+  // through to the default, ignoring an explicit saved decline.
+  transgender: 'gender',
+  hispanic_latino: 'ethnicity',
+  religion: 'religion',
+  medical_information: 'medical',
   veteran_status: 'veteran_status',
   disability_status: 'disability',
   sexual_orientation: 'sexual_orientation',
@@ -103,6 +110,9 @@ function sensitiveCategoryFor(
   if (canonical && SENSITIVE_CATEGORY[canonical]) return SENSITIVE_CATEGORY[canonical];
   const rules: ReadonlyArray<readonly [SensitiveCategory, RegExp]> = [
     ['sexual_orientation', /\bsexual orientation\b/],
+    // Before the gender rule: "Do you identify as transgender?" is governed by
+    // the gender disclosure policy, and never by a gender answer.
+    ['gender', /\btransgender\b/],
     ['veteran_status', /\b(veteran|military status)\b/],
     ['security_clearance', /\bsecurity clearance\b/],
     ['criminal_history', /\b(criminal|felony|conviction|convicted)\b/],

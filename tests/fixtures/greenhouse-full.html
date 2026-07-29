@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Platform Engineering Intern — Application</title>
+  </head>
+  <body>
+    <!--
+      Full Greenhouse application for Phase C: every control type whose options
+      exist only once it is opened, plus the voluntary self-identification block
+      with a different decline wording on each question.
+
+      Read-only fixture. Submit and Next are inert and record any activation, so
+      an accidental click cannot pass unnoticed.
+    -->
+    <div id="grnhse_app">
+      <h1 id="job-title">Platform Engineering Intern</h1>
+      <div id="company-name">Northwind Robotics</div>
+
+      <form id="application-form">
+        <h2>Personal Information</h2>
+
+        <label for="first_name">First Name <span aria-hidden="true">*</span></label>
+        <input id="first_name" name="first_name" type="text" required />
+
+        <label for="last_name">Last Name <span aria-hidden="true">*</span></label>
+        <input id="last_name" name="last_name" type="text" required />
+
+        <label for="email">Email <span aria-hidden="true">*</span></label>
+        <input id="email" name="email" type="email" required />
+
+        <div class="field">
+          <span class="label" id="phone-country-label">Phone Country Code</span>
+          <div class="select-shell" id="phone-country-root">
+            <button
+              type="button"
+              id="phone-country"
+              role="combobox"
+              aria-labelledby="phone-country-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="phone-country-listbox"
+              data-source="phoneCountry"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <label for="phone">Phone Number</label>
+        <input id="phone" name="phone" type="tel" />
+
+        <div class="field">
+          <span class="label" id="country-label">Country <span aria-hidden="true">*</span></span>
+          <div class="select-shell" id="country-root">
+            <button
+              type="button"
+              id="country"
+              role="combobox"
+              aria-labelledby="country-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="country-listbox"
+              data-source="country"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="location-label"
+            >Location (City) <span aria-hidden="true">*</span></span
+          >
+          <div class="select-shell" id="location-root">
+            <input
+              id="location"
+              name="location"
+              type="text"
+              role="combobox"
+              autocomplete="off"
+              aria-labelledby="location-label"
+              aria-expanded="false"
+              aria-autocomplete="list"
+              aria-controls="location-listbox"
+              data-source="location"
+            />
+          </div>
+        </div>
+
+        <h2>Voluntary Self-Identification</h2>
+        <p>Completion is voluntary. Your responses will not be considered in the hiring process.</p>
+
+        <!-- Multi-select: "mark all that apply". -->
+        <div class="field">
+          <span class="label" id="gender-label">Gender identity — mark all that apply</span>
+          <div class="select-shell" id="gender-root">
+            <button
+              type="button"
+              id="gender"
+              role="combobox"
+              aria-labelledby="gender-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-multiselectable="true"
+              aria-controls="gender-listbox"
+              data-source="gender"
+              data-multi="true"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="transgender-label">Do you identify as transgender?</span>
+          <div class="select-shell" id="transgender-root">
+            <button
+              type="button"
+              id="transgender"
+              role="combobox"
+              aria-labelledby="transgender-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="transgender-listbox"
+              data-source="transgender"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="orientation-label">Sexual orientation — mark all that apply</span>
+          <div class="select-shell" id="orientation-root">
+            <button
+              type="button"
+              id="orientation"
+              role="combobox"
+              aria-labelledby="orientation-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-multiselectable="true"
+              aria-controls="orientation-listbox"
+              data-source="orientation"
+              data-multi="true"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="hispanic-label">Are you Hispanic/Latino?</span>
+          <div class="select-shell" id="hispanic-root">
+            <button
+              type="button"
+              id="hispanic"
+              role="combobox"
+              aria-labelledby="hispanic-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="hispanic-listbox"
+              data-source="hispanic"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="veteran-label">Veteran Status</span>
+          <div class="select-shell" id="veteran-root">
+            <button
+              type="button"
+              id="veteran"
+              role="combobox"
+              aria-labelledby="veteran-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="veteran-listbox"
+              data-source="veteran"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="disability-label">Disability Status</span>
+          <div class="select-shell" id="disability-root">
+            <button
+              type="button"
+              id="disability"
+              role="combobox"
+              aria-labelledby="disability-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="disability-listbox"
+              data-source="disability"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" id="submit-application">Submit Application</button>
+        <button type="button" id="next-step">Next</button>
+      </form>
+    </div>
+
+    <!-- Portal root: listboxes mount here, far from their triggers. -->
+    <div id="portal-root"></div>
+
+    <script>
+      window.__submitted = false;
+      window.__nextClicked = false;
+      document.getElementById('application-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__submitted = true;
+      });
+      document.getElementById('next-step').addEventListener('click', () => {
+        window.__nextClicked = true;
+      });
+
+      const OPTIONS = {
+        country: ['Canada', 'India', 'United Kingdom', 'United States of America'],
+        phoneCountry: ['Canada (+1)', 'India (+91)', 'United Kingdom (+44)', 'United States (+1)'],
+        // The same city in five regions. Only the New Jersey entry is correct
+        // for the saved profile; every other entry must be rejected.
+        location: [
+          'Clifton, Arizona, United States',
+          'Clifton, Bristol, United Kingdom',
+          'Clifton, Colorado, United States',
+          'Clifton, NJ, United States',
+          'Clifton, Texas, United States',
+          'Clifton Park, New York, United States',
+        ],
+        // Each question words declining differently, as real Greenhouse forms do.
+        gender: [
+          'Man',
+          'Non-binary',
+          'Woman',
+          'I prefer to self-describe',
+          "I don't wish to answer",
+        ],
+        transgender: ['Yes', 'No', 'I do not wish to self-identify'],
+        orientation: [
+          'Asexual',
+          'Bisexual and/or pansexual',
+          'Gay',
+          'Heterosexual',
+          'Lesbian',
+          'Queer',
+          'I prefer to self-describe',
+          "I don't wish to answer",
+        ],
+        hispanic: ['Yes', 'No', 'Choose not to disclose'],
+        veteran: [
+          'I am not a protected veteran',
+          'I identify as one or more of the classifications of a protected veteran',
+          'Decline to self-identify',
+        ],
+        disability: [
+          'Yes, I have a disability, or have had one in the past',
+          'No, I do not have a disability',
+          'Prefer not to answer',
+        ],
+      };
+
+      const portal = document.getElementById('portal-root');
+
+      function openList(trigger, source, onPick, filter, keepOpen) {
+        portal.replaceChildren();
+        for (const other of document.querySelectorAll('[role="combobox"]')) {
+          other.setAttribute('aria-expanded', 'false');
+        }
+        const list = document.createElement('ul');
+        list.id = trigger.getAttribute('aria-controls');
+        list.setAttribute('role', 'listbox');
+        // Rendered asynchronously, as a real React popup would be.
+        setTimeout(() => {
+          const labels = OPTIONS[source].filter((label) =>
+            filter ? label.toLowerCase().includes(filter.toLowerCase()) : true,
+          );
+          for (const label of labels) {
+            const option = document.createElement('li');
+            option.setAttribute('role', 'option');
+            option.textContent = label;
+            option.addEventListener('click', () => {
+              onPick(label, option);
+              if (!keepOpen) {
+                list.remove();
+                trigger.setAttribute('aria-expanded', 'false');
+              }
+            });
+            list.append(option);
+          }
+        }, 40);
+        portal.append(list);
+        trigger.setAttribute('aria-expanded', 'true');
+      }
+
+      for (const trigger of document.querySelectorAll('button[role="combobox"]')) {
+        const source = trigger.dataset.source;
+        const multi = trigger.dataset.multi === 'true';
+        const shell = trigger.closest('.select-shell');
+        const display = shell.querySelector('.select-value');
+        const chosen = [];
+
+        trigger.addEventListener('click', () => {
+          const existing = document.getElementById(trigger.getAttribute('aria-controls'));
+          if (existing) {
+            existing.remove();
+            trigger.setAttribute('aria-expanded', 'false');
+            return;
+          }
+          openList(
+            trigger,
+            source,
+            (label, option) => {
+              if (multi) {
+                // Marking all that apply: the list stays open and the chosen
+                // values accumulate.
+                if (!chosen.includes(label)) chosen.push(label);
+                option.setAttribute('aria-selected', 'true');
+                display.textContent = chosen.join(', ');
+              } else {
+                display.textContent = label;
+                option.setAttribute('aria-selected', 'true');
+              }
+              shell.dataset.value = display.textContent;
+              trigger.dispatchEvent(new Event('change', { bubbles: true }));
+            },
+            undefined,
+            multi,
+          );
+        });
+      }
+
+      // Searchable autocomplete: shows nothing until it has a query.
+      // Named `locationInput`, not `location`: a top-level `const location`
+      // collides with `window.location` and kills the whole script.
+      const locationInput = document.getElementById('location');
+      locationInput.addEventListener('input', () => {
+        const query = locationInput.value.trim();
+        const existing = document.getElementById('location-listbox');
+        if (existing) existing.remove();
+        if (query.length === 0) {
+          locationInput.setAttribute('aria-expanded', 'false');
+          return;
+        }
+        openList(
+          locationInput,
+          'location',
+          (label) => {
+            locationInput.value = label;
+            locationInput.dispatchEvent(new Event('change', { bubbles: true }));
+          },
+          query,
+        );
+      });
+    </script>
+  </body>
+</html>
