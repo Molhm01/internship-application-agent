@@ -1,5 +1,6 @@
 import {
   DEFAULT_ERROR_GUIDANCE,
+  allowsRegionSuffix,
   fillExecutionResultSchema,
   type AgentError,
   type DeterministicFillAction,
@@ -13,6 +14,7 @@ import {
   findScannedElement,
   verifyDomAction,
 } from '../verifier/domVerifier.js';
+import { selectComboboxOption } from './comboboxExecutor.js';
 
 function failure(
   action: DeterministicFillAction,
@@ -304,6 +306,38 @@ export async function executeDomAction(
           attempts,
         );
       }
+      // A custom combobox has its own open → read → match → click → verify
+      // sequence, and verifies itself against what the control displays.
+      if (action.action === 'select_suggested_option') {
+        const outcome = await selectComboboxOption({
+          root: currentElement,
+          proposedValue: String(action.matchedOption?.value ?? action.proposedValue ?? ''),
+          ...(action.matchedOption ? { matchedLabel: action.matchedOption.label } : {}),
+          allowRegionSuffix: allowsRegionSuffix(field.canonicalKey),
+        });
+        if (outcome.ok) {
+          return fillExecutionResultSchema.parse({
+            actionId: action.id,
+            fieldId: field.id,
+            status: 'verified',
+            expectedValue: action.proposedValue,
+            ...(outcome.observedValue ? { actualValue: outcome.observedValue } : {}),
+            attempts,
+            durationMs: Math.round(performance.now() - started),
+          });
+        }
+        if (attempts === 2) {
+          return failure(
+            action,
+            outcome.discoveredOptions.length === 0 ? 'UNSUPPORTED_CONTROL' : 'OPTION_NOT_FOUND',
+            outcome.reason,
+            started,
+            attempts,
+          );
+        }
+        continue;
+      }
+
       const uploadedFileName =
         action.action === 'upload_file'
           ? attachApprovedFile(currentElement, action, documentContents)

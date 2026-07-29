@@ -1,4 +1,5 @@
 import {
+  allowsRegionSuffix,
   deterministicFillPlanSchema,
   matchOption,
   type ApplicationScanResult,
@@ -16,6 +17,7 @@ const ACTIONABLE = new Set<DeterministicFillAction['action']>([
   'fill_text',
   'fill_generated_text',
   'select_option',
+  'select_suggested_option',
   'choose_radio',
   'toggle_checkbox',
   'set_date',
@@ -78,13 +80,24 @@ function actionFor(
         ],
       };
     }
+    // An upload field the executor can drive, waiting only on a document choice.
+    // Reporting this as `unsupported` hid a one-click fix behind a dead end.
     return {
       ...base,
-      action: 'unsupported',
-      reason: 'No approved document is selected for this upload field.',
+      action: 'missing_information',
+      requiresReview: true,
+      reason: isResumeField
+        ? 'No approved document selected.'
+        : 'No approved document is selected for this upload field.',
+      warnings: [
+        ...base.warnings,
+        'Choose a resume in settings, or pick one here, then approve the upload.',
+      ],
     };
   }
-  if (['combobox', 'contenteditable', 'unknown'].includes(field.fieldType)) {
+  // `combobox` is handled below, alongside `select`: its options were read off
+  // the page by the scanner, and the executor drives it deterministically.
+  if (['contenteditable', 'unknown'].includes(field.fieldType)) {
     return {
       ...base,
       action: 'unsupported',
@@ -92,9 +105,12 @@ function actionFor(
     };
   }
   if (!match.matched || match.formattedValue === undefined) {
+    // Nothing grounded this field. If an executor exists for the control, say so
+    // — the blocker is a missing value, not a missing strategy.
+    if (match.requiresReview) return { ...base, action: 'manual_review' };
     return {
       ...base,
-      action: match.requiresReview ? 'manual_review' : 'skip',
+      action: match.sensitive ? 'missing_information' : 'skip',
     };
   }
   const existing = field.currentValue;
@@ -109,7 +125,11 @@ function actionFor(
       'The field already contains a different value; it will not be overwritten without review.',
     );
   }
-  if (field.fieldType === 'select' || field.fieldType === 'radio') {
+  if (
+    field.fieldType === 'select' ||
+    field.fieldType === 'radio' ||
+    field.fieldType === 'combobox'
+  ) {
     if (typeof match.formattedValue === 'object') {
       return {
         ...base,
@@ -118,7 +138,26 @@ function actionFor(
         reason: 'A single-choice control requires one scalar value.',
       };
     }
-    const option = matchOption(match.formattedValue, field.options ?? []);
+    const options = field.options ?? [];
+    // A custom combobox often renders its list only once opened, so the scanner
+    // may have seen no options. The executor reads the real list at fill time and
+    // refuses anything that is not an exact match there.
+    if (options.length === 0 && field.fieldType === 'combobox') {
+      return {
+        ...base,
+        action: 'select_suggested_option',
+        proposedValue: match.formattedValue,
+        matchedOption: { label: String(match.formattedValue), value: String(match.formattedValue) },
+        requiresReview: true,
+        warnings: [
+          ...base.warnings,
+          'Options are read when the list opens; the exact match is confirmed at fill time.',
+        ],
+      };
+    }
+    const option = matchOption(match.formattedValue, options, {
+      allowRegionSuffix: allowsRegionSuffix(field.canonicalKey),
+    });
     if (!option.matched || !option.option) {
       return {
         ...base,
@@ -131,11 +170,25 @@ function actionFor(
         ],
       };
     }
+    // A spelling alias ("United States" → "United States of America") is an
+    // equivalent wording of the saved value, so it stays auto-approvable. A
+    // region-suffix match adds information the profile never stated, so it is
+    // always confirmed by the user first.
+    const inferredRegion = option.matchKind === 'region_suffix';
     return {
       ...base,
-      action: field.fieldType === 'select' ? 'select_option' : 'choose_radio',
+      action:
+        field.fieldType === 'radio'
+          ? 'choose_radio'
+          : field.fieldType === 'combobox'
+            ? 'select_suggested_option'
+            : 'select_option',
       proposedValue: option.option.value,
       matchedOption: { label: option.option.label, value: option.option.value },
+      requiresReview: base.requiresReview || inferredRegion,
+      warnings: option.aliasUsed
+        ? [...base.warnings, `Matched via ${option.aliasUsed}.`]
+        : base.warnings,
     };
   }
   if (field.fieldType === 'checkbox' || field.fieldType === 'multi_select') {
@@ -187,21 +240,45 @@ function actionFor(
   return { ...base, action: 'fill_text', proposedValue: match.formattedValue };
 }
 
+/** True only when the action carries a value an executor can actually apply. */
+export function isExecutable(action: DeterministicFillAction): boolean {
+  if (!ACTIONABLE.has(action.action)) return false;
+  if (action.action === 'upload_file') return Boolean(action.documentId);
+  return action.proposedValue !== undefined;
+}
+
+/**
+ * Assigns every action to exactly one bucket, in priority order, so the totals
+ * always reconcile. Previously an action could be counted in several buckets and
+ * an unsupported one could still look approved.
+ */
+export function classifyAction(
+  action: DeterministicFillAction,
+): 'approved' | 'ready' | 'review' | 'missingInformation' | 'skipped' | 'unsupported' {
+  if (action.action === 'unsupported') return 'unsupported';
+  if (action.action === 'skip') return 'skipped';
+  if (action.action === 'missing_information') return 'missingInformation';
+  // No value means nothing to be ready or approved about, whatever the flags say.
+  if (!isExecutable(action))
+    return action.action === 'manual_review' ? 'review' : 'missingInformation';
+  if (action.approved) return 'approved';
+  if (action.requiresReview || action.confidence < 0.8) return 'review';
+  return 'ready';
+}
+
 export function calculatePlanStatistics(actions: readonly DeterministicFillAction[]) {
+  const buckets = actions.map(classifyAction);
+  const count = (name: ReturnType<typeof classifyAction>): number =>
+    buckets.filter((bucket) => bucket === name).length;
+
   return {
     total: actions.length,
-    ready: actions.filter(
-      (action) =>
-        ACTIONABLE.has(action.action) && action.confidence >= 0.8 && !action.requiresReview,
-    ).length,
-    review: actions.filter(
-      (action) =>
-        action.action !== 'skip' &&
-        action.action !== 'unsupported' &&
-        (action.action === 'manual_review' || action.requiresReview || action.confidence < 0.8),
-    ).length,
-    skipped: actions.filter((action) => action.action === 'skip').length,
-    unsupported: actions.filter((action) => action.action === 'unsupported').length,
+    ready: count('ready'),
+    approved: count('approved'),
+    review: count('review'),
+    missingInformation: count('missingInformation'),
+    skipped: count('skipped'),
+    unsupported: count('unsupported'),
     sensitive: actions.filter((action) => action.sensitive).length,
   };
 }
@@ -256,13 +333,17 @@ export function setActionApproval(
     plan,
     plan.actions.map((action) => {
       if (action.id !== actionId) return action;
+      // Nothing without a real value can be approved, so the review screen can
+      // never show "Approved" beside "No proposed value".
       const canApprove =
-        ACTIONABLE.has(action.action) &&
+        isExecutable(action) &&
         (action.action === 'upload_file'
           ? action.requiresReview
           : action.action === 'fill_generated_text'
             ? action.answerValidationPassed === true
-            : action.confidence >= 0.8);
+            : action.action === 'select_suggested_option'
+              ? true
+              : action.confidence >= 0.8);
       return { ...action, approved: approved && canApprove };
     }),
   );
@@ -273,11 +354,14 @@ export function approveSafeActions(plan: DeterministicFillPlan): DeterministicFi
     plan,
     plan.actions.map((action) => ({
       ...action,
+      // "Resolve safe fields" approves only what is grounded, unambiguous, and
+      // non-sensitive. A sensitive answer is never bulk-approved.
       approved:
-        ACTIONABLE.has(action.action) &&
+        isExecutable(action) &&
         action.confidence >= 0.8 &&
         !action.requiresReview &&
-        !action.sensitive,
+        !action.sensitive &&
+        action.source !== 'ai_suggestion',
     })),
   );
 }

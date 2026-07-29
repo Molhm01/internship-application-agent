@@ -114,13 +114,33 @@ const selectedResume: SavedDocument = {
 };
 
 describe('deterministic fill planner', () => {
-  it('validates plans and separates ready, review, and unsupported actions', () => {
+  it('validates plans and separates ready, review, and missing-information actions', () => {
     const plan = buildDeterministicPlan(scan, profile, []);
     expect(deterministicFillPlanSchema.safeParse(plan).success).toBe(true);
-    expect(plan.statistics).toMatchObject({ total: 3, ready: 1, review: 1, unsupported: 1 });
+    // An upload field with no chosen document is missing information, not
+    // unsupported: the executor can drive it as soon as a resume is selected.
+    expect(plan.statistics).toMatchObject({
+      total: 3,
+      ready: 1,
+      review: 1,
+      missingInformation: 1,
+      unsupported: 0,
+    });
     expect(plan.actions.find((action) => action.fieldId === 'legal')?.action).toBe('manual_review');
-    expect(plan.actions.find((action) => action.fieldId === 'file')?.action).toBe('unsupported');
+    expect(plan.actions.find((action) => action.fieldId === 'file')?.action).toBe(
+      'missing_information',
+    );
+    expect(plan.actions.find((action) => action.fieldId === 'file')?.reason).toContain(
+      'No approved document selected',
+    );
     expect(plan.actions.every((action) => !action.approved)).toBe(true);
+  });
+
+  it('assigns every action to exactly one statistics bucket', () => {
+    const plan = buildDeterministicPlan(scan, profile, []);
+    const { total, ready, approved, review, missingInformation, skipped, unsupported } =
+      plan.statistics;
+    expect(ready + approved + review + missingInformation + skipped + unsupported).toBe(total);
   });
 
   it('approves only safe high-confidence actions', () => {

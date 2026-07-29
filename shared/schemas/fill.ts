@@ -10,6 +10,12 @@ export const deterministicAnswerSourceSchema = z.enum([
   'document',
   'user_override',
   'ai_generated',
+  /**
+   * A value the model normalized into the page's own wording, grounded entirely
+   * in saved data (e.g. profile "United States" → option "United States of
+   * America"). Never applies to a sensitive question, and never pre-approved.
+   */
+  'ai_suggestion',
   'none',
 ]);
 
@@ -37,12 +43,20 @@ export const deterministicFillActionKindSchema = z.enum([
   'fill_text',
   'fill_generated_text',
   'select_option',
+  /** A custom (non-`<select>`) combobox whose option list was read off the page. */
+  'select_suggested_option',
   'choose_radio',
   'toggle_checkbox',
   'set_date',
   'upload_file',
   'skip',
   'manual_review',
+  /**
+   * An executor exists, but no grounded value does. Distinct from `unsupported`,
+   * which means the control itself cannot be driven — conflating the two hid
+   * fields that only needed a saved value or a selected document.
+   */
+  'missing_information',
   'unsupported',
 ]);
 
@@ -84,6 +98,7 @@ export const deterministicFillActionSchema = z
       'fill_text',
       'fill_generated_text',
       'select_option',
+      'select_suggested_option',
       'choose_radio',
       'toggle_checkbox',
       'set_date',
@@ -108,7 +123,9 @@ export const deterministicFillActionSchema = z
       });
     }
     if (
-      (action.action === 'select_option' || action.action === 'choose_radio') &&
+      (action.action === 'select_option' ||
+        action.action === 'select_suggested_option' ||
+        action.action === 'choose_radio') &&
       !action.matchedOption
     ) {
       ctx.addIssue({
@@ -118,7 +135,9 @@ export const deterministicFillActionSchema = z
       });
     }
     if (
-      (action.action === 'select_option' || action.action === 'choose_radio') &&
+      (action.action === 'select_option' ||
+        action.action === 'select_suggested_option' ||
+        action.action === 'choose_radio') &&
       action.matchedOption &&
       action.proposedValue !== action.matchedOption.value
     ) {
@@ -144,6 +163,31 @@ export const deterministicFillActionSchema = z
         code: z.ZodIssueCode.custom,
         path: ['approved'],
         message: `action "${action.action}" cannot be approved for execution`,
+      });
+    }
+    // An AI suggestion is a proposal, never a decision: it must carry a matched
+    // option, must never be sensitive, and can never arrive pre-approved.
+    if (action.source === 'ai_suggestion') {
+      if (action.sensitive) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['source'],
+          message: 'A sensitive field can never be answered by an AI suggestion',
+        });
+      }
+      if (!action.requiresReview) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['requiresReview'],
+          message: 'An AI suggestion must always require review',
+        });
+      }
+    }
+    if (action.action === 'select_suggested_option' && action.proposedValue === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['proposedValue'],
+        message: 'select_suggested_option requires a proposed value',
       });
     }
     if (action.action === 'fill_generated_text') {
@@ -173,11 +217,24 @@ export const deterministicFillActionSchema = z
 
 export type DeterministicFillAction = z.infer<typeof deterministicFillActionSchema>;
 
+/**
+ * Every action lands in exactly one of `ready`, `approved`, `review`,
+ * `missingInformation`, `skipped`, and `unsupported`; `sensitive` is a
+ * cross-cutting count. The buckets summing to `total` is asserted by a test, so
+ * an action can no longer be counted as approved while showing no value.
+ */
 export const deterministicFillStatisticsSchema = z.object({
   total: z.number().int().nonnegative(),
+  /** Has a valid proposed value, is executable, and needs no further approval. */
   ready: z.number().int().nonnegative(),
+  /** Executable and explicitly approved by the user. */
+  approved: z.number().int().nonnegative().default(0),
+  /** A value exists but the user must approve it first. */
   review: z.number().int().nonnegative(),
+  /** An executor exists, but nothing grounded it. */
+  missingInformation: z.number().int().nonnegative().default(0),
   skipped: z.number().int().nonnegative(),
+  /** No executor exists for this control. */
   unsupported: z.number().int().nonnegative(),
   sensitive: z.number().int().nonnegative(),
 });
@@ -196,6 +253,66 @@ export const deterministicFillPlanSchema = z.object({
 });
 
 export type DeterministicFillPlan = z.infer<typeof deterministicFillPlanSchema>;
+
+/**
+ * The outcome of trying to give an unresolved field a grounded value.
+ *
+ * `prohibited` is reserved for sensitive questions and legal attestations: it
+ * records that the resolver was forbidden from proposing anything, which is a
+ * different fact from having looked and found nothing (`missing_information`).
+ */
+export const unresolvedFieldResolutionSchema = z
+  .object({
+    fieldId: idSchema,
+    status: z.enum([
+      'resolved',
+      'needs_review',
+      'missing_information',
+      'prohibited',
+      'unsupported',
+    ]),
+    proposedValue: fieldValueSchema.optional(),
+    matchedOption: matchedOptionSchema.optional(),
+    source: z.enum(['profile', 'approved_answer', 'user_override', 'ai_suggestion', 'none']),
+    sourceReference: z.string().max(500).optional(),
+    confidence: z.enum(['high', 'medium', 'low']),
+    requiresReview: z.boolean(),
+    sensitive: z.boolean(),
+    reason: z.string().min(1).max(2000),
+    warnings: z.array(z.string().min(1).max(1000)).max(20).default([]),
+  })
+  .superRefine((resolution, ctx) => {
+    if (resolution.status === 'resolved' && resolution.proposedValue === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['proposedValue'],
+        message: 'A resolved field must carry a proposed value',
+      });
+    }
+    if (resolution.sensitive && resolution.source === 'ai_suggestion') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['source'],
+        message: 'Sensitive fields are never resolved by AI suggestion',
+      });
+    }
+    if (resolution.status === 'prohibited' && resolution.proposedValue !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['proposedValue'],
+        message: 'A prohibited field must not carry a proposed value',
+      });
+    }
+    if (resolution.source === 'ai_suggestion' && !resolution.requiresReview) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['requiresReview'],
+        message: 'An AI suggestion always requires review',
+      });
+    }
+  });
+
+export type UnresolvedFieldResolution = z.infer<typeof unresolvedFieldResolutionSchema>;
 
 export const fillVerificationResultSchema = z.object({
   fieldId: idSchema,

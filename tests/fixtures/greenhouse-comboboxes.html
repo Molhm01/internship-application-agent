@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Senior Embedded Engineer — Application</title>
+  </head>
+  <body>
+    <!--
+      Reproduces the Greenhouse application that exposed the unresolved-field
+      bug: text inputs fill fine, while country, city, and the demographic
+      questions are custom comboboxes with portal-mounted listboxes.
+      Read-only fixture — the submit button is inert and must never be clicked.
+    -->
+    <div id="grnhse_app">
+      <h1 id="job-title">Senior Embedded Engineer</h1>
+      <div id="company-name">Northwind Robotics</div>
+
+      <form id="application-form">
+        <h2>Personal Information</h2>
+
+        <label for="first_name">First Name <span aria-hidden="true">*</span></label>
+        <input id="first_name" name="first_name" type="text" required />
+
+        <label for="last_name">Last Name <span aria-hidden="true">*</span></label>
+        <input id="last_name" name="last_name" type="text" required />
+
+        <label for="email">Email <span aria-hidden="true">*</span></label>
+        <input id="email" name="email" type="email" required />
+
+        <label for="phone">Phone</label>
+        <input id="phone" name="phone" type="tel" />
+
+        <label for="linkedin">LinkedIn Profile</label>
+        <input id="linkedin" name="linkedin" type="url" />
+
+        <label for="website">Website</label>
+        <input id="website" name="website" type="url" />
+
+        <!-- Custom combobox: button trigger, listbox rendered into a portal. -->
+        <div class="field">
+          <span class="label" id="country-label">Country <span aria-hidden="true">*</span></span>
+          <div class="select-shell" id="country-root">
+            <button
+              type="button"
+              id="country"
+              role="combobox"
+              aria-labelledby="country-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="country-listbox"
+              data-source="country"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="city-label"
+            >Location (City) <span aria-hidden="true">*</span></span
+          >
+          <div class="select-shell" id="city-root">
+            <button
+              type="button"
+              id="city"
+              role="combobox"
+              aria-labelledby="city-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="city-listbox"
+              data-source="city"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <h2>Documents</h2>
+        <label for="resume">Resume/CV <span aria-hidden="true">*</span></label>
+        <input id="resume" name="resume" type="file" accept=".pdf,.doc,.docx" required />
+
+        <h2>Voluntary Self-Identification</h2>
+        <p>Completion is voluntary. Your responses will not be considered in the hiring process.</p>
+
+        <div class="field">
+          <span class="label" id="gender-label">Gender</span>
+          <div class="select-shell" id="gender-root">
+            <button
+              type="button"
+              id="gender"
+              role="combobox"
+              aria-labelledby="gender-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="gender-listbox"
+              data-source="gender"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="hispanic-label">Are you Hispanic/Latino?</span>
+          <div class="select-shell" id="hispanic-root">
+            <button
+              type="button"
+              id="hispanic"
+              role="combobox"
+              aria-labelledby="hispanic-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="hispanic-listbox"
+              data-source="hispanic"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="veteran-label">Veteran Status</span>
+          <div class="select-shell" id="veteran-root">
+            <button
+              type="button"
+              id="veteran"
+              role="combobox"
+              aria-labelledby="veteran-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="veteran-listbox"
+              data-source="veteran"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label" id="disability-label">Disability Status</span>
+          <div class="select-shell" id="disability-root">
+            <button
+              type="button"
+              id="disability"
+              role="combobox"
+              aria-labelledby="disability-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-controls="disability-listbox"
+              data-source="disability"
+            >
+              <span class="select-value"></span>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" id="submit-application">Submit Application</button>
+        <button type="button" id="next-step">Next</button>
+      </form>
+    </div>
+
+    <!-- Portal root: listboxes mount here, far from their triggers. -->
+    <div id="portal-root"></div>
+
+    <script>
+      // The submit and next controls are inert. If the agent ever activates one,
+      // this flag makes the violation visible to the test rather than silent.
+      window.__submitted = false;
+      window.__nextClicked = false;
+      document.getElementById('application-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__submitted = true;
+      });
+      document.getElementById('next-step').addEventListener('click', () => {
+        window.__nextClicked = true;
+      });
+
+      const OPTIONS = {
+        country: ['Canada', 'United Kingdom', 'United States of America'],
+        city: [
+          'Clifton, New Jersey, United States',
+          'Newark, New Jersey, United States',
+          'New York, New York, United States',
+        ],
+        gender: ['Man', 'Woman', 'Non-binary', 'Decline to self identify'],
+        hispanic: ['Yes', 'No', 'Decline to self identify'],
+        veteran: [
+          'I am not a protected veteran',
+          'I identify as one or more of the classifications of a protected veteran',
+          'I do not wish to answer',
+        ],
+        disability: [
+          'Yes, I have a disability, or have had one in the past',
+          'No, I do not have a disability',
+          'I do not want to answer',
+        ],
+      };
+
+      const portal = document.getElementById('portal-root');
+
+      for (const trigger of document.querySelectorAll('[role="combobox"]')) {
+        const source = trigger.dataset.source;
+        const shell = trigger.closest('.select-shell');
+        const display = shell.querySelector('.select-value');
+
+        trigger.addEventListener('click', () => {
+          const existing = document.getElementById(trigger.getAttribute('aria-controls'));
+          if (existing) {
+            existing.remove();
+            trigger.setAttribute('aria-expanded', 'false');
+            return;
+          }
+          // Close any other open list, mimicking a single-popup implementation.
+          portal.replaceChildren();
+          for (const other of document.querySelectorAll('[role="combobox"]')) {
+            other.setAttribute('aria-expanded', 'false');
+          }
+
+          const list = document.createElement('ul');
+          list.id = trigger.getAttribute('aria-controls');
+          list.setAttribute('role', 'listbox');
+          // Rendered asynchronously, as a real React popup would be.
+          setTimeout(() => {
+            for (const label of OPTIONS[source]) {
+              const option = document.createElement('li');
+              option.setAttribute('role', 'option');
+              option.textContent = label;
+              option.addEventListener('click', () => {
+                display.textContent = label;
+                shell.dataset.value = label;
+                option.setAttribute('aria-selected', 'true');
+                list.remove();
+                trigger.setAttribute('aria-expanded', 'false');
+                trigger.dispatchEvent(new Event('change', { bubbles: true }));
+              });
+              list.append(option);
+            }
+          }, 40);
+          portal.append(list);
+          trigger.setAttribute('aria-expanded', 'true');
+        });
+      }
+    </script>
+  </body>
+</html>

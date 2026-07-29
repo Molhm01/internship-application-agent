@@ -155,7 +155,12 @@ const RULES: readonly Rule[] = [
 
   // Demographics
   { question: 'gender', patterns: [/\bgender\b/, /\bsex\b/] },
-  { question: 'race_ethnicity', patterns: [/\brace\b/, /\bethnic(ity)?\b/] },
+  {
+    question: 'race_ethnicity',
+    // "Are you Hispanic/Latino?" is an ethnicity question that names neither
+    // "race" nor "ethnicity", so it needs its own patterns to be caught.
+    patterns: [/\brace\b/, /\bethnic(ity)?\b/, /\bhispanic\b/, /\blatin[aox]\b/],
+  },
   { question: 'veteran_status', patterns: [/\bveteran\b/, /\bmilitary service\b/] },
   { question: 'disability_status', patterns: [/\bdisabilit(y|ies)\b/] },
   { question: 'sexual_orientation', patterns: [/\bsexual orientation\b/] },

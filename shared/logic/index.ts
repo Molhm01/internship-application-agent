@@ -5,3 +5,4 @@ export * from './optionMatcher.js';
 export * from './aiQuestions.js';
 export * from './promptSafety.js';
 export * from './manualAnswer.js';
+export * from './unresolvedResolver.js';

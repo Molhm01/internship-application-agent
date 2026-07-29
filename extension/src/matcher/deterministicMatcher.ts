@@ -4,6 +4,7 @@ import {
   fieldMatchSchema,
   formatValue,
   normalizeLabel,
+  resolveWebsiteValue,
   type ApprovedAnswer,
   type CanonicalQuestion,
   type DetectedField,
@@ -98,6 +99,8 @@ function sensitiveCategoryFor(
     ['sponsorship', /\b(sponsor|sponsorship|visa support)\b/],
     ['citizenship', /\b(citizen|citizenship|nationality)\b/],
     ['ethnicity', /\bethnic/],
+    // Hispanic/Latino is asked as its own question and names neither term.
+    ['ethnicity', /\b(hispanic|latin[aox])\b/],
     ['race', /\brace\b/],
     ['gender', /\b(gender|sex)\b/],
   ];
@@ -171,7 +174,14 @@ function profileValue(
     linkedin: { reference: 'profile.personal.linkedin', value: personal.linkedin },
     github: { reference: 'profile.personal.github', value: personal.github },
     portfolio: { reference: 'profile.personal.portfolio', value: personal.portfolio },
-    website: { reference: 'profile.personal.personalWebsite', value: personal.personalWebsite },
+    // Website falls back through the saved links in a fixed order rather than
+    // being left blank when only a portfolio or GitHub exists. No URL is invented.
+    website: (() => {
+      const site = resolveWebsiteValue(profile);
+      return site
+        ? { reference: site.reference, value: site.value }
+        : { reference: 'profile.personal.personalWebsite', value: undefined };
+    })(),
     school: {
       reference: 'profile.education[0].institution',
       value: education?.institution,

@@ -214,8 +214,10 @@ test('scan builds, reviews, fills, verifies, and reports deterministic approved 
   expect(built.plan.actions.find((action) => action.question.includes('I certify'))?.action).toBe(
     'manual_review',
   );
+  // A resume field with no selected document is missing information, not
+  // unsupported: the executor can attach it as soon as a document is chosen.
   expect(built.plan.actions.find((action) => action.question === 'Resume')?.action).toBe(
-    'unsupported',
+    'missing_information',
   );
 
   await extension.reload();
