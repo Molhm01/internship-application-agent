@@ -72,6 +72,9 @@ export const CANONICAL_QUESTIONS = [
   'disability_status',
   'sexual_orientation',
   'hispanic_latino',
+  // Asked separately from gender on real forms ("Do you identify as
+  // transgender?"), and never answerable from a gender answer.
+  'transgender',
   'religion',
   'medical_information',
   'criminal_history',
@@ -89,7 +92,18 @@ export const CANONICAL_QUESTIONS = [
   'job_board_source',
   'terms_attestation',
   'signature',
+  // Written-answer categories. Classifying these separately lets a generated
+  // answer be grounded in the right evidence — an achievement question needs
+  // experience, a teamwork question needs projects — instead of one
+  // undifferentiated "custom" bucket.
+  'achievements',
+  'leadership',
+  'teamwork',
+  'challenge',
+  'goals',
+  'technical_skills',
   'custom_written_answer',
+  'other_custom',
   'unknown',
 ] as const;
 
@@ -192,6 +206,7 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   disability_status: 'demographics',
   sexual_orientation: 'demographics',
   hispanic_latino: 'demographics',
+  transgender: 'demographics',
   religion: 'demographics',
   medical_information: 'demographics',
   criminal_history: 'demographics',
@@ -209,10 +224,60 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   job_board_source: 'additional_questions',
   terms_attestation: 'other',
   signature: 'other',
+  achievements: 'additional_questions',
+  leadership: 'additional_questions',
+  teamwork: 'additional_questions',
+  challenge: 'additional_questions',
+  goals: 'additional_questions',
+  technical_skills: 'skills',
   custom_written_answer: 'additional_questions',
+  other_custom: 'additional_questions',
 
   unknown: 'other',
 };
+
+/**
+ * Alternative names for questions this taxonomy already carries, so a spec, an
+ * imported preset, or a website field can name a question its own way and still
+ * resolve to one canonical identifier.
+ *
+ * These are renames, not new concepts — adding a second identifier for the same
+ * question would let two parts of the system answer it differently.
+ */
+export const CANONICAL_QUESTION_ALIASES: Readonly<Record<string, CanonicalQuestion>> = {
+  address: 'address_line1',
+  state_region: 'state',
+  region: 'state',
+  cv: 'resume',
+  enrollment_status: 'education_status',
+  how_heard: 'how_did_you_hear',
+  job_board: 'job_board_source',
+  event_source: 'recruiting_event',
+  race: 'race_ethnicity',
+  ethnicity: 'race_ethnicity',
+  veteran: 'veteran_status',
+  disability: 'disability_status',
+  medical: 'medical_information',
+  salary: 'salary_expectation',
+  legal_attestation: 'terms_attestation',
+  sponsorship: 'sponsorship_required',
+  relocation: 'willing_to_relocate',
+  availability: 'internship_availability',
+  start_date: 'earliest_start_date',
+  onsite: 'onsite_availability',
+  hybrid: 'hybrid_availability',
+  remote: 'remote_availability',
+  why_company: 'why_this_company',
+  why_role: 'why_this_role',
+  project: 'custom_written_answer',
+};
+
+/** Resolves any accepted spelling of a question to its canonical identifier. */
+export function canonicalQuestionFor(name: string): CanonicalQuestion | null {
+  const key = name.trim().toLowerCase();
+  if ((CANONICAL_QUESTIONS as readonly string[]).includes(key)) return key as CanonicalQuestion;
+  return CANONICAL_QUESTION_ALIASES[key] ?? null;
+}
 
 /** Canonical questions the sensitive-answer policy applies to. */
 export const SENSITIVE_CANONICAL_QUESTIONS: readonly CanonicalQuestion[] = [
@@ -227,6 +292,7 @@ export const SENSITIVE_CANONICAL_QUESTIONS: readonly CanonicalQuestion[] = [
   'citizenship',
   'sponsorship_required',
   'hispanic_latino',
+  'transgender',
   'religion',
   'medical_information',
 ];

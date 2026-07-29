@@ -6,17 +6,38 @@ import type { CanonicalIntent } from '../constants/intents.js';
  * near-miss on a dropdown silently submits the wrong answer.
  */
 
+/**
+ * Contractions expanded before punctuation is removed.
+ *
+ * Order matters: strip the apostrophe first and "don't" becomes "don t", which
+ * matches nothing. The irregular forms are listed separately because the
+ * regular `n't` → ` not` rule would turn "won't" into "wo not".
+ */
+const IRREGULAR_CONTRACTIONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bi'm\b/g, 'i am'],
+  [/\bwon't\b/g, 'will not'],
+  [/\bcan't\b/g, 'cannot'],
+  [/\bshan't\b/g, 'shall not'],
+  [/\bi've\b/g, 'i have'],
+  [/\bi'd\b/g, 'i would'],
+  [/\bi'll\b/g, 'i will'],
+];
+
+const REGULAR_CONTRACTION =
+  /\b(do|does|did|is|are|was|were|have|has|had|would|could|should|must|need|ought)n't\b/g;
+
 export function normalizeOptionLabel(value: string): string {
-  return value
+  let text = value
     .normalize('NFKD')
-    .replace(/[‘’`]/g, "'")
+    .replace(/[‘’`´]/g, "'")
     .replace(/[“”]/g, '"')
-    .toLowerCase()
+    .toLowerCase();
+  for (const [pattern, replacement] of IRREGULAR_CONTRACTIONS) {
+    text = text.replace(pattern, replacement);
+  }
+  return text
+    .replace(REGULAR_CONTRACTION, '$1 not')
     .replace(/&/g, ' and ')
-    .replace(/\bi'm\b/g, 'i am')
-    .replace(/\bdon't\b/g, 'do not')
-    .replace(/\bdoesn't\b/g, 'does not')
-    .replace(/\bwon't\b/g, 'will not')
     .replace(/[^\p{L}\p{N}+]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -41,7 +62,24 @@ export const DECLINE_PHRASINGS: readonly string[] = [
   'i prefer not to disclose',
   'i do not wish to answer',
   'i do not wish to self identify',
+  'i do not wish to self-identify',
   'i do not wish to disclose',
+  'i do not wish to provide',
+  'i do not wish to say',
+  'i decline to answer',
+  'i decline to self identify',
+  'decline',
+  'decline to specify',
+  'prefer not to state',
+  'prefer not to identify',
+  'i prefer not to say',
+  'i prefer not to state',
+  'wish not to answer',
+  'not willing to disclose',
+  'i do not want to disclose',
+  'i do not want to self identify',
+  'do not wish to disclose',
+  'do not wish to provide this information',
   'i do not wish to provide this information',
   'i do not want to answer',
   'i don t wish to answer',
@@ -192,9 +230,36 @@ export function phrasingsForIntent(intent: CanonicalIntent): readonly string[] {
   return (INTENT_PHRASINGS[intent] ?? []).map(normalizeOptionLabel);
 }
 
+/**
+ * Options that invite the user to write their own answer. They look adjacent to
+ * declining and are not: choosing one on someone's behalf would leave a blank
+ * free-text box, or worse, invite a guess at a protected trait. Kept as an
+ * explicit set so no future decline phrasing can quietly swallow them.
+ */
+export const SELF_DESCRIBE_PHRASINGS: readonly string[] = [
+  'i prefer to self describe',
+  'prefer to self describe',
+  'i prefer to self-describe',
+  'self describe',
+  'let me type',
+  'other please specify',
+  'please specify',
+  'i identify in another way',
+  'another gender identity',
+  'not listed',
+  'other',
+];
+
+/** True when the text invites the user to describe themselves in their words. */
+export function isSelfDescribePhrasing(text: string): boolean {
+  const normalized = normalizeOptionLabel(text);
+  return SELF_DESCRIBE_PHRASINGS.some((phrase) => normalizeOptionLabel(phrase) === normalized);
+}
+
 /** True when the text is any recognized way of declining to answer. */
 export function isDeclinePhrasing(text: string): boolean {
   const normalized = normalizeOptionLabel(text);
+  if (isSelfDescribePhrasing(text)) return false;
   return DECLINE_PHRASINGS.some((phrase) => normalizeOptionLabel(phrase) === normalized);
 }
 

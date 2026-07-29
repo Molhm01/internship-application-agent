@@ -161,6 +161,10 @@ const RULES: readonly Rule[] = [
     patterns: [
       /\b(earliest|available|availability|when can you) start\b/,
       /\bstart date\b.*\bavailab/,
+      // "When are you available to start?" — the words are separated, which the
+      // adjacent-word patterns above miss.
+      /\b(available|availability)\b.*\bto start\b/,
+      /\bwhen (are|can) you\b.*\bstart\b/,
     ],
   },
   {
@@ -173,13 +177,20 @@ const RULES: readonly Rule[] = [
   },
   { question: 'notice_period', patterns: [/\bnotice period\b/] },
 
-  // Demographics
+  // Demographics.
+  // Transgender status is its own question and must beat the gender rule: a
+  // gender answer never answers it, and vice versa.
+  {
+    question: 'transgender',
+    patterns: [/\btransgender\b/, /\btrans\b/, /\bgender identity\b.*\btrans/],
+  },
+  // Hispanic/Latino is asked as its own question on US forms, separately from
+  // the race list, so it gets its own canonical identifier.
+  { question: 'hispanic_latino', patterns: [/\bhispanic\b/, /\blatin[aox]\b/] },
   { question: 'gender', patterns: [/\bgender\b/, /\bsex\b/] },
   {
     question: 'race_ethnicity',
-    // "Are you Hispanic/Latino?" is an ethnicity question that names neither
-    // "race" nor "ethnicity", so it needs its own patterns to be caught.
-    patterns: [/\brace\b/, /\bethnic(ity)?\b/, /\bhispanic\b/, /\blatin[aox]\b/],
+    patterns: [/\brace\b/, /\bethnic(ity)?\b/],
   },
   { question: 'veteran_status', patterns: [/\bveteran\b/, /\bmilitary service\b/] },
   { question: 'disability_status', patterns: [/\bdisabilit(y|ies)\b/] },
@@ -215,6 +226,44 @@ const RULES: readonly Rule[] = [
     patterns: [/\bhow did you (hear|find)\b/, /\bwhere did you hear\b/],
   },
   { question: 'referral', patterns: [/\brefer(red|ral)\b/] },
+  // Written-answer categories, so a generated answer can be grounded in the
+  // right evidence rather than in the whole profile.
+  {
+    question: 'achievements',
+    patterns: [
+      /\b(greatest|proudest|significant|notable) (achievement|accomplishment)\b/,
+      /\bachievements?\b/,
+      /\baccomplishments?\b/,
+    ],
+  },
+  {
+    question: 'leadership',
+    patterns: [/\bleadership\b/, /\bled a (team|project|group)\b/, /\btook the lead\b/],
+  },
+  {
+    question: 'teamwork',
+    patterns: [/\bteam ?work\b/, /\bwork(ed|ing)? (in|on|with) a team\b/, /\bcollaborat/],
+  },
+  {
+    question: 'challenge',
+    patterns: [
+      /\b(difficult|challenging|hardest|toughest)\b.*\b(situation|problem|project|experience)\b/,
+      /\bovercame?\b.*\b(obstacle|challenge)\b/,
+      /\bchallenge you (have )?faced\b/,
+    ],
+  },
+  {
+    question: 'goals',
+    patterns: [/\b(career|professional) goals?\b/, /\bwhere do you see yourself\b/],
+  },
+  {
+    question: 'technical_skills',
+    patterns: [
+      /\btechnical skills\b/,
+      /\bprogramming languages\b/,
+      /\btechnologies\b.*\b(familiar|experience|proficient)\b/,
+    ],
+  },
   {
     question: 'additional_information',
     patterns: [

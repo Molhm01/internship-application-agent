@@ -1,5 +1,5 @@
 import type { FieldOption } from '../schemas/fields.js';
-import { DECLINE_PHRASINGS } from './synonyms.js';
+import { DECLINE_PHRASINGS, normalizeOptionLabel } from './synonyms.js';
 
 export interface OptionMatchResult {
   matched: boolean;
@@ -19,15 +19,16 @@ export interface OptionMatchResult {
   warnings: string[];
 }
 
+/**
+ * One normalization for both matchers.
+ *
+ * Contractions are expanded before punctuation is stripped, so a page that says
+ * "I don't wish to self-identify" reduces to the same text as a saved
+ * "I do not wish to self-identify". Stripping the apostrophe first would leave
+ * "i don t wish to self identify" and the two would never meet.
+ */
 function normalized(value: string): string {
-  return value
-    .normalize('NFKD')
-    .replace(/[‘’]/g, "'")
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return normalizeOptionLabel(value).replace(/\+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**

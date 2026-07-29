@@ -8,7 +8,8 @@ import {
   type SemanticOptionDecision,
 } from '../schemas/semanticOption.js';
 import { matchOption, allowsRegionSuffix } from './optionMatcher.js';
-import { normalizeOptionLabel, phrasingsForIntent } from './synonyms.js';
+import { intentForBooleanAnswer, readBooleanAnswer } from './questionIntent.js';
+import { isSelfDescribePhrasing, normalizeOptionLabel, phrasingsForIntent } from './synonyms.js';
 
 /**
  * Chooses one option from the choices a page actually offers, given what the
@@ -67,9 +68,16 @@ function decision(
   });
 }
 
-/** Options the user can actually pick. A disabled option is not a choice. */
+/**
+ * Options the user can actually pick.
+ *
+ * A disabled option is not a choice, and a "prefer to self-describe" option is
+ * not one either: selecting it leaves an empty free-text box the user never
+ * asked for. Both are excluded from automatic selection while remaining visible
+ * in `availableOptions`, so the review screen still shows the full list.
+ */
 function selectable(options: readonly FieldOption[]): FieldOption[] {
-  return options.filter((option) => !option.disabled);
+  return options.filter((option) => !option.disabled && !isSelfDescribePhrasing(option.label));
 }
 
 /**
@@ -142,6 +150,37 @@ export function resolveSemanticOption(input: SemanticResolveInput): SemanticOpti
         reason: `"${input.intendedAnswer}" matches more than one option equally.`,
         warnings: ['Choose the correct option yourself.'],
       });
+    }
+  }
+
+  // ---- Question-aware yes/no --------------------------------------------
+  // A saved "Yes" means different things on different questions, and forms word
+  // it as a sentence ("I am legally authorized to work"). Reading the boolean
+  // through the question turns it into the right intent before matching.
+  if (input.intendedAnswer && !input.canonicalIntent) {
+    const boolean = readBooleanAnswer(input.intendedAnswer);
+    if (boolean !== null) {
+      const intent = intentForBooleanAnswer(input.canonicalQuestion, boolean);
+      const byBoolean = matchIntentToOption(intent, usable);
+      if (byBoolean.option) {
+        return decision(input, {
+          status: 'matched',
+          selectedOption: { label: byBoolean.option.label, value: byBoolean.option.value },
+          canonicalIntent: intent,
+          confidence: 'medium',
+          requiresReview: sensitive,
+          reason: `"${byBoolean.option.label}" is this form's wording for "${input.intendedAnswer}" on this question.`,
+          warnings: [],
+        });
+      }
+      if (byBoolean.ambiguous) {
+        return decision(input, {
+          status: 'ambiguous',
+          canonicalIntent: intent,
+          reason: `Several options could express "${input.intendedAnswer}" for this question.`,
+          warnings: ['Choose the correct option yourself.'],
+        });
+      }
     }
   }
 
@@ -267,6 +306,7 @@ export function resolveFromPreset(
 export function defaultSensitivePresets(now: string): ApplicationPreset[] {
   const sensitiveQuestions: CanonicalQuestion[] = [
     'gender',
+    'transgender',
     'race_ethnicity',
     'hispanic_latino',
     'veteran_status',
