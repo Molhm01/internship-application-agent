@@ -78,6 +78,13 @@ const RULES: readonly Rule[] = [
 
   // Contact
   { question: 'email', patterns: [/\be ?mail\b/] },
+  // Before both `phone` and `country`: a "Phone country code" control is neither
+  // the phone number nor the address country, and matching it as either fills
+  // the wrong box.
+  {
+    question: 'phone_country_code',
+    patterns: [/\bcountry code\b/, /\bdial(l)?ing code\b/, /\bphone code\b/, /\bcalling code\b/],
+  },
   { question: 'phone', patterns: [/\b(phone|mobile|cell|telephone)\b/] },
   {
     question: 'address_line2',
@@ -86,6 +93,19 @@ const RULES: readonly Rule[] = [
   {
     question: 'address_line1',
     patterns: [/\baddress (line )?1\b/, /\bstreet address\b/, /^address$/, /\bmailing address\b/],
+  },
+  // A single combined location control ("Location (City)", "Current location")
+  // wants "Clifton, New Jersey, United States", not the bare city. It must beat
+  // the `city` rule, whose pattern it also contains.
+  {
+    question: 'current_location',
+    patterns: [
+      /^location( city)?$/,
+      /\bcurrent location\b/,
+      /\blocation\b.*\bcity\b/,
+      /\bcity\b.*\bstate\b.*\bcountry\b/,
+      /\bwhere are you (currently )?(located|based)\b/,
+    ],
   },
   { question: 'city', patterns: [/\b(city|town)\b/] },
   { question: 'state', patterns: [/\b(state|province|region)\b/] },

@@ -1,10 +1,14 @@
 import {
   DEFAULT_SENSITIVE_POLICY,
   SENSITIVE_CANONICAL_QUESTIONS,
+  dialCodeForCountry,
   fieldMatchSchema,
   formatValue,
+  locationSearchText,
   normalizeLabel,
   resolveWebsiteValue,
+  splitPhoneNumber,
+  wholePhoneNumber,
   type ApprovedAnswer,
   type CanonicalQuestion,
   type DetectedField,
@@ -12,6 +16,16 @@ import {
   type Profile,
   type SensitiveCategory,
 } from '@internship-agent/shared';
+
+/**
+ * Facts about the form as a whole that change what a single field should hold.
+ * A phone number is written differently when the page also has a country-code
+ * control, and that is a property of the page, not of the field.
+ */
+export interface MatchContext {
+  /** True when the same form has a separate phone country-code control. */
+  hasPhoneCountryCodeField?: boolean;
+}
 
 export const MATCH_CONFIDENCE = {
   exact: 1,
@@ -150,9 +164,11 @@ function resolvedCanonical(field: DetectedField): {
 function profileValue(
   profile: Profile,
   canonical: CanonicalQuestion,
+  context: MatchContext = {},
 ): { reference: string; value: string | boolean | number } | null {
   const personal = profile.personal;
   const education = profile.education[0];
+  const dialCode = dialCodeForCountry(personal.address.country);
   const direct: Partial<
     Record<CanonicalQuestion, { reference: string; value: string | boolean | number | undefined }>
   > = {
@@ -161,7 +177,32 @@ function profileValue(
     last_name: { reference: 'profile.personal.legalLastName', value: personal.legalLastName },
     preferred_name: { reference: 'profile.personal.preferredName', value: personal.preferredName },
     email: { reference: 'profile.personal.email', value: personal.email },
-    phone: { reference: 'profile.personal.phone', value: personal.phone },
+    // With a separate country-code control on the page, the dialling code goes
+    // there and must not be repeated here. Without one, the whole saved number
+    // is used unchanged. The stored profile value is never rewritten either way.
+    phone: {
+      reference: 'profile.personal.phone',
+      value: personal.phone
+        ? context.hasPhoneCountryCodeField
+          ? splitPhoneNumber(personal.phone, dialCode).localNumber
+          : wholePhoneNumber(personal.phone)
+        : undefined,
+    },
+    // Derived from the country the profile states, never from the digits.
+    phone_country_code: {
+      reference: 'profile.personal.address.country',
+      value: dialCode ?? undefined,
+    },
+    // A combined location control wants the whole place, assembled only from
+    // values the profile already holds.
+    current_location: {
+      reference: 'profile.personal.address',
+      value:
+        locationSearchText({
+          city: personal.address.city,
+          state: personal.address.state,
+        }) || undefined,
+    },
     address_line1: { reference: 'profile.personal.address.line1', value: personal.address.line1 },
     address_line2: { reference: 'profile.personal.address.line2', value: personal.address.line2 },
     city: { reference: 'profile.personal.address.city', value: personal.address.city },
@@ -296,6 +337,7 @@ export function matchField(
   profile: Profile,
   answers: readonly ApprovedAnswer[],
   override?: string | string[] | boolean,
+  context: MatchContext = {},
 ): FieldMatch {
   const resolved = resolvedCanonical(field);
   const approved = answerMatch(field, resolved.canonical, answers);
@@ -430,7 +472,7 @@ export function matchField(
     );
   }
   if (!resolved.canonical) return unmatched(field, resolved.reason);
-  const value = profileValue(profile, resolved.canonical);
+  const value = profileValue(profile, resolved.canonical, context);
   if (!value) return unmatched(field, `No saved profile value exists for "${resolved.canonical}".`);
   return fieldMatchSchema.parse({
     fieldId: field.id,

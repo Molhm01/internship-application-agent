@@ -67,6 +67,32 @@ export const matchedOptionSchema = z.object({
   value: z.string().max(1000),
 });
 
+/**
+ * Saved grounding the executor re-applies against the option list a custom
+ * combobox reveals only once opened.
+ *
+ * It carries facts, never instructions: a place the profile states, or the
+ * meaning a saved policy expressed. There is no field here able to express a
+ * selector, a script, or an index, so nothing that reaches the executor through
+ * this object can direct it at an arbitrary element.
+ */
+export const matchHintSchema = z.object({
+  canonicalQuestion: z.string().max(60).optional(),
+  /** A canonical intent such as `prefer_not_to_answer`. Never free text. */
+  intent: z.string().max(60).optional(),
+  location: z
+    .object({
+      city: z.string().max(200).optional(),
+      state: z.string().max(200).optional(),
+      country: z.string().max(200).optional(),
+    })
+    .optional(),
+  /** Search text for an autocomplete, derived only from saved values. */
+  searchText: z.string().max(300).optional(),
+});
+
+export type MatchHint = z.infer<typeof matchHintSchema>;
+
 export const deterministicFillActionSchema = z
   .object({
     id: idSchema,
@@ -85,6 +111,7 @@ export const deterministicFillActionSchema = z
     reason: z.string().min(1).max(2000),
     warnings: z.array(z.string().min(1).max(1000)).max(20).default([]),
     originalMatch: fieldMatchSchema.optional(),
+    matchHint: matchHintSchema.optional(),
     generationId: idSchema.optional(),
     evidenceIds: z.array(idSchema).max(30).optional(),
     wordCount: z.number().int().nonnegative().optional(),

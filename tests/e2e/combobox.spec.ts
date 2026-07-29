@@ -178,7 +178,9 @@ test('resolves and fills custom comboboxes without touching unanswered sensitive
   // proposal is the saved profile value; the executor reads the real options and
   // confirms the exact match at fill time (verified against the DOM below).
   expect(country?.proposedValue).toBe('United States');
-  expect(city?.proposedValue).toBe('Clifton');
+  // A combined "Location (City)" control takes the whole saved place, so the
+  // executor can distinguish this Clifton from the ones in other states.
+  expect(city?.proposedValue).toBe('Clifton, New Jersey');
   expect(country?.requiresReview).toBe(true);
   expect(city?.requiresReview).toBe(true);
 

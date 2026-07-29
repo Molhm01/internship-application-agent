@@ -1,4 +1,10 @@
-import { matchOption, normalizeOptionText, type FieldOption } from '@internship-agent/shared';
+import {
+  matchLocationOption,
+  matchOption,
+  normalizeOptionText,
+  type FieldOption,
+  type LocationTarget,
+} from '@internship-agent/shared';
 
 /**
  * Deterministic driver for custom (non-`<select>`) comboboxes — the pattern
@@ -134,7 +140,12 @@ async function typeSearch(trigger: HTMLElement, text: string): Promise<void> {
   descriptor.set.call(trigger, text);
   trigger.dispatchEvent(new Event('input', { bubbles: true }));
   trigger.dispatchEvent(new Event('change', { bubbles: true }));
-  await sleep(RERENDER_WAIT_MS);
+  // Wait for results to appear rather than for a fixed interval, so a fast
+  // autocomplete costs milliseconds instead of most of the run's budget.
+  await waitFor(() => {
+    const listbox = findListbox(trigger);
+    return listbox && readOptions(listbox).length > 0 ? listbox : null;
+  }, RERENDER_WAIT_MS);
 }
 
 function closePopup(trigger: HTMLElement): void {
@@ -170,6 +181,36 @@ export interface SelectComboboxInput {
   /** Label of the option the plan matched, when it had one. */
   matchedLabel?: string;
   allowRegionSuffix?: boolean;
+  /**
+   * Saved city, state, and country for a location control. When present, the
+   * option is chosen on all three together rather than on the city alone.
+   */
+  locationTarget?: LocationTarget | undefined;
+  /** What to type into a searchable control. Derived only from saved values. */
+  searchText?: string | undefined;
+}
+
+/**
+ * Picks the one option that the saved answer supports, from the options the
+ * page actually rendered. Location controls use structured city/state/country
+ * matching; everything else uses literal-then-documented-alias matching.
+ */
+function chooseOption(
+  input: SelectComboboxInput,
+  discovered: readonly FieldOption[],
+): { option?: FieldOption; reason: string } {
+  if (input.locationTarget?.city) {
+    const located = matchLocationOption(input.locationTarget, discovered);
+    if (located.matched && located.option)
+      return { option: located.option, reason: located.reason };
+    return { reason: located.reason };
+  }
+  const match = matchOption(input.proposedValue, discovered, {
+    allowRegionSuffix: input.allowRegionSuffix ?? false,
+  });
+  return match.matched && match.option
+    ? { option: match.option, reason: match.reason }
+    : { reason: match.reason };
 }
 
 /**
@@ -191,7 +232,28 @@ export async function selectComboboxOption(input: SelectComboboxInput): Promise<
   }
 
   const trigger = resolveTrigger(root);
-  let listbox = await openCombobox(trigger);
+  // The search text is a saved value, never a pattern: a city the profile
+  // states, or the proposed answer itself.
+  const query = input.locationTarget?.city ?? input.searchText ?? proposedValue;
+
+  // An autocomplete renders no list at all until it has a query, so clicking it
+  // can never open anything — typing is the only way in. Declaring itself with
+  // `aria-autocomplete` lets that be handled directly instead of after two
+  // fruitless open attempts.
+  const autocomplete =
+    trigger instanceof HTMLInputElement && trigger.getAttribute('aria-autocomplete') === 'list';
+
+  let listbox: HTMLElement | null = null;
+  if (autocomplete && trigger instanceof HTMLInputElement) {
+    trigger.focus();
+    await typeSearch(trigger, query);
+    listbox = await waitFor(() => findListbox(trigger), OPEN_WAIT_MS);
+  }
+  listbox ??= await openCombobox(trigger);
+  if (!listbox && trigger instanceof HTMLInputElement) {
+    await typeSearch(trigger, query);
+    listbox = await waitFor(() => findListbox(trigger), OPEN_WAIT_MS);
+  }
   if (!listbox) {
     return {
       ok: false,
@@ -203,14 +265,15 @@ export async function selectComboboxOption(input: SelectComboboxInput): Promise<
   let discovered = readOptions(listbox);
 
   // A searchable combobox may render nothing until it receives input, and may
-  // hide the wanted entry behind a filter.
+  // hide the wanted entry behind a filter. An autocomplete typically renders
+  // nothing at all until it has a query.
   const needsSearch =
-    discovered.length === 0 ||
-    !discovered.some(
-      (option) => normalizeOptionText(option.label) === normalizeOptionText(proposedValue),
-    );
+    discovered.length === 0 || chooseOption(input, discovered).option === undefined;
   if (needsSearch && trigger instanceof HTMLInputElement) {
-    await typeSearch(trigger, proposedValue);
+    // For a location the city alone is the broader query: it surfaces every
+    // candidate so the wrong regions can be seen and rejected, rather than
+    // relying on the page to interpret a fuller string.
+    await typeSearch(trigger, query);
     listbox = findListbox(trigger) ?? listbox;
     const filtered = readOptions(listbox);
     if (filtered.length > 0) discovered = filtered;
@@ -225,15 +288,13 @@ export async function selectComboboxOption(input: SelectComboboxInput): Promise<
     };
   }
 
-  const match = matchOption(proposedValue, discovered, {
-    allowRegionSuffix: input.allowRegionSuffix ?? false,
-  });
-  if (!match.matched || !match.option) {
+  const chosen = chooseOption(input, discovered);
+  if (!chosen.option) {
     closePopup(trigger);
-    return { ok: false, reason: match.reason, discoveredOptions: discovered };
+    return { ok: false, reason: chosen.reason, discoveredOptions: discovered };
   }
 
-  const wantedLabel = match.option.label;
+  const wantedLabel = chosen.option.label;
   const target = Array.from(listbox.querySelectorAll<HTMLElement>('[role="option"]')).find(
     (element) =>
       normalizeOptionText((element.textContent ?? '').trim()) === normalizeOptionText(wantedLabel),
@@ -254,12 +315,19 @@ export async function selectComboboxOption(input: SelectComboboxInput): Promise<
   target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
   target.click();
 
-  await sleep(RERENDER_WAIT_MS);
+  // Wait for the control to show the choice rather than for a fixed interval:
+  // a fast page proceeds immediately, and a slow one still gets its full budget.
+  // Always re-read from the live DOM, since a stale reference verifies nothing.
+  const wanted = normalizeOptionText(wantedLabel);
+  const observed =
+    (await waitFor(() => {
+      if (!root.isConnected) return null;
+      const text = readDisplayedValue(root, resolveTrigger(root));
+      return normalizeOptionText(text).includes(wanted) ? text : null;
+    }, RERENDER_WAIT_MS)) ??
+    (root.isConnected ? readDisplayedValue(root, resolveTrigger(root)) : null);
 
-  // Re-read from the live DOM: the control has usually re-rendered by now, so a
-  // stale reference would verify nothing.
-  const liveRoot = root.isConnected ? root : null;
-  if (!liveRoot) {
+  if (observed === null) {
     return {
       ok: false,
       reason: 'The combobox was removed from the page after selection.',
@@ -267,11 +335,9 @@ export async function selectComboboxOption(input: SelectComboboxInput): Promise<
     };
   }
 
-  const liveTrigger = resolveTrigger(liveRoot);
-  const observed = readDisplayedValue(liveRoot, liveTrigger);
-  closePopup(liveTrigger);
+  closePopup(resolveTrigger(root));
 
-  const verified = normalizeOptionText(observed).includes(normalizeOptionText(wantedLabel));
+  const verified = normalizeOptionText(observed).includes(wanted);
   return {
     ok: verified,
     observedValue: observed,

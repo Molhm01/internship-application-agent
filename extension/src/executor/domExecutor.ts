@@ -314,6 +314,10 @@ export async function executeDomAction(
           proposedValue: String(action.matchedOption?.value ?? action.proposedValue ?? ''),
           ...(action.matchedOption ? { matchedLabel: action.matchedOption.label } : {}),
           allowRegionSuffix: allowsRegionSuffix(field.canonicalKey),
+          // Saved city/state/country, so the executor rejects the same wrong
+          // regions the planner would have rejected.
+          ...(action.matchHint?.location ? { locationTarget: action.matchHint.location } : {}),
+          ...(action.matchHint?.searchText ? { searchText: action.matchHint.searchText } : {}),
         });
         if (outcome.ok) {
           return fillExecutionResultSchema.parse({

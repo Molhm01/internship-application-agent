@@ -1,4 +1,5 @@
 import type { FieldOption } from '../schemas/fields.js';
+import { DECLINE_PHRASINGS } from './synonyms.js';
 
 export interface OptionMatchResult {
   matched: boolean;
@@ -78,18 +79,14 @@ const OPTION_ALIASES: ReadonlyArray<readonly string[]> = [
   ['associates', "associate's", "associate's degree", 'associate degree', 'aa', 'as'],
   ['high school', 'high school diploma', 'secondary school', 'ged'],
 
-  // Declining an answer
-  [
-    'decline to answer',
-    'prefer not to answer',
-    'i do not wish to answer',
-    'i prefer not to answer',
-    'i don t wish to answer',
-    'decline to self identify',
-    'i do not wish to self identify',
-    'prefer not to disclose',
-    'do not wish to disclose',
-  ],
+  // Phone dialling codes seen beside a country name on split phone controls.
+  ['+1', '1', 'united states 1', 'us 1', 'usa 1', 'united states of america 1'],
+  ['+44', '44', 'united kingdom 44', 'uk 44'],
+  ['+91', '91', 'india 91'],
+
+  // Declining an answer. Sourced from the single canonical set so this matcher
+  // and the semantic resolver can never disagree about what "decline" means.
+  DECLINE_PHRASINGS,
 ];
 
 /** US state abbreviation ↔ full name. Deterministic and closed. */
@@ -316,6 +313,30 @@ export function allowsRegionSuffix(canonical: string | undefined): boolean {
     canonical === 'city' ||
     canonical === 'state' ||
     canonical === 'country' ||
+    canonical === 'current_location' ||
     canonical === 'address_line1'
   );
+}
+
+/**
+ * Reduces a US state token to its full name, so "NJ" and "New Jersey" compare
+ * equal. Returns null for anything not on the closed list — never a guess.
+ */
+export function canonicalStateName(token: string): string | null {
+  const key = normalized(token);
+  if (US_STATES[key]) return US_STATES[key];
+  return Object.values(US_STATES).includes(key) ? key : null;
+}
+
+/** Reduces a country token to one documented spelling, or null when unknown. */
+export function canonicalCountryName(token: string): string | null {
+  const key = normalized(token);
+  const group = OPTION_ALIASES.find(
+    (candidate) =>
+      candidate.length > 0 &&
+      candidate[0] !== undefined &&
+      /^(united states|united kingdom|canada|india)$/.test(candidate[0]) &&
+      candidate.some((entry) => normalized(entry) === key),
+  );
+  return group?.[0] ?? null;
 }

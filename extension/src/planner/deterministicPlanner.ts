@@ -1,6 +1,9 @@
 import {
   allowsRegionSuffix,
   deterministicFillPlanSchema,
+  isLocationQuestion,
+  locationSearchText,
+  matchLocationOption,
   matchOption,
   type ApplicationScanResult,
   type ApprovedAnswer,
@@ -8,10 +11,51 @@ import {
   type DeterministicFillPlan,
   type DetectedField,
   type FieldMatch,
+  type LocationTarget,
+  type MatchHint,
   type Profile,
   type SavedDocument,
 } from '@internship-agent/shared';
 import { isLegalAttestation, matchField } from '../matcher/deterministicMatcher.js';
+
+/**
+ * Page-level facts the planner resolved once and every action may need. The
+ * location comes straight from the saved profile; nothing here is inferred.
+ */
+export interface PlanContext {
+  location?: LocationTarget;
+  hasPhoneCountryCodeField?: boolean;
+}
+
+/** True when the scan found a control that takes the dialling code by itself. */
+export function hasPhoneCountryCodeField(scan: ApplicationScanResult): boolean {
+  return scan.fields.some((field) => field.canonicalKey === 'phone_country_code');
+}
+
+function locationOf(profile: Profile): LocationTarget {
+  const address = profile.personal.address;
+  return {
+    ...(address.city ? { city: address.city } : {}),
+    ...(address.state ? { state: address.state } : {}),
+    ...(address.country ? { country: address.country } : {}),
+  };
+}
+
+/**
+ * The grounding a custom combobox executor needs, because such a control
+ * reveals its options only once opened. Carries saved facts only — never a
+ * selector, a script, or a position in a list.
+ */
+function buildMatchHint(field: DetectedField, context: PlanContext): MatchHint | undefined {
+  if (!isLocationQuestion(field.canonicalKey) || !context.location?.city) {
+    return field.canonicalKey ? { canonicalQuestion: field.canonicalKey } : undefined;
+  }
+  return {
+    canonicalQuestion: field.canonicalKey,
+    location: context.location,
+    searchText: locationSearchText(context.location),
+  };
+}
 
 const ACTIONABLE = new Set<DeterministicFillAction['action']>([
   'fill_text',
@@ -37,8 +81,11 @@ function actionFor(
   field: DetectedField,
   match: FieldMatch,
   selectedDocument?: SavedDocument,
+  context: PlanContext = {},
 ): DeterministicFillAction {
+  const hint = buildMatchHint(field, context);
   const base = {
+    ...(hint ? { matchHint: hint } : {}),
     id: actionIdForField(field.id),
     fieldId: field.id,
     question: field.question,
@@ -139,15 +186,23 @@ function actionFor(
       };
     }
     const options = field.options ?? [];
+    const selectKind =
+      field.fieldType === 'radio'
+        ? ('choose_radio' as const)
+        : field.fieldType === 'combobox'
+          ? ('select_suggested_option' as const)
+          : ('select_option' as const);
+
     // A custom combobox often renders its list only once opened, so the scanner
     // may have seen no options. The executor reads the real list at fill time and
     // refuses anything that is not an exact match there.
     if (options.length === 0 && field.fieldType === 'combobox') {
+      const deferred = String(match.formattedValue);
       return {
         ...base,
         action: 'select_suggested_option',
-        proposedValue: match.formattedValue,
-        matchedOption: { label: String(match.formattedValue), value: String(match.formattedValue) },
+        proposedValue: deferred,
+        matchedOption: { label: deferred, value: deferred },
         requiresReview: true,
         warnings: [
           ...base.warnings,
@@ -155,6 +210,33 @@ function actionFor(
         ],
       };
     }
+
+    // A place is matched on city, state, and country together. Matching on the
+    // city alone would happily pick Clifton, Colorado for a New Jersey profile.
+    if (isLocationQuestion(field.canonicalKey) && context.location?.city) {
+      const located = matchLocationOption(context.location, options);
+      if (located.matched && located.option) {
+        return {
+          ...base,
+          action: selectKind,
+          proposedValue: located.option.value,
+          matchedOption: { label: located.option.label, value: located.option.value },
+          // An option that never named a region confirms nothing, so the user
+          // confirms it instead.
+          requiresReview: base.requiresReview || !located.stateConfirmed,
+          reason: located.reason,
+          warnings: [...base.warnings, ...located.warnings],
+        };
+      }
+      return {
+        ...base,
+        action: located.ambiguous ? 'manual_review' : 'missing_information',
+        requiresReview: true,
+        reason: located.reason,
+        warnings: [...base.warnings, ...located.warnings],
+      };
+    }
+
     const option = matchOption(match.formattedValue, options, {
       allowRegionSuffix: allowsRegionSuffix(field.canonicalKey),
     });
@@ -177,12 +259,7 @@ function actionFor(
     const inferredRegion = option.matchKind === 'region_suffix';
     return {
       ...base,
-      action:
-        field.fieldType === 'radio'
-          ? 'choose_radio'
-          : field.fieldType === 'combobox'
-            ? 'select_suggested_option'
-            : 'select_option',
+      action: selectKind,
       proposedValue: option.option.value,
       matchedOption: { label: option.option.label, value: option.option.value },
       requiresReview: base.requiresReview || inferredRegion,
@@ -301,8 +378,19 @@ export function buildDeterministicPlan(
   answers: readonly ApprovedAnswer[],
   selectedDocument?: SavedDocument,
 ): DeterministicFillPlan {
+  const context: PlanContext = {
+    location: locationOf(profile),
+    hasPhoneCountryCodeField: hasPhoneCountryCodeField(scan),
+  };
   const actions = scan.fields.map((field) =>
-    actionFor(field, matchField(field, profile, answers), selectedDocument),
+    actionFor(
+      field,
+      matchField(field, profile, answers, undefined, {
+        ...(context.hasPhoneCountryCodeField ? { hasPhoneCountryCodeField: true } : {}),
+      }),
+      selectedDocument,
+      context,
+    ),
   );
   const now = new Date().toISOString();
   return deterministicFillPlanSchema.parse({
@@ -377,7 +465,11 @@ export function updateActionOverride(
     plan.actions.map((action) => {
       if (action.id !== actionId) return action;
       const match = matchField(field, {} as Profile, [], value);
-      return { ...actionFor(field, match), originalMatch: action.originalMatch };
+      return {
+        ...actionFor(field, match),
+        ...(action.matchHint ? { matchHint: action.matchHint } : {}),
+        originalMatch: action.originalMatch,
+      };
     }),
   );
 }
@@ -391,7 +483,12 @@ export function resetActionOverride(
     plan,
     plan.actions.map((action) =>
       action.id === actionId && action.originalMatch
-        ? actionFor(field, action.originalMatch)
+        ? {
+            ...actionFor(field, action.originalMatch),
+            // The saved location the plan was built with survives a reset; it is
+            // profile data, not part of the edit being undone.
+            ...(action.matchHint ? { matchHint: action.matchHint } : {}),
+          }
         : action,
     ),
   );

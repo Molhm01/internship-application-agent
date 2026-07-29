@@ -26,6 +26,7 @@
     "start:mock-ollama": "node scripts/mock-ollama.mjs",
     "clean": "node scripts/clean.mjs",
     "check:ollama": "node scripts/check-ollama.mjs",
+    "verify:extension": "node scripts/verify-extension-build.mjs",
     "backup:verify": "node scripts/backup-verify.mjs",
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore": "node scripts/db-restore.mjs",
