@@ -23,6 +23,8 @@ export const CANONICAL_QUESTIONS = [
   'state',
   'postal_code',
   'country',
+  'current_location',
+  'phone_country_code',
   // Links
   'linkedin',
   'github',
@@ -34,6 +36,8 @@ export const CANONICAL_QUESTIONS = [
   'major',
   'minor',
   'gpa',
+  'degree_level',
+  'education_status',
   'education_start_date',
   'graduation_date',
   // Experience
@@ -57,6 +61,9 @@ export const CANONICAL_QUESTIONS = [
   'minimum_age',
   'earliest_start_date',
   'internship_availability',
+  'onsite_availability',
+  'hybrid_availability',
+  'remote_availability',
   'notice_period',
   // Demographics and other sensitive questions
   'gender',
@@ -64,6 +71,9 @@ export const CANONICAL_QUESTIONS = [
   'veteran_status',
   'disability_status',
   'sexual_orientation',
+  'hispanic_latino',
+  'religion',
+  'medical_information',
   'criminal_history',
   'security_clearance',
   'salary_expectation',
@@ -73,6 +83,13 @@ export const CANONICAL_QUESTIONS = [
   'additional_information',
   'how_did_you_hear',
   'referral',
+  'referral_source',
+  'employee_referral',
+  'recruiting_event',
+  'job_board_source',
+  'terms_attestation',
+  'signature',
+  'custom_written_answer',
   'unknown',
 ] as const;
 
@@ -126,6 +143,8 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   state: 'contact_information',
   postal_code: 'contact_information',
   country: 'contact_information',
+  current_location: 'contact_information',
+  phone_country_code: 'contact_information',
 
   linkedin: 'contact_information',
   github: 'contact_information',
@@ -137,6 +156,8 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   major: 'education',
   minor: 'education',
   gpa: 'education',
+  degree_level: 'education',
+  education_status: 'education',
   education_start_date: 'education',
   graduation_date: 'education',
 
@@ -160,6 +181,9 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   minimum_age: 'eligibility',
   earliest_start_date: 'eligibility',
   internship_availability: 'eligibility',
+  onsite_availability: 'eligibility',
+  hybrid_availability: 'eligibility',
+  remote_availability: 'eligibility',
   notice_period: 'eligibility',
 
   gender: 'demographics',
@@ -167,6 +191,9 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   veteran_status: 'demographics',
   disability_status: 'demographics',
   sexual_orientation: 'demographics',
+  hispanic_latino: 'demographics',
+  religion: 'demographics',
+  medical_information: 'demographics',
   criminal_history: 'demographics',
   security_clearance: 'demographics',
   salary_expectation: 'demographics',
@@ -176,6 +203,13 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   additional_information: 'additional_questions',
   how_did_you_hear: 'additional_questions',
   referral: 'additional_questions',
+  referral_source: 'additional_questions',
+  employee_referral: 'additional_questions',
+  recruiting_event: 'additional_questions',
+  job_board_source: 'additional_questions',
+  terms_attestation: 'other',
+  signature: 'other',
+  custom_written_answer: 'additional_questions',
 
   unknown: 'other',
 };
@@ -192,4 +226,7 @@ export const SENSITIVE_CANONICAL_QUESTIONS: readonly CanonicalQuestion[] = [
   'salary_expectation',
   'citizenship',
   'sponsorship_required',
+  'hispanic_latino',
+  'religion',
+  'medical_information',
 ];

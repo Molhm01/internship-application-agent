@@ -12,3 +12,4 @@ export * from './run.js';
 export * from './fill.js';
 export * from './ai.js';
 export * from './settings.js';
+export * from './semanticOption.js';

@@ -77,6 +77,11 @@ export const fieldOptionSchema = z.object({
   label: z.string().max(1000),
   value: z.string().max(1000),
   selected: z.boolean().optional(),
+  /**
+   * A disabled option is not a choice — it is usually a placeholder such as
+   * "Select…". The resolver excludes these so one can never be selected.
+   */
+  disabled: z.boolean().optional(),
 });
 
 export type FieldOption = z.infer<typeof fieldOptionSchema>;
