@@ -265,36 +265,24 @@ export function App(): JSX.Element {
       <section aria-label="Actions" className="popup__actions">
         <button
           type="button"
-          onClick={() => void analyze()}
-          disabled={!eligible || scanState === 'scanning'}
+          className="primary"
+          disabled={!eligible || !currentScan}
+          onClick={async () => {
+            // One-button orchestration: scan → plan → execute sequentially
+            if (scanState !== 'scanning') {
+              await analyze();
+            } else {
+              return;
+            }
+            if (!currentScan) return;
+
+            await buildPlan();
+            if (plan && approvedCount > 0) {
+              await execute();
+            }
+          }}
         >
-          {scanState === 'scanning' ? 'Analyzing…' : 'Analyze Application'}
-        </button>
-        <button type="button" onClick={openReview} disabled={!scan}>
-          Review Scan
-        </button>
-        <button
-          type="button"
-          onClick={() => void buildPlan()}
-          disabled={!currentScan || fillState === 'planning' || fillState === 'filling'}
-        >
-          {fillState === 'planning'
-            ? 'Building Plan…'
-            : currentPlan
-              ? 'Rebuild Fill Plan'
-              : 'Build Fill Plan'}
-        </button>
-        <button type="button" onClick={openFillPlan} disabled={!currentPlan}>
-          Review Fill Plan
-        </button>
-        <button
-          type="button"
-          onClick={() => void execute()}
-          disabled={!eligible || !currentPlan || approvedCount === 0 || fillState === 'filling'}
-        >
-          {fillState === 'filling'
-            ? 'Filling…'
-            : `Fill Approved Fields${approvedCount ? ` (${approvedCount})` : ''}`}
+          Autofill Application{fillState === 'filling' ? ` (${fillProgress?.completed ?? 0}/${fillProgress?.total})` : null}
         </button>
         <button type="button" className="primary" onClick={openSettings}>
           Open Settings
