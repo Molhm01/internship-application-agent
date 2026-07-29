@@ -31,3 +31,6 @@ Thumbs.db
 !.vscode/launch.json
 !.vscode/tasks.json
 !.vscode/extensions.json
+
+# Graphify knowledge graph: regenerable build output.
+graphify-out/
