@@ -1,0 +1,1 @@
+I need to list files in the schemas folder using PowerShell commands like Get-ChildItem, and then read all *.ts files that match application plan patterns (plan.ts, fill.ts, fields.ts). Skip node_modules paths when reading.

@@ -1,0 +1,1 @@
+The test folder pattern is `.claude/tests/extension/playwright` for e2e specs. Search there first, then agent-server/src/. Also examine graphify query result on unresolved field resolution patterns from the memory file I created earlier about deterministic filter review handling.
