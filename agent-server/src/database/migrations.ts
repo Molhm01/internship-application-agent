@@ -222,6 +222,26 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(occurred_at DESC);
     `,
   },
+  {
+    version: 5,
+    name: 'application_sessions',
+    sql: `
+      CREATE TABLE IF NOT EXISTS application_sessions (
+        session_id     TEXT PRIMARY KEY,
+        created_at     INTEGER NOT NULL,
+        expires_at     INTEGER NOT NULL,
+        claimed_at     INTEGER,
+        status         TEXT NOT NULL,
+        url            TEXT NOT NULL,
+        domain         TEXT NOT NULL,
+        ats            TEXT NOT NULL,
+        job_context    TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON application_sessions (expires_at);
+      CREATE INDEX IF NOT EXISTS idx_sessions_status ON application_sessions (status);
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(

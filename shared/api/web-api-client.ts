@@ -1,4 +1,4 @@
-import { applicationSessionSchema } from '../schemas/application-session.js';
+import { applicationSessionSchema, applicationSessionInputSchema } from '../schemas/application-session.js';
 
 export default class WebApiClient {
   private baseUrl: string;
@@ -25,6 +25,85 @@ export default class WebApiClient {
     if (!parsed.success) {
       throw new Error('Invalid response');
     }
+    this.cache.set(sessionId, parsed.data);
+    return parsed.data;
+  }
+
+  /**
+   * Create a new application session.
+   */
+  async createApplicationSession(input: any): Promise<any> {
+    const parsedInput = applicationSessionInputSchema.safeParse(input);
+    if (!parsedInput.success) {
+      throw new Error('Invalid input');
+    }
+  
+    const resp = await fetch(`${this.baseUrl}/application-sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(parsedInput.data),
+    });
+    
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    }
+    
+    const json: unknown = await resp.json();
+    const parsed = applicationSessionSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new Error('Invalid response from server');
+    }
+    
+    // Cache the newly created session
+    this.cache.set(parsed.data.sessionId, parsed.data);
+    return parsed.data;
+  }
+
+  /**
+   * Claim an application session.
+   */
+  async claimApplicationSession(sessionId: string): Promise<any> {
+    const resp = await fetch(`${this.baseUrl}/application-sessions/${sessionId}/claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
+    
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    }
+    
+    const json: unknown = await resp.json();
+    const parsed = applicationSessionSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new Error('Invalid response from server');
+    }
+    
+    // Update the cached session
+    this.cache.set(sessionId, parsed.data);
+    return parsed.data;
+  }
+
+  /**
+   * Update an application session status.
+   */
+  async updateApplicationSessionStatus(sessionId: string, status: 'available' | 'claimed' | 'completed'): Promise<any> {
+    const resp = await fetch(`${this.baseUrl}/application-sessions/${sessionId}/status`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    }
+    
+    const json: unknown = await resp.json();
+    const parsed = applicationSessionSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new Error('Invalid response from server');
+    }
+    
+    // Update the cached session
     this.cache.set(sessionId, parsed.data);
     return parsed.data;
   }

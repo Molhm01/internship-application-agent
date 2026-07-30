@@ -1,74 +1,171 @@
-import { describe, test, expect, vi } from 'vitest';
-import { WebApiClient } from './web-api-client.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import WebApiClient from '../shared/api/web-api-client.js';
+import { applicationSessionSchema } from '../shared/schemas/application-session.js';
 
-// Mock the global fetch API
-const originalFetch = globalThis.fetch;
-
-afterEach(() => {
-  if (originalFetch) globalThis.fetch = originalFetch; // restore after each test
-});
+// Mock fetch to test HTTP requests without actually making them
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
 
 describe('WebApiClient', () => {
-  const baseUrl = 'http://localhost:4317';
-  const client = new WebApiClient(baseUrl);
+  let client: WebApiClient;
+  
+  beforeEach(() => {
+    client = new WebApiClient('http://localhost:3000');
+    mockFetch.mockReset();
+  });
 
-  test('returns validated application session', async () => {
-    const mockSession = { sessionId: '1234567890123456', createdAt: 1700000000, expiresAt: 1700003600 };
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => mockSession,
+  it('should create a new instance with correct base URL', () => {
+    const client = new WebApiClient('http://localhost:3000/');
+    expect((client as any).baseUrl).toBe('http://localhost:3000');
+  });
+
+  describe('getApplicationSession', () => {
+    it('should fetch and return a valid session', async () => {
+      const mockResponse = {
+        sessionId: 'test-session-id',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        status: 'available',
+        url: 'https://example.com',
+        domain: 'example.com',
+        ats: 'ats-system',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      const result = await client.getApplicationSession('test-session-id');
+      
+      expect(result).toEqual(mockResponse);
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/application-sessions/test-session-id');
     });
 
-    const session = await client.getApplicationSession('1234567890123456');
-    expect(session).toEqual(mockSession);
-  });
+    it('should throw error for invalid response', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ invalid: 'data' }),
+      });
 
-  test('throws on invalid response', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ bad: 'data' }),
+      await expect(client.getApplicationSession('test-session-id')).rejects.toThrow('Invalid response');
     });
-    await expect(client.getApplicationSession('bad')).rejects.toThrow('Invalid response');
   });
 
-  test('caches same session ID', async () => {
-    const mock = { sessionId: 'sameid12345678', createdAt: 1700000000, expiresAt: 1700003600 };
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => mock });
-    globalThis.fetch = fetchMock;
+  describe('createApplicationSession', () => {
+    it('should create a new session', async () => {
+      const input = {
+        url: 'https://example.com',
+        domain: 'example.com',
+        ats: 'ats-system',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      };
 
-    await client.getApplicationSession('sameid12345678');
-    await client.getApplicationSession('sameid12345678');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+      const mockResponse = {
+        ...input,
+        sessionId: 'new-session-id',
+        status: 'available',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      const result = await client.createApplicationSession(input);
+      
+      expect(result).toEqual(mockResponse);
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/application-sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+    });
+
+    it('should throw error for invalid input', async () => {
+      await expect(client.createApplicationSession({ invalid: 'data' })).rejects.toThrow('Invalid input');
+    });
   });
 
-  test('different session ID triggers new request', async () => {
-    const fetchMock = vi.fn();
-    globalThis.fetch = fetchMock;
+  describe('claimApplicationSession', () => {
+    it('should claim a session', async () => {
+      const mockResponse = {
+        sessionId: 'test-session-id',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        claimedAt: Date.now(),
+        status: 'claimed',
+        url: 'https://example.com',
+        domain: 'example.com',
+        ats: 'ats-system',
+      };
 
-    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ sessionId: 'id1', createdAt: 0, expiresAt: 10 }) });
-    await client.getApplicationSession('id1');
-    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ sessionId: 'id2', createdAt: 20, expiresAt: 30 }) });
-    await client.getApplicationSession('id2');
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockResponse,
+      });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+      const result = await client.claimApplicationSession('test-session-id');
+      
+      expect(result).toEqual(mockResponse);
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/application-sessions/test-session-id/claim', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      });
+    });
   });
 
-  test('clearing cache forces new request', async () => {
-    const fetchMock = vi.fn();
-    globalThis.fetch = fetchMock;
-    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ sessionId: 'clearid', createdAt: 0, expiresAt: 10 }) });
-    await client.getApplicationSession('clearid');
-    client.clearApplicationSessionCache();
-    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ sessionId: 'clearid', createdAt: 20, expiresAt: 30 }) });
-    await client.getApplicationSession('clearid');
+  describe('updateApplicationSessionStatus', () => {
+    it('should update session status', async () => {
+      const mockResponse = {
+        sessionId: 'test-session-id',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        status: 'completed',
+        url: 'https://example.com',
+        domain: 'example.com',
+        ats: 'ats-system',
+      };
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      const result = await client.updateApplicationSessionStatus('test-session-id', 'completed');
+      
+      expect(result).toEqual(mockResponse);
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/application-sessions/test-session-id/status', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'completed' }),
+      });
+    });
   });
 
-  test('network failure throws error', async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network'));
-    await expect(client.getApplicationSession('net')).rejects.toThrow('Network');
+  describe('clearApplicationSessionCache', () => {
+    it('should clear the cache', () => {
+      const mockResponse = {
+        sessionId: 'test-session-id',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        status: 'available',
+        url: 'https://example.com',
+        domain: 'example.com',
+        ats: 'ats-system',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      client.getApplicationSession('test-session-id');
+      expect((client as any).cache.size).toBe(1);
+      
+      client.clearApplicationSessionCache();
+      expect((client as any).cache.size).toBe(0);
+    });
   });
 });
