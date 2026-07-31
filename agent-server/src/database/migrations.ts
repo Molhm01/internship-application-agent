@@ -242,6 +242,21 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_sessions_status ON application_sessions (status);
     `,
   },
+  {
+    version: 6,
+    name: 'application_sessions_website_handoff',
+    sql: `
+      ALTER TABLE application_sessions ADD COLUMN company TEXT;
+      ALTER TABLE application_sessions ADD COLUMN job_title TEXT;
+      ALTER TABLE application_sessions ADD COLUMN official_apply_url TEXT;
+      ALTER TABLE application_sessions ADD COLUMN website_job_id TEXT;
+      ALTER TABLE application_sessions ADD COLUMN location TEXT;
+      ALTER TABLE application_sessions ADD COLUMN eligibility_score REAL;
+      ALTER TABLE application_sessions ADD COLUMN tailored_resume_document_id TEXT;
+      ALTER TABLE application_sessions ADD COLUMN tailored_cover_letter_document_id TEXT;
+      ALTER TABLE application_sessions ADD COLUMN start_autofill INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(

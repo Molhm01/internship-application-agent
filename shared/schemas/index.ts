@@ -14,3 +14,4 @@ export * from './ai.js';
 export * from './settings.js';
 export * from './semanticOption.js';
 export * from './discoveredOptions.js';
+export * from './application-session.js';

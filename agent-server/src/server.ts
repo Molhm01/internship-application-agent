@@ -7,6 +7,7 @@ import { registerDocumentRoutes } from './api/documents.js';
 import { registerAnswerRoutes } from './api/answers.js';
 import { registerPlannedRoutes } from './api/planned.js';
 import { registerAiRoutes } from './api/ai.js';
+import { registerApplicationSessionRoutes } from './api/application-sessions.js';
 import { fail } from './api/responses.js';
 import type { ServerContext } from './types/context.js';
 import { isOriginAllowed } from './security/origin.js';
@@ -138,6 +139,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   await registerAnswerRoutes(app, context);
   await registerPlannedRoutes(app);
   registerAiRoutes(app, context);
+  await registerApplicationSessionRoutes(app, context);
 
   return app;
 }

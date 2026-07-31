@@ -97,16 +97,15 @@ async function main(): Promise<void> {
     ollamaModels: status.modelCount ?? 0,
   });
 
-  // Printed, not logged: the token must not land in local-data/logs/agent.log.
+  // Never print the token: terminal output is commonly redirected to logs.
   process.stdout.write(
     [
       '',
       '  Internship Application Agent — local server',
       `  URL:    http://${config.host}:${config.port}`,
       `  Ollama: ${status.state}${status.error ? ` (${status.error.message})` : ''}`,
-      `  Token:  ${token}`,
-      `  Paste that token into the extension options page (header: ${AUTH_HEADER}).`,
-      `  It is also stored at ${config.tokenPath}`,
+      `  Token header: ${AUTH_HEADER}`,
+      `  Token source: INTERNSHIP_AGENT_TOKEN or ${config.tokenPath}`,
       `  Database:  ${config.databasePath}`,
       `  Documents: ${config.documentsDir}`,
       '',

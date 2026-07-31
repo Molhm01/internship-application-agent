@@ -1,5 +1,3 @@
-
-
 import { z } from 'zod';
 import { idSchema } from './common.js';
 
@@ -27,9 +25,19 @@ export interface ApplicationSession {
     requisitionId?: string;
     sourceUrl?: string;
   };
+  /** Set when the session was created by the website handoff rather than the extension. */
+  company?: string;
+  jobTitle?: string;
+  officialApplyUrl?: string;
+  websiteJobId?: string;
+  location?: string;
+  eligibilityScore?: number;
+  tailoredResumeDocumentId?: string;
+  tailoredCoverLetterDocumentId?: string;
+  startAutofill?: boolean;
 }
 
-/** Zod schema for validating session data input on API creation or update endpoints */
+/** Zod schema for validating session data as stored/returned by the server. */
 export const applicationSessionSchema = z.object({
   sessionId: idSchema.min(16).max(36),
   createdAt: z.number().int(),
@@ -56,18 +64,45 @@ export const applicationSessionSchema = z.object({
     })
     .passthrough() // Allow additional fields
     .optional(),
+  // Website-handoff fields (Internship-AI's "apply with agent" flow). Absent
+  // when the session was created by the extension itself.
+  company: z.string().max(200).optional(),
+  jobTitle: z.string().max(300).optional(),
+  officialApplyUrl: z.string().url().max(2048).optional(),
+  websiteJobId: z.string().max(200).optional(),
+  location: z.string().max(200).optional(),
+  eligibilityScore: z.number().optional(),
+  tailoredResumeDocumentId: z.string().max(200).optional(),
+  tailoredCoverLetterDocumentId: z.string().max(200).optional(),
+  startAutofill: z.boolean().optional(),
 });
 
-/** Input schema for creating new application sessions */
-export const applicationSessionInputSchema = applicationSessionSchema.omit({
-  sessionId: true,
-  createdAt: true,
-  claimedAt: true,
-}).extend({
-  id?: string, // Optional id for testing purposes
-});
+/**
+ * Input schema for creating new application sessions. `url`/`domain`/`ats` are
+ * derived server-side (from `officialApplyUrl`) when the website creates a
+ * session, so they are optional here even though they are required on the
+ * stored record.
+ */
+export const applicationSessionInputSchema = applicationSessionSchema
+  .omit({
+    sessionId: true,
+    createdAt: true,
+    expiresAt: true,
+    claimedAt: true,
+    url: true,
+    domain: true,
+    ats: true,
+  })
+  .extend({
+    /** Optional caller-supplied id, primarily for tests. */
+    id: z.string().min(16).max(36).optional(),
+    expiresAt: z.number().int().optional(),
+    url: z.string().max(2048).optional(),
+    domain: z.string().max(255).optional(),
+    ats: z.string().max(100).optional(),
+    status: z.enum(['available', 'claimed', 'completed']).optional(),
+  });
 
-/** Assert row from SQLite matches schema before use */
-export function validateApplicationSession(row: any): asserts row is ApplicationSession {}
+export type ApplicationSessionInput = z.infer<typeof applicationSessionInputSchema>;
 
 export type ApplicationSessionStatus = 'available' | 'claimed' | 'completed';

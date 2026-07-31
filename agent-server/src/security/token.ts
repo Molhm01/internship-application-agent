@@ -10,7 +10,10 @@ const TOKEN_BYTES = 32;
  * profile, so it is generated with a CSPRNG and never logged.
  */
 export function loadOrCreateToken(tokenPath: string): string {
-  const fromEnv = process.env['AGENT_TOKEN']?.trim();
+  // INTERNSHIP_AGENT_TOKEN is the canonical name shared with Internship-AI's
+  // .env; AGENT_TOKEN is kept as a same-repo alias for anyone already using it.
+  const fromEnv =
+    process.env['INTERNSHIP_AGENT_TOKEN']?.trim() || process.env['AGENT_TOKEN']?.trim();
   if (fromEnv) return fromEnv;
 
   if (existsSync(tokenPath)) {
