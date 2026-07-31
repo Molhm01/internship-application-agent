@@ -11,6 +11,7 @@ import {
   type FillProgress,
   type FillRunReport,
   type FillUiState,
+  type ApplicationSession,
 } from '@internship-agent/shared';
 import type { AgentStatusResult } from '../messaging/messages.js';
 import { sendMessage } from '../messaging/messages.js';
@@ -28,6 +29,7 @@ export interface PopupState {
   status: AgentStatusResult | null;
   tab: TabInfo;
   loading: boolean;
+  applicationSession: ApplicationSession | null;
   scanState: ScanState;
   scan: ApplicationScanResult | null;
   progress: ScanProgress | null;
@@ -96,6 +98,7 @@ export function usePopupState(): PopupState {
   const [status, setStatus] = useState<AgentStatusResult | null>(null);
   const [tab, setTab] = useState<TabInfo>(EMPTY_TAB);
   const [loading, setLoading] = useState(true);
+  const [applicationSession, setApplicationSession] = useState<ApplicationSession | null>(null);
   const [nonce, setNonce] = useState(0);
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [scan, setScan] = useState<ApplicationScanResult | null>(null);
@@ -125,14 +128,16 @@ export function usePopupState(): PopupState {
     setLoading(true);
     const load = async (): Promise<void> => {
       try {
-        const [statusResult, tabResult, lastResult, fillResult] = await Promise.all([
+        const [statusResult, tabResult, lastResult, fillResult, sessionResult] = await Promise.all([
           sendMessage({ type: 'AGENT_STATUS_REQUEST' }),
           readActiveTab(),
           sendMessage({ type: 'GET_LAST_SCAN' }),
           sendMessage({ type: 'GET_FILL_PLAN' }),
+          sendMessage({ type: 'GET_APPLICATION_SESSION' }),
         ]);
         if (cancelled) return;
         setStatus(statusResult);
+        setApplicationSession(sessionResult.data ?? null);
         setTab({
           ...tabResult,
           fieldsDetected:
@@ -253,6 +258,7 @@ export function usePopupState(): PopupState {
     status,
     tab,
     loading,
+    applicationSession,
     scanState,
     scan,
     progress,

@@ -21,6 +21,7 @@ import {
   generationCancelResponseSchema,
   documentExtractionSchema,
   documentContentResponseSchema,
+  applicationSessionSchema,
   type AgentError,
   type ApprovedAnswer,
   type ApprovedAnswerInput,
@@ -35,6 +36,7 @@ import {
   type DocumentContentResponse,
   type ModelsResponse,
   type AiGenerationTestResponse,
+  type ApplicationSession,
 } from '@internship-agent/shared';
 import { z } from 'zod';
 import type {
@@ -233,6 +235,26 @@ export async function fetchAgentStatus(): Promise<AgentStatusResult> {
       ? { selectedResume: resolveResume(documents.data, settings.selectedDocumentId) }
       : {}),
   };
+}
+
+export async function getApplicationSession(
+  sessionId: string,
+): Promise<AgentResult<ApplicationSession>> {
+  return request({
+    method: 'GET',
+    path: `/application-sessions/${encodeURIComponent(sessionId)}`,
+    schema: applicationSessionSchema,
+  });
+}
+
+export async function claimApplicationSession(
+  sessionId: string,
+): Promise<AgentResult<ApplicationSession>> {
+  return request({
+    method: 'POST',
+    path: `/application-sessions/${encodeURIComponent(sessionId)}/claim`,
+    schema: applicationSessionSchema,
+  });
 }
 
 export function getProfile(): Promise<AgentResult<ProfilePayload>> {

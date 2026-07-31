@@ -41,6 +41,8 @@ import {
   listOllamaModels,
   testAiGeneration,
   workerFailure,
+  getApplicationSession,
+  claimApplicationSession,
 } from './agentClient.js';
 import { clearLastScan, loadLastScan, saveLastScan } from '../storage/scans.js';
 import {
@@ -65,6 +67,10 @@ import {
   saveAnswerGenerationStore,
 } from '../storage/generatedAnswers.js';
 import { loadSettings } from '../storage/settings.js';
+import {
+  loadApplicationSession,
+  saveApplicationSession,
+} from '../storage/applicationSession.js';
 import {
   answerText,
   applyRecordToPlan,
@@ -176,16 +182,24 @@ async function buildPlan(scanId?: string): Promise<unknown> {
   if (!scan || (scanId && scan.id !== scanId)) {
     return { error: fillFailure('INVALID_FILL_PLAN', 'No matching completed scan exists.').error };
   }
-  const [profileResult, answersResult, documentsResult, settings] = await Promise.all([
+  const [profileResult, answersResult, documentsResult, settings, applicationSession] = await Promise.all([
     getProfile(),
     listAnswers(),
     listDocuments(),
     loadSettings(),
+    loadApplicationSession(),
   ]);
   if (profileResult.error) return { error: profileResult.error };
   if (answersResult.error) return { error: answersResult.error };
   if (documentsResult.error) return { error: documentsResult.error };
   const selectedDocument =
+    (applicationSession &&
+    applicationSession.tailoredResumeDocumentId &&
+    samePageUrl(applicationSession.officialApplyUrl ?? applicationSession.url, scan.url)
+      ? documentsResult.data.documents.find(
+          (document) => document.id === applicationSession.tailoredResumeDocumentId,
+        )
+      : undefined) ??
     documentsResult.data.documents.find(
       (document) => document.id === settings.selectedDocumentId,
     ) ??
@@ -201,6 +215,42 @@ async function buildPlan(scanId?: string): Promise<unknown> {
   await persistPlan(plan);
   await clearAnswerGenerationStore();
   return { plan };
+}
+
+function samePageUrl(left: string, right: string): boolean {
+  try {
+    const a = new URL(left);
+    const b = new URL(right);
+    a.hash = '';
+    b.hash = '';
+    return a.toString() === b.toString();
+  } catch {
+    return false;
+  }
+}
+
+async function claimSessionForTab(
+  sessionId: string,
+  tabUrl: string | undefined,
+): Promise<unknown> {
+  const current = await getApplicationSession(sessionId);
+  if (current.error) return current;
+  const expectedUrl = current.data.officialApplyUrl ?? current.data.url;
+  if (!tabUrl || !samePageUrl(expectedUrl, tabUrl)) {
+    return {
+      error: answerFailure(
+        'VALIDATION_FAILED',
+        'The application session does not match the page that attempted to claim it.',
+      ),
+    };
+  }
+  const result =
+    current.data.status === 'available'
+      ? await claimApplicationSession(sessionId)
+      : current;
+  if (result.error) return result;
+  await saveApplicationSession(result.data);
+  return result;
 }
 
 function answerFailure(code: AgentError['code'], message: string, fieldId?: string): AgentError {
@@ -853,10 +903,14 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 /** Maps a message to the client call that serves it. */
-function handle(message: ExtensionMessage): Promise<unknown> | null {
+function handle(message: ExtensionMessage, sender?: chrome.runtime.MessageSender): Promise<unknown> | null {
   switch (message.type) {
     case 'AGENT_STATUS_REQUEST':
       return fetchAgentStatus();
+    case 'APPLICATION_SESSION_CLAIM':
+      return claimSessionForTab(message.sessionId, sender?.tab?.url);
+    case 'GET_APPLICATION_SESSION':
+      return loadApplicationSession().then((data) => ({ data }));
     case 'OLLAMA_MODELS_LIST':
       return listOllamaModels();
     case 'TEST_AI_GENERATION':
@@ -1052,7 +1106,7 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
   }
 }
 
-chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   if (
     typeof message === 'object' &&
     message !== null &&
@@ -1128,7 +1182,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
     }
   }
   trace('worker', 'received request', { type: message?.type });
-  const pending = handle(message);
+  const pending = handle(message, sender);
 
   if (!pending) {
     // Returning false makes Chrome resolve the sender's promise with `undefined`.

@@ -36,6 +36,7 @@ export function App(): JSX.Element {
     status,
     tab,
     loading,
+    applicationSession,
     refresh,
     scanState,
     scan,
@@ -149,6 +150,18 @@ export function App(): JSX.Element {
   const eligible = Boolean(tab.url?.startsWith('http') && tab.contentScriptReachable);
   const currentPlan = plan?.url === tab.url && plan.scanId === currentScan?.id ? plan : null;
   const approvedCount = currentPlan?.actions.filter((action) => action.approved).length ?? 0;
+  const handoffSession = (() => {
+    if (!applicationSession || !tab.url) return null;
+    try {
+      const expected = new URL(applicationSession.officialApplyUrl ?? applicationSession.url);
+      const actual = new URL(tab.url);
+      expected.hash = '';
+      actual.hash = '';
+      return expected.toString() === actual.toString() ? applicationSession : null;
+    } catch {
+      return null;
+    }
+  })();
 
   return (
     <main className="popup">
@@ -226,6 +239,22 @@ export function App(): JSX.Element {
           detail={resume.detail}
         />
       </section>
+      {handoffSession ? (
+        <section aria-label="Application session" className="panel">
+          <StatusRow label="Company" tone="ok" value={handoffSession.company ?? 'Unavailable'} />
+          <StatusRow label="Job Title" tone="ok" value={handoffSession.jobTitle ?? 'Unavailable'} />
+          <StatusRow
+            label="Tailored Résumé"
+            tone={handoffSession.tailoredResumeDocumentId ? 'ok' : 'warn'}
+            value={handoffSession.tailoredResumeDocumentId ? 'Ready' : 'Unavailable'}
+          />
+          <StatusRow
+            label="Tailored Cover Letter"
+            tone={handoffSession.tailoredCoverLetterDocumentId ? 'ok' : 'warn'}
+            value={handoffSession.tailoredCoverLetterDocumentId ? 'Ready' : 'Unavailable'}
+          />
+        </section>
+      ) : null}
       {scanState === 'scanning' ? (
         <section className="panel scan-progress" aria-live="polite">
           <strong>{progress?.message ?? 'Starting read-only scan…'}</strong>

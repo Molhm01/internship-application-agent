@@ -28,6 +28,7 @@ import type {
   AnswerGenerationStore,
   QuestionClassificationResult,
   SettingsUpdatedMessage,
+  ApplicationSession,
 } from '@internship-agent/shared';
 import {
   clearLastScanResponseSchema,
@@ -58,6 +59,8 @@ import {
 export type ExtensionMessage =
   | { type: 'AGENT_STATUS_REQUEST' }
   | { type: 'CONTENT_PING' }
+  | { type: 'APPLICATION_SESSION_CLAIM'; sessionId: string }
+  | { type: 'GET_APPLICATION_SESSION' }
   | { type: 'PROFILE_GET' }
   | { type: 'PROFILE_SAVE'; profile: ProfileUpdate }
   | { type: 'DOCUMENTS_LIST' }
@@ -124,7 +127,9 @@ export interface ContentPingResult {
 
 export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends 'AGENT_STATUS_REQUEST'
   ? AgentStatusResult
-  : M extends 'OLLAMA_MODELS_LIST'
+  : M extends 'APPLICATION_SESSION_CLAIM' | 'GET_APPLICATION_SESSION'
+    ? AgentResult<ApplicationSession | null>
+    : M extends 'OLLAMA_MODELS_LIST'
     ? AgentResult<ModelsResponse>
     : M extends 'TEST_AI_GENERATION'
       ? AgentResult<AiGenerationTestResponse>

@@ -19,9 +19,12 @@ import { scanApplication } from '../scanner/scanApplication.js';
 import { ATS_ADAPTERS } from '../scanner/adapters.js';
 import { completeReport, createRunningReport } from '../reporter/fillReporter.js';
 import { validatePageIdentity } from '../executor/pageProtection.js';
+import { claimSessionFromCurrentPage } from './applicationSessionHandoff.js';
 
 const controllers = new Map<string, AbortController>();
 const fillControllers = new Map<string, AbortController>();
+
+void claimSessionFromCurrentPage();
 
 function scanError(
   code: AgentError['code'],
