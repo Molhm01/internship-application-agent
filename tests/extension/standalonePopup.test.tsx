@@ -56,6 +56,8 @@ const scan = applicationScanResultSchema.parse({
     radio: 0,
     checkbox: 0,
     file: 0,
+    credentialFields: 0,
+    navigationActions: 0,
   },
   durationMs: 5,
   status: 'completed',

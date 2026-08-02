@@ -27,6 +27,7 @@ export const questionControlTypeSchema = z.enum([
   'email',
   'phone',
   'number',
+  'password',
   'url',
   'date',
   'month',

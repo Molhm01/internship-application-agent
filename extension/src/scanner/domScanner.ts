@@ -54,7 +54,15 @@ const CONTROL_SELECTOR = [
 /** Roles whose element is a container for other controls, not a control. */
 const CONTAINER_ROLES = new Set(['radiogroup']);
 
-const IGNORED_INPUT_TYPES = new Set(['button', 'submit', 'reset', 'image', 'password']);
+/**
+ * Input types that are never a question.
+ *
+ * `password` used to be here, which is why a Taleo sign-in page reported one
+ * field: the username was found and the password was discarded, so the page
+ * could not even be recognized as a login. A password is scanned like any other
+ * control; what protects it is that only the credential vault can fill it.
+ */
+const IGNORED_INPUT_TYPES = new Set(['button', 'submit', 'reset', 'image']);
 const APPLICATION_HINT =
   /\b(apply|application|candidate|education|experience|resume|cover|name|email|phone|address|school|degree|work|eligib|sponsor|gender|veteran|disabil)/i;
 const SEARCH_HINT = /\b(search|site search|navigation|newsletter|promo|coupon)\b/i;
@@ -345,6 +353,8 @@ function inferType(element: HTMLElement, grouped = false): FieldType {
       return 'date';
     case 'url':
       return 'url';
+    case 'password':
+      return 'password';
     case 'file':
       return 'file';
     case 'radio':
@@ -843,6 +853,47 @@ export async function scanDom(
 
 export function isSupportedField(field: DetectedField): boolean {
   return FILLABLE_FIELD_TYPES.includes(field.fieldType);
+}
+
+/**
+ * Every control that could move the applicant somewhere: buttons, submit
+ * inputs, and links.
+ *
+ * These are deliberately *not* returned as fields. A login button is not a
+ * question, and counting it as one is how "New User" and "Apply as Guest" ended
+ * up invisible while the page was reported as having a single field.
+ */
+export function collectNavigationControls(
+  document: Document,
+): Array<{ label: string; selector: string }> {
+  const selector = [
+    'button',
+    'input[type="submit"]',
+    'input[type="button"]',
+    'a[href]',
+    '[role="button"]',
+    '[role="link"]',
+  ].join(',');
+
+  const seen = new Set<string>();
+  const controls: Array<{ label: string; selector: string }> = [];
+  for (const root of collectRoots(document, [])) {
+    for (const element of root.querySelectorAll<HTMLElement>(selector)) {
+      if (!isVisibleControl(element)) continue;
+      const label = cleanText(
+        element instanceof HTMLInputElement
+          ? element.value || element.getAttribute('aria-label')
+          : (element.textContent ?? element.getAttribute('aria-label')),
+      ).slice(0, 200);
+      if (!label) continue;
+      const path = selectorFor(element);
+      const key = `${label}|${path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      controls.push({ label, selector: path });
+    }
+  }
+  return controls;
 }
 
 /** How long the DOM must be quiet before a mutation-driven rescan is worth it. */

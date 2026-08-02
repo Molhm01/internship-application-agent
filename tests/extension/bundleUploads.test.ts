@@ -70,6 +70,8 @@ function scanOf(fields: DetectedField[]): ApplicationScanResult {
       radio: 0,
       checkbox: 0,
       file: fields.length,
+      credentialFields: 0,
+      navigationActions: 0,
     },
     durationMs: 3,
     status: 'completed',

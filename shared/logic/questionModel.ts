@@ -24,6 +24,7 @@ const CONTROL_TYPE_BY_FIELD_TYPE: Record<FieldType, QuestionControlType> = {
   email: 'email',
   tel: 'phone',
   number: 'number',
+  password: 'password',
   date: 'date',
   url: 'url',
   select: 'select',

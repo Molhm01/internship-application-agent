@@ -48,6 +48,11 @@ export interface AdapterHints {
   iframeSelectors?: readonly string[];
   /** True when only the currently rendered step is ever present. */
   multiStep?: boolean;
+  /**
+   * True when this vendor puts a sign-in, a New User route or a guest route in
+   * front of the application, so a page here is often not a form at all.
+   */
+  hasAccountFlow?: boolean;
 }
 
 const GENERIC_HINTS: AdapterHints = {
@@ -342,8 +347,15 @@ export const ATS_ADAPTERS: readonly AtsAdapter[] = [
   new BrowserAdapter({
     id: 'taleo',
     priority: 60,
-    hosts: /(^|\.)taleo\.net$/i,
-    markers: ['[id*="taleo"]', '[class*="taleo"]', '#requisitionDescriptionInterface'],
+    hosts: /(^|\.)(taleo|taleocloud)\.net$/i,
+    markers: [
+      '[id*="taleo"]',
+      '[class*="taleo"]',
+      '#requisitionDescriptionInterface',
+      '#careerSection',
+      '[id^="careerSection"]',
+      'form[name="dynamicForm"]',
+    ],
     supported: true,
     selectors: {
       jobTitle: ['.titlepage', 'h1'],
@@ -351,11 +363,14 @@ export const ATS_ADAPTERS: readonly AtsAdapter[] = [
       description: ['#requisitionDescriptionInterface'],
     },
     hints: {
-      sectionSelectors: ['.editable-block', 'fieldset'],
-      uploadSelectors: ['input[type="file"]'],
-      navigationText: /\b(next|save and continue)\b/i,
+      sectionSelectors: ['.editable-block', 'fieldset', '.pagination-block', '[id*="Block"]'],
+      uploadSelectors: ['input[type="file"]', '[id*="fileUpload"]'],
+      navigationText: /\b(next|save and continue|save and go back)\b/i,
       finalSubmitText: /\b(submit|finish)\b/i,
       multiStep: true,
+      // Taleo puts a sign-in, a New User route and a guest route in front of
+      // the application, so a page here is frequently not a form at all.
+      hasAccountFlow: true,
     },
   }),
   new BrowserAdapter({

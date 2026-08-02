@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Login - Taleo</title>
+  </head>
+  <body>
+    <!--
+      The page from the reported failure. A returning-user sign-in beside a
+      New User route and a guest route.
+
+      Taleo puts the labels in table cells rather than in label[for], names the
+      controls with its own prefixes, and renders the two alternative routes as
+      links. A scanner that ignores password inputs reports exactly one field
+      here, which is what happened.
+    -->
+    <div id="requisitionDescriptionInterface">
+      <h1 class="titlepage">Software Engineering Intern</h1>
+      <div id="loginPanel">
+        <h2>Returning Users</h2>
+        <table>
+          <tr>
+            <td><label for="userNameInput">User Name</label></td>
+            <td><input type="text" id="userNameInput" name="userName" size="30" /></td>
+          </tr>
+          <tr>
+            <td><label for="passwordInput">Password</label></td>
+            <td><input type="password" id="passwordInput" name="password" size="30" /></td>
+          </tr>
+        </table>
+        <input type="submit" id="loginButton" value="Login" />
+        <a href="/careersection/forgotUserName.ftl">Forgot your user name?</a>
+        <a href="/careersection/forgotPassword.ftl">Forgot your password?</a>
+      </div>
+
+      <div id="newUserPanel">
+        <h2>New Users</h2>
+        <p>If you have not created an account, please register.</p>
+        <a href="/careersection/createaccount.ftl" id="newUserLink">New User</a>
+      </div>
+
+      <div id="guestPanel">
+        <a href="/careersection/application.ftl?guest=true" id="guestLink">Apply as Guest</a>
+      </div>
+    </div>
+  </body>
+</html>

@@ -80,6 +80,8 @@ export function emptyApplicationScan(url: string): ApplicationScanResult {
       radio: 0,
       checkbox: 0,
       file: 0,
+      credentialFields: 0,
+      navigationActions: 0,
     },
     durationMs: 1,
     status: 'completed',

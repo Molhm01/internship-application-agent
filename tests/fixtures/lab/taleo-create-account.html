@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Create Account - Taleo</title>
+  </head>
+  <body>
+    <!--
+      Registration: two password boxes, a security question, and a consent
+      checkbox. Nothing here may be submitted without the applicant seeing the
+      email and password that would be used.
+    -->
+    <div id="requisitionDescriptionInterface">
+      <h2>Create an Account</h2>
+      <label for="email">Email Address</label>
+      <input type="email" id="email" name="email" />
+
+      <label for="userName">User Name</label>
+      <input type="text" id="userName" name="userName" />
+
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" />
+
+      <label for="passwordConfirm">Re-enter Password</label>
+      <input type="password" id="passwordConfirm" name="passwordConfirm" />
+
+      <label for="securityQuestion">Security Question</label>
+      <select id="securityQuestion" name="securityQuestion">
+        <option value="">Select a question</option>
+        <option value="pet">What was the name of your first pet?</option>
+        <option value="city">In what city were you born?</option>
+      </select>
+
+      <label for="securityAnswer">Security Answer</label>
+      <input type="text" id="securityAnswer" name="securityAnswer" />
+
+      <label>
+        <input type="checkbox" id="terms" name="terms" />
+        I have read and accept the Privacy Agreement.
+      </label>
+
+      <button type="button" id="back">Back</button>
+      <button type="submit" id="register">Register</button>
+    </div>
+  </body>
+</html>

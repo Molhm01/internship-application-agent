@@ -285,6 +285,8 @@ describe('job context and export safety', () => {
         radio: 0,
         checkbox: 0,
         file: 0,
+        credentialFields: 0,
+        navigationActions: 0,
         bySection: {},
       },
       durationMs: 10,

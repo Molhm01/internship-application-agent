@@ -1,11 +1,12 @@
 import {
   FIELD_SECTIONS,
+  classifyPage,
   applicationScanResultSchema,
   type ApplicationScanResult,
   type ScanProgress,
   type ScanStatistics,
 } from '@internship-agent/shared';
-import { isSupportedField } from './domScanner.js';
+import { collectNavigationControls, isSupportedField } from './domScanner.js';
 import { selectAdapter, type BrowserScanContext } from './adapters.js';
 
 export interface ScanApplicationOptions {
@@ -21,7 +22,10 @@ function pageId(url: string): string {
   return `page-${(hash >>> 0).toString(36)}`;
 }
 
-function statistics(fields: ApplicationScanResult['fields']): ScanStatistics {
+function statistics(
+  fields: ApplicationScanResult['fields'],
+  navigationActions: number,
+): ScanStatistics {
   const bySection = Object.fromEntries(FIELD_SECTIONS.map((section) => [section, 0])) as Record<
     (typeof FIELD_SECTIONS)[number],
     number
@@ -42,6 +46,8 @@ function statistics(fields: ApplicationScanResult['fields']): ScanStatistics {
     radio: count('radio'),
     checkbox: count('checkbox'),
     file: count('file'),
+    credentialFields: count('password'),
+    navigationActions,
     bySection,
   };
 }
@@ -101,6 +107,16 @@ export async function scanApplication({
       `${selected.adapter.displayName} is detected but dedicated support is unavailable.`,
     );
   }
+  // Which page this is, and where it leads. Navigation controls are collected
+  // separately from fields on purpose: a Login button is not a question.
+  const navigation = classifyPage({
+    url: initialUrl,
+    title: document.title,
+    bodyText: (document.body?.innerText ?? '').slice(0, 20_000),
+    fields,
+    controls: collectNavigationControls(document),
+  });
+
   emit('validating', 'Validating scan result…', 92, fields.length);
   const uniqueWarnings = [...new Set(warnings)];
   const result = applicationScanResultSchema.parse({
@@ -117,8 +133,9 @@ export async function scanApplication({
     },
     jobContext,
     fields,
+    navigation,
     warnings: uniqueWarnings,
-    statistics: statistics(fields),
+    statistics: statistics(fields, navigation.actions.length),
     durationMs: Math.round(performance.now() - started),
     status: uniqueWarnings.length ? 'completed_with_warnings' : 'completed',
     readOnly: true,

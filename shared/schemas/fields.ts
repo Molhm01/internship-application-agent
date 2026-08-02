@@ -9,6 +9,10 @@ export const fieldTypeSchema = z.enum([
   'email',
   'tel',
   'number',
+  // An account password. Scanned so login and registration pages are
+  // understood; only ever filled from the encrypted credential vault, never
+  // from a profile value and never from a model.
+  'password',
   'date',
   'url',
   'select',
@@ -25,6 +29,7 @@ export type FieldType = z.infer<typeof fieldTypeSchema>;
 
 export const FILLABLE_FIELD_TYPES: readonly FieldType[] = [
   'text',
+  'password',
   'textarea',
   'email',
   'tel',
