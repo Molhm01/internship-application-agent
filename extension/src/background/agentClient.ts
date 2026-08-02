@@ -21,7 +21,7 @@ import {
   generationCancelResponseSchema,
   documentExtractionSchema,
   documentContentResponseSchema,
-  applicationSessionSchema,
+  formAnalysisResponseSchema,
   type AgentError,
   type ApprovedAnswer,
   type ApprovedAnswerInput,
@@ -36,7 +36,8 @@ import {
   type DocumentContentResponse,
   type ModelsResponse,
   type AiGenerationTestResponse,
-  type ApplicationSession,
+  type FormAnalysisRequest,
+  type FormAnalysisResponse,
 } from '@internship-agent/shared';
 import { z } from 'zod';
 import type {
@@ -237,23 +238,20 @@ export async function fetchAgentStatus(): Promise<AgentStatusResult> {
   };
 }
 
-export async function getApplicationSession(
-  sessionId: string,
-): Promise<AgentResult<ApplicationSession>> {
-  return request({
-    method: 'GET',
-    path: `/application-sessions/${encodeURIComponent(sessionId)}`,
-    schema: applicationSessionSchema,
-  });
-}
-
-export async function claimApplicationSession(
-  sessionId: string,
-): Promise<AgentResult<ApplicationSession>> {
+/**
+ * One batched analysis for a whole page — never one request per field. The
+ * timeout follows the request, so a page with eighty questions is not judged by
+ * the same clock as one with three.
+ */
+export function analyzeForm(
+  body: FormAnalysisRequest,
+): Promise<AgentResult<FormAnalysisResponse>> {
   return request({
     method: 'POST',
-    path: `/application-sessions/${encodeURIComponent(sessionId)}/claim`,
-    schema: applicationSessionSchema,
+    path: '/ai/analyze-form',
+    schema: formAnalysisResponseSchema,
+    body,
+    timeoutMs: body.timeoutMs + 5_000,
   });
 }
 

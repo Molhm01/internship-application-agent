@@ -11,6 +11,8 @@ import {
   generateBatchResponseSchema,
   generationCancelRequestSchema,
   generationCancelResponseSchema,
+  formAnalysisRequestSchema,
+  formAnalysisResponseSchema,
 } from '@internship-agent/shared';
 import { z } from 'zod';
 import { OllamaGenerationError } from '../ollama/client.js';
@@ -66,6 +68,18 @@ export function registerAiRoutes(app: FastifyInstance, ctx: ServerContext): void
       });
     }
   });
+  /**
+   * Batched page-level analysis. One request per page — the extension has
+   * already resolved everything it could deterministically, and sends only the
+   * remainder together with the facts those questions could need.
+   */
+  app.post('/ai/analyze-form', async (request, reply) => {
+    const parsed = parseBody(formAnalysisRequestSchema, request.body);
+    if ('error' in parsed) return fail(reply, parsed.error);
+    const result = await ctx.formAnalysis.analyze(parsed.data);
+    return sendValidated(reply, formAnalysisResponseSchema, result);
+  });
+
   app.post('/ai/classify-question', async (request, reply) => {
     const parsed = parseBody(classifyQuestionRequestSchema, request.body);
     if (!parsed.ok) return reply.status(422).send({ ok: false, error: parsed.error });

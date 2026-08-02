@@ -9,6 +9,7 @@ import type { ExtractionRepository } from '../documents/extractionRepository.js'
 import type { ResumeExtractor } from '../documents/extractor.js';
 import type { GenerationRepository } from '../ai/generationRepository.js';
 import type { AiAnswerService } from '../ai/service.js';
+import type { FormAnalysisService } from '../ai/formAnalysis.js';
 
 export interface ServerContext {
   readonly db: AgentDatabase;
@@ -24,6 +25,8 @@ export interface ServerContext {
   readonly resumeExtractor: ResumeExtractor;
   readonly generations: GenerationRepository;
   readonly aiAnswers: AiAnswerService;
+  /** Batched, page-level question analysis. One request per page, never per field. */
+  readonly formAnalysis: FormAnalysisService;
 }
 
 declare module 'fastify' {

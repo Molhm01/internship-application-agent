@@ -135,7 +135,7 @@ describe('routes reserved for later milestones', () => {
     server = await createTestServer();
     const response = await server.app.inject({
       method: 'POST',
-      url: '/applications/analyze',
+      url: '/applications/plan',
       headers: { [AUTH_HEADER]: TEST_TOKEN },
       payload: {},
     });
@@ -143,12 +143,11 @@ describe('routes reserved for later milestones', () => {
     expect(response.statusCode).toBe(501);
     const error = errorResponseSchema.parse(response.json());
     expect(error.error.code).toBe('NOT_IMPLEMENTED');
-    expect(error.error.message).toContain('Milestone 2');
+    expect(error.error.message).toContain('Milestone 4');
     expect(error.error.recoverable).toBe(false);
   });
 
   it.each([
-    ['POST', '/applications/analyze'],
     ['POST', '/applications/plan'],
     ['POST', '/applications/report'],
     ['GET', '/applications/run-123'],

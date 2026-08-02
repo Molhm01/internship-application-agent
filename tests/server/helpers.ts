@@ -16,6 +16,7 @@ import { createExtractionRepository } from '../../agent-server/src/documents/ext
 import { createResumeExtractor } from '../../agent-server/src/documents/extractor.js';
 import { createGenerationRepository } from '../../agent-server/src/ai/generationRepository.js';
 import { createAiAnswerService } from '../../agent-server/src/ai/service.js';
+import { createFormAnalysisService } from '../../agent-server/src/ai/formAnalysis.js';
 
 export const TEST_TOKEN = 'test-token-0123456789abcdef0123456789abcdef';
 
@@ -117,6 +118,7 @@ export async function createTestServer(
       resumeExtractor,
       generations,
       aiAnswers,
+      formAnalysis: createFormAnalysisService(ollama, silentLogger),
     },
     allowLocalOrigins: true,
     ...(options.rateLimiter ? { rateLimiter: options.rateLimiter } : {}),

@@ -76,6 +76,40 @@ const RULES: readonly Rule[] = [
   { question: 'pronouns', patterns: [/\bpronouns?\b/] },
   { question: 'full_name', patterns: [/\b(full|legal|your) name\b/, /^name$/] },
 
+  // Right to work. Before Contact: "permission to work in the country of
+  // employment" names a country and is not the address-country question.
+  {
+    question: 'work_authorization',
+    patterns: [
+      /\b(legally )?authoriz(ed|ation) to work\b/,
+      /\bwork authoriz(ed|ation)\b/,
+      /\beligible to work\b/,
+      /\bright to work\b/,
+      // Equivalent wordings employers actually use. Each asks the same thing as
+      // "Are you legally authorized to work?" and must reach the same saved
+      // fact rather than falling through as an unrecognized question.
+      /\bpermission to work\b/,
+      /\b(legally )?permitted to work\b/,
+      /\bemployment eligibilit(y|ies)\b/,
+      /\beligibility to work\b/,
+      /\bwork (lawfully|legally)\b/,
+      /\blegal(ly)? (able|entitled) to work\b/,
+      /\bwork permit\b(?!.*\bsponsor)/,
+    ],
+  },
+  {
+    question: 'sponsorship_required',
+    patterns: [
+      /\bsponsor(ship|ing|ed)?\b/,
+      /\bvisa\b.*\b(require|need|support|status)\b/,
+      /\b(require|need)\b.*\bvisa\b/,
+      /\bimmigration (support|status|sponsorship)\b/,
+      /\bh1 ?b\b/,
+      /\bemployment authorization\b.*\b(sponsor|support)\b/,
+    ],
+  },
+  { question: 'citizenship', patterns: [/\bcitizen(ship)?\b/, /\bnationality\b/] },
+
   // Contact
   { question: 'email', patterns: [/\be ?mail\b/] },
   // Before both `phone` and `country`: a "Phone country code" control is neither
@@ -164,37 +198,6 @@ const RULES: readonly Rule[] = [
   },
 
   // Eligibility
-  {
-    question: 'work_authorization',
-    patterns: [
-      /\b(legally )?authoriz(ed|ation) to work\b/,
-      /\bwork authoriz(ed|ation)\b/,
-      /\beligible to work\b/,
-      /\bright to work\b/,
-      // Equivalent wordings employers actually use. Each asks the same thing as
-      // "Are you legally authorized to work?" and must reach the same saved
-      // fact rather than falling through as an unrecognized question.
-      /\bpermission to work\b/,
-      /\b(legally )?permitted to work\b/,
-      /\bemployment eligibilit(y|ies)\b/,
-      /\beligibility to work\b/,
-      /\bwork (lawfully|legally)\b/,
-      /\blegal(ly)? (able|entitled) to work\b/,
-      /\bwork permit\b(?!.*\bsponsor)/,
-    ],
-  },
-  {
-    question: 'sponsorship_required',
-    patterns: [
-      /\bsponsor(ship|ing|ed)?\b/,
-      /\bvisa\b.*\b(require|need|support|status)\b/,
-      /\b(require|need)\b.*\bvisa\b/,
-      /\bimmigration (support|status|sponsorship)\b/,
-      /\bh1 ?b\b/,
-      /\bemployment authorization\b.*\b(sponsor|support)\b/,
-    ],
-  },
-  { question: 'citizenship', patterns: [/\bcitizen(ship)?\b/, /\bnationality\b/] },
   { question: 'willing_to_relocate', patterns: [/\brelocat(e|ion)\b/, /\bwilling to move\b/] },
   { question: 'willing_to_travel', patterns: [/\btravel\b/] },
   {
@@ -220,7 +223,7 @@ const RULES: readonly Rule[] = [
       // "When are you available to start?" — the words are separated, which the
       // adjacent-word patterns above miss.
       /\b(available|availability)\b.*\bto start\b/,
-      /\bwhen (are|can) you\b.*\bstart\b/,
+      /\bwhen (are|can|could|would|will) you\b.*\bstart\b/,
     ],
   },
   {

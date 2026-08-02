@@ -15,6 +15,7 @@ import { createExtractionRepository } from './documents/extractionRepository.js'
 import { createResumeExtractor } from './documents/extractor.js';
 import { createGenerationRepository } from './ai/generationRepository.js';
 import { createAiAnswerService } from './ai/service.js';
+import { createFormAnalysisService } from './ai/formAnalysis.js';
 
 async function main(): Promise<void> {
   const logger = createLogger({ level: config.logLevel, logDir: config.logDir });
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
     resumeExtractor,
     generations,
     aiAnswers,
+    formAnalysis: createFormAnalysisService(ollama, logger.child('form-analysis')),
   };
 
   const app = await buildServer({

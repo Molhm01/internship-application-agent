@@ -14,7 +14,6 @@ interface PlannedRoute {
  * misconfigured server, and so no stub can ever fake a success response.
  */
 const PLANNED_ROUTES: readonly PlannedRoute[] = [
-  { method: 'POST', url: '/applications/analyze', milestone: 'Milestone 2 — form analysis' },
   { method: 'POST', url: '/applications/plan', milestone: 'Milestone 4 — Ollama planning' },
   {
     method: 'POST',

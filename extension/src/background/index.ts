@@ -41,6 +41,7 @@ import {
   getDocumentContent,
   listOllamaModels,
   testAiGeneration,
+  analyzeForm,
   workerFailure,
 } from './agentClient.js';
 import { clearLastScan, loadLastScan, saveLastScan } from '../storage/scans.js';
@@ -68,12 +69,22 @@ import {
 import { loadSettings } from '../storage/settings.js';
 import {
   bundleForUrl,
+  encodeBase64,
+  readBundleDocument,
   deleteBundle,
   listBundles,
   loadActiveBundle,
   saveBundle,
   setActiveBundle,
 } from '../storage/bundleStore.js';
+import {
+  applyAnalysisToPlan,
+  buildAnalysisRequest,
+} from '../analysis/formAnalysis.js';
+import {
+  attachBundleDocuments,
+  isBundleDocumentReference,
+} from '../uploads/bundleUploads.js';
 import { selectSavedResume } from './standaloneResources.js';
 import {
   answerText,
@@ -200,15 +211,92 @@ async function buildPlan(scanId?: string): Promise<unknown> {
     settings.selectedDocumentId,
     documentsResult.data.defaultResumeId,
   );
-  const plan = buildDeterministicPlan(
+  const bundle = await bundleForUrl(scan.url);
+  let plan = buildDeterministicPlan(
     scan,
     profileResult.data.profile,
     answersResult.data.answers,
     selectedDocument,
   );
+
+  // Documents the website tailored for *this* job outrank whatever generic
+  // resume is registered on the server, so upload actions are rebound before
+  // anything else looks at the plan.
+  if (bundle) plan = attachBundleDocuments(plan, scan, bundle);
+
+  // One batched analysis for everything the deterministic pass could not
+  // settle. A fully resolved page makes no model call at all.
+  const analysisNote = await analyzePage(plan, scan, profileResult.data.profile, answersResult.data.answers, bundle, settings);
+  if (analysisNote.plan) plan = analysisNote.plan;
+
   await persistPlan(plan);
   await clearAnswerGenerationStore();
-  return { plan };
+  return { plan, ...(analysisNote.warnings.length ? { warnings: analysisNote.warnings } : {}) };
+}
+
+/**
+ * Runs the one page-level analysis, if there is anything left to analyze and
+ * the user has local AI switched on. Never throws: a failed analysis leaves the
+ * deterministic plan exactly as it was and reports why.
+ */
+async function analyzePage(
+  plan: DeterministicFillPlan,
+  scan: Awaited<ReturnType<typeof loadLastScan>> & object,
+  profile: Parameters<typeof buildAnalysisRequest>[0]['profile'],
+  answers: Parameters<typeof buildAnalysisRequest>[0]['answers'],
+  bundle: Awaited<ReturnType<typeof bundleForUrl>>,
+  settings: Awaited<ReturnType<typeof loadSettings>>,
+): Promise<{ plan?: DeterministicFillPlan; warnings: string[] }> {
+  if (!settings.aiGenerationEnabled) return { warnings: [] };
+
+  const built = buildAnalysisRequest({
+    scan,
+    plan,
+    profile,
+    answers,
+    bundle,
+    model: settings.ai.generationModel,
+    timeoutMs: settings.ai.generationTimeoutMs,
+  });
+  if (!built.request) return { warnings: [] };
+
+  trace('analysis', 'requesting batched page analysis', {
+    pageId: scan.id,
+    questions: built.request.questions.length,
+    facts: built.request.facts.length,
+    requests: 1,
+  });
+
+  const response = await analyzeForm(built.request);
+  if (response.error) {
+    traceFailure('analysis', 'batched page analysis failed', { code: response.error.code });
+    return { warnings: [`Page analysis did not run: ${response.error.message}`] };
+  }
+
+  const applied = applyAnalysisToPlan(
+    plan,
+    scan,
+    response.data.plan,
+    built.fieldsByQuestionId,
+    built.questions,
+    bundle,
+  );
+  console.info('[agent] page analysis applied', {
+    pageId: scan.id,
+    proposed: response.data.plan.answers.length,
+    applied: applied.applied,
+    discarded: applied.discarded.length,
+    rejectedByServer: response.data.rejected.length,
+    durationMs: response.data.durationMs,
+  });
+  return {
+    plan: applied.plan,
+    warnings: [
+      ...response.data.rejected.map((reason) => `Analysis output rejected: ${reason}`),
+      ...applied.discarded.map((entry) => `Analysis answer discarded: ${entry.reason}`),
+      ...(response.data.error ? [response.data.error.message] : []),
+    ],
+  };
 }
 
 /**
@@ -745,6 +833,48 @@ async function mutatePlan(
   }
 }
 
+/**
+ * Reads a tailored document out of the bundle store and shapes it like a
+ * server-supplied document, so the executor has one upload path rather than two.
+ */
+async function bundleDocumentContent(
+  bundle: Awaited<ReturnType<typeof bundleForUrl>>,
+  documentId: string,
+): Promise<{ data: DocumentContentResponse } | { error: AgentError }> {
+  const document =
+    bundle?.resume?.bytesReference === documentId
+      ? bundle.resume
+      : bundle?.coverLetter?.bytesReference === documentId
+        ? bundle.coverLetter
+        : undefined;
+  if (!document) {
+    return {
+      error: answerFailure(
+        'BUNDLE_DOCUMENT_MISSING',
+        'The tailored document for this upload is no longer in the saved bundle.',
+      ),
+    };
+  }
+  const bytes = await readBundleDocument(document);
+  if (!bytes) {
+    return {
+      error: answerFailure(
+        'BUNDLE_DOCUMENT_MISSING',
+        `The stored bytes for ${document.filename} could not be read.`,
+      ),
+    };
+  }
+  return {
+    data: {
+      id: document.bytesReference,
+      fileName: document.filename,
+      mimeType: document.mimeType,
+      sizeBytes: document.byteLength,
+      contentBase64: encodeBase64(bytes),
+    },
+  };
+}
+
 async function executeApproved(targetUrl?: string): Promise<unknown> {
   const { plan, scan } = await loadSynchronizedPlan();
   if (!plan || !scan || plan.scanId !== scan.id || plan.url !== scan.url) {
@@ -807,11 +937,21 @@ async function executeApproved(targetUrl?: string): Promise<unknown> {
     return fillFailure('ACTION_NOT_APPROVED', 'No fill action is approved.');
   }
   const documentContents: DocumentContentResponse[] = [];
+  const activeBundle = await bundleForUrl(plan.url);
   for (const action of plan.actions.filter(
     (candidate) => candidate.action === 'upload_file' && candidate.approved,
   )) {
     if (!action.documentId) {
       return fillFailure('DOCUMENT_MISSING', 'An approved upload has no document reference.');
+    }
+    // A bundle document is already in the extension. Only a server-registered
+    // document needs a round trip, so the tailored files work with the agent
+    // server closed.
+    if (isBundleDocumentReference(action.documentId)) {
+      const content = await bundleDocumentContent(activeBundle, action.documentId);
+      if ('error' in content) return { error: content.error };
+      documentContents.push(content.data);
+      continue;
     }
     const content = await getDocumentContent(action.documentId);
     if (content.error) return { error: content.error };
