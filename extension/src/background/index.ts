@@ -49,6 +49,8 @@ import {
   clearFillState,
   loadFillPlan,
   loadFillReport,
+  loadAutofillReport,
+  saveAutofillReport,
   saveFillPlan,
   saveFillReport,
 } from '../storage/fill.js';
@@ -92,6 +94,7 @@ import {
   synchronizeGeneratedActions,
   updateManualAnswer,
 } from '../answers/generatedActions.js';
+import { runApplicationAutofill } from '../autofill/orchestrator.js';
 
 const SCAN_TIMEOUT_MS = 20_000;
 const FILL_TIMEOUT_MS = 30_000;
@@ -1045,6 +1048,96 @@ async function cancelScan(scanId?: string, targetUrl?: string): Promise<unknown>
   }
 }
 
+/** The one in-flight autofill run, so a second click cancels rather than races. */
+let activeAutofill: { runId: string; cancelled: boolean } | null = null;
+
+/**
+ * The single "Autofill Application" action.
+ *
+ * This sequences the modules that already exist — it re-implements none of
+ * them. Scanning, planning, analysis, approval policy, execution, and
+ * highlighting each stay where they are, so there is exactly one copy of every
+ * rule and no second path that can drift.
+ */
+async function runAutofill(targetUrl?: string): Promise<unknown> {
+  const state = { runId: `autofill-${crypto.randomUUID()}`, cancelled: false };
+  activeAutofill = state;
+  try {
+    const report = await runApplicationAutofill({
+      loadSettings: async () => (await loadSettings()).autofill,
+      scan: async () => {
+        const response = await startScan(undefined, targetUrl);
+        const parsed = scanApplicationResponseSchema.safeParse(response);
+        if (!parsed.success) {
+          return { error: answerFailure('SCAN_FAILED', 'The application could not be read.') };
+        }
+        return parsed.data.type === 'SCAN_COMPLETE'
+          ? { scan: parsed.data.result }
+          : { error: parsed.data.error };
+      },
+      plan: async (scanId) => {
+        const built = (await buildPlan(scanId)) as {
+          plan?: DeterministicFillPlan;
+          error?: AgentError;
+        };
+        return built.plan ? { plan: built.plan } : { error: built.error };
+      },
+      approve: async (decisions) => {
+        const result = (await mutatePlan((plan) => {
+          let next = plan;
+          for (const [actionId, approved] of decisions) {
+            next = setActionApproval(next, actionId, approved);
+          }
+          return next;
+        })) as { error?: AgentError };
+        return result.error ? { error: result.error } : {};
+      },
+      execute: async () => {
+        const response = (await executeApproved(targetUrl)) as
+          | { type: 'FILL_COMPLETE'; report: FillRunReport }
+          | { type: 'FILL_FAILED'; error: AgentError }
+          | { error: AgentError };
+        if ('report' in response) return { report: response.report };
+        return { error: 'error' in response ? response.error : undefined };
+      },
+      highlight: async (requests, scrollToFirst) => {
+        try {
+          const tab = await activeApplicationTab(targetUrl);
+          await chrome.tabs.sendMessage(tab.id!, {
+            type: 'HIGHLIGHT_REVIEW_FIELDS',
+            requests,
+            scrollToFirst,
+          });
+          return {};
+        } catch (cause) {
+          return {
+            error: answerFailure(
+              'CONTENT_SCRIPT_UNAVAILABLE',
+              `Fields needing review could not be marked on the page: ${
+                cause instanceof Error ? cause.message : String(cause)
+              }`,
+            ),
+          };
+        }
+      },
+      onProgress: (progress) => {
+        void chrome.runtime
+          .sendMessage({ type: 'AUTOFILL_PROGRESS', progress })
+          .catch(() => undefined);
+      },
+      isCancelled: () => state.cancelled,
+      // Long enough for a framework to re-render a revealed section, short
+      // enough that five passes stay responsive.
+      waitForStability: () => new Promise((resolve) => setTimeout(resolve, 350)),
+      now: () => new Date().toISOString(),
+    });
+    await saveAutofillReport(report);
+    return { report };
+  } finally {
+    if (activeAutofill === state) activeAutofill = null;
+  }
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
   console.info('[agent] installed', { reason: details.reason });
 });
@@ -1068,6 +1161,35 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return setActiveBundle(message.bundleId).then((bundle) => ({ data: bundle }));
     case 'DELETE_BUNDLE':
       return deleteBundle(message.bundleId).then(() => ({ ok: true as const }));
+    case 'RUN_APPLICATION_AUTOFILL':
+      return runAutofill(message.targetUrl);
+    case 'CANCEL_APPLICATION_AUTOFILL':
+      if (activeAutofill) activeAutofill.cancelled = true;
+      return Promise.resolve({ ok: true });
+    case 'GET_AUTOFILL_REPORT':
+      return loadAutofillReport().then((report) => ({ report }));
+    case 'AUTOFILL_PROGRESS':
+      // Delivered straight to extension-page listeners; the worker only
+      // acknowledges so a closed popup cannot fail the run.
+      return Promise.resolve({ ok: true });
+    case 'FOCUS_REVIEW_FIELD':
+      return activeApplicationTab()
+        .then((tab) =>
+          chrome.tabs.sendMessage(tab.id!, {
+            type: 'FOCUS_REVIEW_FIELD',
+            fieldId: message.fieldId,
+          }),
+        )
+        .then(() => ({ ok: true }))
+        .catch(() => ({ ok: false }));
+    case 'CLEAR_REVIEW_HIGHLIGHTS':
+      return activeApplicationTab()
+        .then((tab) => chrome.tabs.sendMessage(tab.id!, { type: 'CLEAR_REVIEW_HIGHLIGHTS' }))
+        .then(() => ({ ok: true }))
+        .catch(() => ({ ok: false }));
+    case 'HIGHLIGHT_REVIEW_FIELDS':
+      // Handled by the content script, not here.
+      return null;
     case 'OLLAMA_MODELS_LIST':
       return listOllamaModels();
     case 'TEST_AI_GENERATION':

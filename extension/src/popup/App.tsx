@@ -1,6 +1,8 @@
 import { ATS_DISPLAY_NAMES } from '@internship-agent/shared';
 import { StatusRow, type StatusTone } from './StatusRow.js';
 import { usePopupState } from './usePopupState.js';
+import { useAutofillState } from './useAutofillState.js';
+import { AutofillPanel } from './AutofillPanel.js';
 
 const NOT_YET = 'Not analyzed yet';
 
@@ -34,16 +36,8 @@ export function App(): JSX.Element {
     progress,
     scanError,
     cancel,
-    plan,
-    report,
-    fillState,
-    fillProgress,
-    fillError,
-    buildPlan,
-    approveSafe,
-    execute,
-    cancelFill,
   } = usePopupState();
+  const autofill = useAutofillState(tab.url);
   const serverConnected = Boolean(status?.health);
   const health = status?.health;
   const ollama = health?.ollama;
@@ -139,7 +133,6 @@ export function App(): JSX.Element {
           : { tone: 'warn', value: 'Unknown', detail: 'The document list could not be read.' };
   const currentScan = scan?.url === tab.url ? scan : null;
   const eligible = Boolean(tab.url?.startsWith('http') && tab.contentScriptReachable);
-  const currentPlan = plan?.url === tab.url && plan.scanId === currentScan?.id ? plan : null;
   const applicationFormDetected = Boolean(currentScan && currentScan.statistics.total > 0);
 
   return (
@@ -233,54 +226,24 @@ export function App(): JSX.Element {
           <span className="status-row__action">{scanError.suggestedAction}</span>
         </section>
       ) : null}
-      {fillState === 'filling' ? (
-        <section className="panel scan-progress" aria-live="polite">
-          <strong>{fillProgress?.message ?? 'Starting deterministic fill…'}</strong>
-          <progress max={fillProgress?.total || 1} value={fillProgress?.completed ?? 0} />
-          <button type="button" onClick={() => void cancelFill()}>
-            Cancel fill
-          </button>
-        </section>
-      ) : null}
-      {fillError && !status?.error ? (
-        <section className="result result--bad" role="alert">
-          <strong>{fillError.code}</strong> {fillError.message}
-          <span className="status-row__action">{fillError.suggestedAction}</span>
-        </section>
-      ) : null}
-      {report ? (
-        <section className="result" role="status">
-          {report.verifiedActions} verified, {report.failedActions} failed. Review the application
-          and continue manually.
-        </section>
-      ) : null}
-      <section aria-label="Actions" className="popup__actions">
-        {applicationFormDetected ? (
-          <button
-            type="button"
-            className="primary"
-            disabled={!eligible || fillState === 'planning' || fillState === 'filling'}
-            onClick={async () => {
-              const nextPlan = currentPlan ?? (await buildPlan(currentScan?.id));
-              if (!nextPlan) return;
-              const approvedPlan = await approveSafe();
-              if (approvedPlan?.actions.some((action) => action.approved)) {
-                await execute(approvedPlan);
-              }
-            }}
-          >
-            Autofill Application
-            {fillState === 'filling'
-              ? ` (${fillProgress?.completed ?? 0}/${fillProgress?.total})`
-              : null}
-          </button>
-        ) : scanState === 'scanning' || loading ? (
+      {applicationFormDetected || autofill.bundle ? (
+        <AutofillPanel
+          state={autofill}
+          eligible={eligible}
+          fieldsDetected={currentScan?.statistics.total ?? null}
+        />
+      ) : scanState === 'scanning' || loading ? (
+        <section aria-label="Application" className="panel">
           <button type="button" className="primary" disabled>
             Detecting application form…
           </button>
-        ) : (
+        </section>
+      ) : (
+        <section aria-label="Application" className="panel">
           <p>No supported application form detected on this page</p>
-        )}
+        </section>
+      )}
+      <section aria-label="Actions" className="popup__actions">
         <button type="button" className="primary" onClick={openSettings}>
           Open Settings
         </button>

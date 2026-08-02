@@ -20,6 +20,7 @@ import { ATS_ADAPTERS } from '../scanner/adapters.js';
 import { completeReport, createRunningReport } from '../reporter/fillReporter.js';
 import { validatePageIdentity } from '../executor/pageProtection.js';
 import { startBundleBridge } from './bundleBridge.js';
+import { clearHighlights, focusField, highlightField, reviewOrder } from './highlighter.js';
 
 const controllers = new Map<string, AbortController>();
 const fillControllers = new Map<string, AbortController>();
@@ -78,6 +79,31 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
       fieldsDetected: null,
     };
     sendResponse(result);
+    return false;
+  }
+
+  if (raw?.type === 'HIGHLIGHT_REVIEW_FIELDS') {
+    clearHighlights();
+    let drawn = 0;
+    for (const request of raw.requests) {
+      if (highlightField(request)) drawn += 1;
+    }
+    if (raw.scrollToFirst) {
+      const first = reviewOrder()[0];
+      if (first) focusField(first.fieldId);
+    }
+    sendResponse({ ok: true, drawn });
+    return false;
+  }
+
+  if (raw?.type === 'FOCUS_REVIEW_FIELD') {
+    sendResponse({ ok: focusField(raw.fieldId) });
+    return false;
+  }
+
+  if (raw?.type === 'CLEAR_REVIEW_HIGHLIGHTS') {
+    clearHighlights();
+    sendResponse({ ok: true });
     return false;
   }
 

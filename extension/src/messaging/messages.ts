@@ -32,6 +32,9 @@ import type {
   ApplicationBundleTransfer,
   BundleAcknowledgement,
   BundleRejection,
+  ApplicationAutofillReport,
+  AutofillProgress,
+  ReviewReason,
 } from '@internship-agent/shared';
 import {
   clearLastScanResponseSchema,
@@ -67,6 +70,24 @@ export type ExtensionMessage =
   | { type: 'LIST_BUNDLES' }
   | { type: 'SET_ACTIVE_BUNDLE'; bundleId: string }
   | { type: 'DELETE_BUNDLE'; bundleId: string }
+  // One-button autofill: the whole run, start to review summary.
+  | { type: 'RUN_APPLICATION_AUTOFILL'; targetUrl?: string }
+  | { type: 'CANCEL_APPLICATION_AUTOFILL' }
+  | { type: 'GET_AUTOFILL_REPORT' }
+  | { type: 'AUTOFILL_PROGRESS'; progress: AutofillProgress }
+  | {
+      type: 'HIGHLIGHT_REVIEW_FIELDS';
+      requests: ReadonlyArray<{
+        fieldId: string;
+        selector: string;
+        reason: ReviewReason;
+        badge: string;
+        question?: string;
+      }>;
+      scrollToFirst: boolean;
+    }
+  | { type: 'FOCUS_REVIEW_FIELD'; fieldId: string }
+  | { type: 'CLEAR_REVIEW_HIGHLIGHTS' }
   | { type: 'PROFILE_GET' }
   | { type: 'PROFILE_SAVE'; profile: ProfileUpdate }
   | { type: 'DOCUMENTS_LIST' }
@@ -141,6 +162,17 @@ export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends 'A
     ? AgentResult<{ bundles: ApplicationBundle[] }>
     : M extends 'DELETE_BUNDLE'
     ? { ok: true } | { ok: false; error: AgentError }
+    : M extends 'RUN_APPLICATION_AUTOFILL'
+    ? { report: ApplicationAutofillReport } | { error: AgentError }
+    : M extends 'GET_AUTOFILL_REPORT'
+    ? { report: ApplicationAutofillReport | null }
+    : M extends
+          | 'CANCEL_APPLICATION_AUTOFILL'
+          | 'AUTOFILL_PROGRESS'
+          | 'HIGHLIGHT_REVIEW_FIELDS'
+          | 'FOCUS_REVIEW_FIELD'
+          | 'CLEAR_REVIEW_HIGHLIGHTS'
+    ? { ok: boolean }
     : M extends 'OLLAMA_MODELS_LIST'
     ? AgentResult<ModelsResponse>
     : M extends 'TEST_AI_GENERATION'
