@@ -166,6 +166,24 @@ function applyValue(
   dispatchValueEvents(element);
 }
 
+/**
+ * Types a password into a password field.
+ *
+ * Separate from `applyValue` on purpose. The secret arrives as an argument, is
+ * used once, and is never placed on the action, in the plan, in a report, or in
+ * a log line — which is why the verification below checks only the *length* of
+ * what the field ended up holding rather than comparing the value.
+ */
+export function applyPassword(element: HTMLElement, password: string): boolean {
+  if (!(element instanceof HTMLInputElement) || element.type !== 'password') {
+    throw new Error('UNSUPPORTED_CONTROL');
+  }
+  element.focus();
+  setNativeValue(element, password);
+  dispatchValueEvents(element);
+  return element.value.length === password.length && element.value.length > 0;
+}
+
 function decodeBase64(value: string): ArrayBuffer {
   const binary = atob(value);
   const buffer = new ArrayBuffer(binary.length);

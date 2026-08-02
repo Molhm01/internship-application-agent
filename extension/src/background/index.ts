@@ -89,6 +89,12 @@ import {
   updateManualAnswer,
 } from '../answers/generatedActions.js';
 import { runApplicationAutofill } from '../autofill/orchestrator.js';
+import {
+  agentAvailability,
+  availabilityMessage,
+  canAnalyze,
+  clearAgentAvailabilityCache,
+} from './agentAvailability.js';
 
 const SCAN_TIMEOUT_MS = 20_000;
 const FILL_TIMEOUT_MS = 30_000;
@@ -264,6 +270,15 @@ async function analyzePage(
   settings: Awaited<ReturnType<typeof loadSettings>>,
 ): Promise<{ plan?: DeterministicFillPlan; warnings: string[] }> {
   if (!settings.aiGenerationEnabled) return { warnings: [] };
+
+  // One cached health check, not one per field, and a truthful outcome when it
+  // fails: everything the deterministic pass filled stays filled, and the
+  // questions that needed interpreting are reported as pending rather than as
+  // analyzed-and-empty.
+  const availability = await agentAvailability(() => fetchAgentStatus());
+  if (!canAnalyze(availability)) {
+    return { warnings: [availabilityMessage(availability)] };
+  }
 
   const built = buildAnalysisRequest({
     scan,
@@ -1159,6 +1174,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 function handle(message: ExtensionMessage): Promise<unknown> | null {
   switch (message.type) {
     case 'AGENT_STATUS_REQUEST':
+      // A fresh request from the UI means the user is asking now; the cache
+      // exists to stop per-field probes, not to stale the popup.
+      clearAgentAvailabilityCache();
       return fetchAgentStatus();
     case 'SAVE_APPLICATION_BUNDLE':
       return storeApplicationBundle(message.bundle);

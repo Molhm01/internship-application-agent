@@ -16,6 +16,8 @@ import {
   type NormalizedQuestion,
   type PlannedAnswer,
   type Profile,
+  isPasswordField,
+  isUsernameField,
 } from '@internship-agent/shared';
 import { calculatePlanStatistics } from '../planner/deterministicPlanner.js';
 
@@ -291,7 +293,15 @@ export function buildAnalysisRequest(input: AnalysisRequestInput): AnalysisReque
   const unresolvedFieldIds = new Set(
     input.plan.actions.filter(isUnresolved).map((action) => action.fieldId),
   );
-  const fields = input.scan.fields.filter((field) => unresolvedFieldIds.has(field.id));
+  const fields = input.scan.fields.filter(
+    (field) =>
+      unresolvedFieldIds.has(field.id) &&
+      // A credential is never described to a model. The question 'what is your
+      // password' has exactly one safe answer path — the vault — and sending
+      // the field at all invites an answer nobody should act on.
+      !isPasswordField(field) &&
+      !isUsernameField(field),
+  );
   const questions = buildNormalizedQuestions(fields);
 
   const fieldsByQuestionId = new Map<string, DetectedField[]>();
@@ -447,6 +457,15 @@ function actionFromAnswer(
     }
     case 'SET_DATE':
       return { ...base, action: 'set_date', proposedValue: answer.value ?? '' };
+    case 'SET_PASSWORD':
+      // The model may name the field; it never supplies the value. Filling is
+      // deferred to the executor, which reads the vault for this origin.
+      return {
+        ...base,
+        action: 'manual_review',
+        requiresReview: true,
+        reason: 'This is the account password. It is filled from your saved credential, or by you.',
+      };
     case 'SET_TEXT': {
       if (!answer.value) return { discarded: 'The proposed text was empty.' };
       return { ...base, action: 'fill_text', proposedValue: answer.value };

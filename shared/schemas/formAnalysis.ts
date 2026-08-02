@@ -128,6 +128,15 @@ export type FormAnalysisRequest = z.infer<typeof formAnalysisRequestSchema>;
  */
 export const PLANNED_ACTIONS = [
   'SET_TEXT',
+  /**
+   * Fill the account password for this origin.
+   *
+   * Deliberately carries no value. The model may say "this field wants the
+   * account password"; it never sees one and can never supply one. The value
+   * comes from the encrypted credential vault at fill time, or the field is
+   * left for the user.
+   */
+  'SET_PASSWORD',
   'SET_DATE',
   'SELECT_OPTION',
   'SELECT_RADIO',
@@ -155,6 +164,16 @@ export const plannedAnswerSchema = z
     reason: z.string().max(1000).default(''),
   })
   .superRefine((answer, ctx) => {
+    // A password never travels in a plan. Anything a model puts here is
+    // discarded rather than trusted, because a value in this position could
+    // only have been invented or echoed back from somewhere it should not be.
+    if (answer.action === 'SET_PASSWORD' && answer.value) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['value'],
+        message: 'SET_PASSWORD must not carry a value; the vault supplies it',
+      });
+    }
     const needsValue: PlannedActionKind[] = ['SET_TEXT', 'SET_DATE', 'SET_CHECKBOX'];
     if (needsValue.includes(answer.action) && !answer.value) {
       ctx.addIssue({

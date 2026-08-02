@@ -64,7 +64,14 @@ export interface NavigationState {
 }
 
 function normalize(value: string): string {
-  return value.replace(/[\s ]+/g, ' ').replace(/[-_+/]+/g, ' ').trim().toLowerCase();
+  // Non-breaking spaces are common in ATS button markup and would otherwise
+  // stop a word boundary from matching.
+  return value
+    .replace(/\s+/gu, ' ')
+    .replace(/[-_+/]+/g, ' ')
+    .replace(/ +/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 /**

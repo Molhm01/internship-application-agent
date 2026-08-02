@@ -42,7 +42,7 @@ describe('the credential vault', () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open('internship-agent-credentials');
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(new Error(String(request.error)));
     });
     const raw = await new Promise<unknown>((resolve, reject) => {
       const request = database
@@ -50,7 +50,7 @@ describe('the credential vault', () => {
         .objectStore('credentials')
         .get(ORIGIN);
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(new Error(String(request.error)));
     });
     database.close();
 
