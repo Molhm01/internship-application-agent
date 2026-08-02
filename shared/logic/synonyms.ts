@@ -35,12 +35,20 @@ export function normalizeOptionLabel(value: string): string {
   for (const [pattern, replacement] of IRREGULAR_CONTRACTIONS) {
     text = text.replace(pattern, replacement);
   }
-  return text
-    .replace(REGULAR_CONTRACTION, '$1 not')
-    .replace(/&/g, ' and ')
-    .replace(/[^\p{L}\p{N}+]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    text
+      .replace(REGULAR_CONTRACTION, '$1 not')
+      .replace(/&/g, ' and ')
+      // A possessive is closed up rather than split, so "Master's Degree"
+      // reduces to "masters degree" and meets a saved "Masters Degree". Turning
+      // the apostrophe into a space instead left "master s degree", which
+      // matched nothing — a silent near-miss on a real degree dropdown. Applied
+      // after contraction expansion so "don't" is already "do not" by now.
+      .replace(/(\p{L})['’]s\b/gu, '$1s')
+      .replace(/[^\p{L}\p{N}+]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 /**

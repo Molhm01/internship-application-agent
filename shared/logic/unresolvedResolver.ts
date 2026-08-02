@@ -169,24 +169,57 @@ export function structuredProfileValue(
 }
 
 /**
- * The website question, resolved in the documented order: personal website,
- * then portfolio, then GitHub. No URL is ever invented — when the user has saved
- * none of the three, the field is left blank.
+ * The website question.
+ *
+ * The user's own choice wins. `preferredWebsiteField` exists precisely because
+ * a fixed precedence picks the wrong link for people whose GitHub matters more
+ * than their portfolio, and a form with one "Website" box gives them no way to
+ * correct it afterwards.
+ *
+ * Only when they have not chosen does the documented fallback order apply:
+ * personal website, then portfolio, then GitHub. No URL is ever invented — with
+ * none of them saved, the field is left blank.
  */
 export function resolveWebsiteValue(
   profile: Profile,
 ): { reference: string; value: string; label: string } | null {
   const personal = profile.personal;
-  const candidates: ReadonlyArray<{ reference: string; label: string; value?: string }> = [
+  const candidates: ReadonlyArray<{
+    key: 'website' | 'portfolio' | 'github' | 'linkedin';
+    reference: string;
+    label: string;
+    value?: string;
+  }> = [
     {
+      key: 'website',
       reference: 'profile.personal.personalWebsite',
       label: 'personal website',
       value: personal.personalWebsite,
     },
-    { reference: 'profile.personal.portfolio', label: 'portfolio', value: personal.portfolio },
-    { reference: 'profile.personal.github', label: 'GitHub', value: personal.github },
+    {
+      key: 'portfolio',
+      reference: 'profile.personal.portfolio',
+      label: 'portfolio',
+      value: personal.portfolio,
+    },
+    { key: 'github', reference: 'profile.personal.github', label: 'GitHub', value: personal.github },
+    {
+      key: 'linkedin',
+      reference: 'profile.personal.linkedin',
+      label: 'LinkedIn',
+      value: personal.linkedin,
+    },
   ];
-  const found = candidates.find((candidate) => candidate.value && candidate.value.length > 0);
+
+  const chosen = personal.preferredWebsiteField
+    ? candidates.find(
+        (candidate) => candidate.key === personal.preferredWebsiteField && candidate.value,
+      )
+    : undefined;
+  // A chosen field that is empty falls through rather than blanking the answer:
+  // the preference says which link they prefer, not that the others are wrong.
+  const found =
+    chosen ?? candidates.slice(0, 3).find((candidate) => candidate.value && candidate.value.length > 0);
   return found?.value
     ? { reference: found.reference, value: found.value, label: found.label }
     : null;

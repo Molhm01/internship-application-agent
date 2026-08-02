@@ -70,7 +70,18 @@ const RULES: readonly Rule[] = [
     question: 'first_name',
     patterns: [/\b(first|given|fore)\s?name\b/, /\bname first\b/],
   },
+  // "I have no middle name" is a checkbox, not the middle-name box, and it has
+  // to beat the middle_name rule whose words it contains.
+  {
+    question: 'no_middle_name',
+    patterns: [
+      /\b(no|without|dont have|do not have)\b.*\bmiddle (name|initial)\b/,
+      /\bmiddle (name|initial)\b.*\b(not applicable|n a|none)\b/,
+    ],
+  },
   { question: 'middle_name', patterns: [/\bmiddle (name|initial)\b/] },
+  // Taleo writes "Name Suffix"; without this the last_name rule claims it.
+  { question: 'name_suffix', patterns: [/\bsuffix\b/] },
   {
     question: 'last_name',
     patterns: [/\b(last|family|sur)\s?name\b/, /\bsurname\b/, /\bname last\b/],
@@ -122,6 +133,14 @@ const RULES: readonly Rule[] = [
   { question: 'citizenship', patterns: [/\bcitizen(ship)?\b/, /\bnationality\b/] },
 
   // Contact
+  // A referral's email is the referral's, not the applicant's, and filling the
+  // applicant's address into it would misidentify the person vouching for them.
+  // It has to beat the generic email rule, so it sits above it rather than with
+  // the other referral rules further down.
+  {
+    question: 'referral_email',
+    patterns: [/\brefer(rer|ral|rals)?\b.*\be ?mail\b/, /\be ?mail\b.*\brefer(rer|ral)\b/],
+  },
   { question: 'email', patterns: [/\be ?mail\b/] },
   // Before both `phone` and `country`: a "Phone country code" control is neither
   // the phone number nor the address country, and matching it as either fills
@@ -152,6 +171,16 @@ const RULES: readonly Rule[] = [
       /\bwhere are you (currently )?(located|based)\b/,
     ],
   },
+  // The nearest metropolitan area is not the city of residence. Reading it as
+  // one is how an unrelated location got chosen on Taleo.
+  {
+    question: 'metro_region',
+    patterns: [
+      /\bmetro(politan)?\b.*\b(area|region|market)\b/,
+      /\b(closest|nearest|primary)\b.*\b(metro(politan)?|major city)\b/,
+      /\bmetro(politan)?\b/,
+    ],
+  },
   { question: 'city', patterns: [/\b(city|town)\b/] },
   { question: 'state', patterns: [/\b(state|province|region)\b/] },
   { question: 'postal_code', patterns: [/\b(zip|postal)\s?code\b/, /\bpostcode\b/, /^zip$/] },
@@ -159,6 +188,17 @@ const RULES: readonly Rule[] = [
 
   // Education
   { question: 'school', patterns: [/\b(school|university|college|institution)\b/] },
+  // "Highest degree awarded" and "the degree you are pursuing" are different
+  // questions with different answers for anyone still studying, so the more
+  // specific one is tested first.
+  {
+    question: 'highest_degree_awarded',
+    patterns: [
+      /\b(highest|most recent)\b.*\b(degree|education|qualification)\b/,
+      /\bdegree\b.*\b(awarded|attained|obtained|completed|earned|received)\b/,
+      /\b(awarded|attained|completed)\b.*\bdegree\b/,
+    ],
+  },
   { question: 'degree', patterns: [/\bdegree\b/, /\blevel of education\b/] },
   { question: 'major', patterns: [/\b(major|discipline|field of study|concentration)\b/] },
   { question: 'minor', patterns: [/\bminor\b/] },
@@ -235,6 +275,10 @@ const RULES: readonly Rule[] = [
       // adjacent-word patterns above miss.
       /\b(available|availability)\b.*\bto start\b/,
       /\bwhen (are|can|could|would|will) you\b.*\bstart\b/,
+      // Taleo's own wording, which none of the patterns above reaches.
+      /^date available$/,
+      /\bdate (of )?availab/,
+      /\bavailable\b.*\bdate\b/,
     ],
   },
   {
@@ -268,6 +312,13 @@ const RULES: readonly Rule[] = [
   { question: 'criminal_history', patterns: [/\b(criminal|felony|convicted|conviction)\b/] },
   { question: 'security_clearance', patterns: [/\b(security )?clearance\b/] },
   {
+    question: 'salary_minimum',
+    patterns: [
+      /\b(minimum|lowest|least)\b.*\b(salary|compensation|pay|rate|wage)\b/,
+      /\b(salary|compensation|pay|rate|wage)\b.*\bminimum\b/,
+    ],
+  },
+  {
     question: 'salary_expectation',
     patterns: [
       // `expect\w*` so "salary expectations" matches as readily as "expected
@@ -297,7 +348,89 @@ const RULES: readonly Rule[] = [
     question: 'how_did_you_hear',
     patterns: [/\bhow did you (hear|find)\b/, /\bwhere did you hear\b/],
   },
+  // Facts about the applicant's relationship with this one employer. Each is
+  // its own question because none has an honest profile-wide default, and
+  // answering one from another would be a fabrication: having applied before is
+  // not the same as having worked there.
+  {
+    question: 'previously_employed',
+    patterns: [
+      /\b(previously|ever|before)\b.*\b(employed|worked)\b/,
+      /\b(employed|worked)\b.*\b(previously|before)\b/,
+      /\bformer employee\b/,
+      /\brehire\b/,
+    ],
+  },
+  {
+    question: 'previously_interviewed',
+    patterns: [/\b(previously|ever|before)\b.*\binterview/, /\binterview(ed)?\b.*\bbefore\b/],
+  },
+  {
+    question: 'previously_applied',
+    patterns: [
+      /\b(previously|ever|before)\b.*\bapplied\b/,
+      /\bapplied\b.*\bbefore\b/,
+      /\bprior application\b/,
+    ],
+  },
+  {
+    question: 'family_member_employed',
+    patterns: [
+      /\b(relative|relatives|family member|spouse|parent|sibling)\b/,
+      /\bnepotism\b/,
+    ],
+  },
+  // A referral's details, before the generic referral rule they contain.
+  {
+    question: 'referral_name',
+    patterns: [
+      /\brefer(rer|ral|rals)?\b.*\bname\b/,
+      /\bname\b.*\brefer(rer|ral)\b/,
+      /\bwho referred you\b/,
+    ],
+  },
+  {
+    question: 'referral_email',
+    patterns: [/\brefer(rer|ral|rals)?\b.*\be ?mail\b/, /\be ?mail\b.*\brefer(rer|ral)\b/],
+  },
+  {
+    question: 'referral_relationship',
+    patterns: [/\brefer(rer|ral|rals)?\b.*\brelationship\b/, /\brelationship\b.*\brefer/],
+  },
+  {
+    question: 'employee_referral',
+    patterns: [
+      /\bemployee referral\b/,
+      /\b(were|are) you referred\b/,
+      /\bdo you have\b.*\breferral\b/,
+    ],
+  },
   { question: 'referral', patterns: [/\brefer(red|ral)\b/] },
+  // Opt-in only. Recognized so it can be deliberately left unchecked rather
+  // than swept up by a generic consent rule.
+  {
+    question: 'marketing_text_consent',
+    patterns: [
+      /\b(text|sms)\b.*\b(message|messages|alert|alerts|notification)\b/,
+      /\b(promotional|marketing)\b.*\b(text|sms|message|messages|email)\b/,
+      /\breceive\b.*\b(promotional|marketing)\b/,
+      /\bopt in\b.*\b(text|sms|marketing)\b/,
+    ],
+  },
+  {
+    question: 'preferred_locations',
+    patterns: [
+      /\b(preferred|desired|interested in)\b.*\blocation/,
+      /\blocation\b.*\b(preference|preferences|interest)/,
+      /\bwhich locations?\b/,
+      /\blocations?\b.*\binterest/,
+      // Anchored: Taleo's multi-select is labelled exactly "Job Location", but
+      // "Would you consider moving to the job location?" is a relocation
+      // question and must keep reaching the willing_to_relocate rule.
+      /^job locations?$/,
+    ],
+  },
+  { question: 'industry', patterns: [/\bindustr(y|ies)\b/, /\bwhich sector\b/] },
   // Written-answer categories, so a generated answer can be grounded in the
   // right evidence rather than in the whole profile.
   {

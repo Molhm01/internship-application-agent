@@ -456,16 +456,49 @@ function optionsFor(elements: HTMLElement[], fieldType: FieldType): FieldOption[
   );
 }
 
+/**
+ * Class names ATSs use to mark a required control.
+ *
+ * Taleo in particular renders the asterisk as a separate styled span outside
+ * the label text, so a purely textual check misses it and the field silently
+ * becomes optional — which is how required fields ended up ignored.
+ */
+const REQUIRED_CLASS = /\b(required|mandatory|is-required|reqfield|asterisk)\b/i;
+
+/**
+ * Validation wording that means "this one is still needed".
+ *
+ * Taleo says "Information needed" and "Manual response required" rather than
+ * marking the input, so these are read as a requirement in their own right.
+ */
+const REQUIRED_TEXT =
+  /(^|\s)\*(\s|$)|\brequired\b|\bmandatory\b|\bthis field is needed\b|\binformation needed\b|\bmanual response required\b|\bplease (complete|answer|provide)\b|\bcannot be (blank|empty)\b|\bmust be (completed|answered|provided)\b/i;
+
 function isRequired(element: HTMLElement, label: string): boolean {
   if ((isInput(element) || isTextArea(element) || isSelect(element)) && element.required) {
     return true;
   }
   if (element.getAttribute('aria-required') === 'true') return true;
-  const containerText = cleanText(
-    element.closest('label, fieldset, .field, .form-field, [data-automation-id*="formField"]')
-      ?.textContent,
+  // An invalid control is one the page has already refused to accept.
+  if (element.getAttribute('aria-invalid') === 'true') return true;
+
+  const container = element.closest(
+    'label, fieldset, .field, .form-field, [data-automation-id*="formField"], [class*="required"], [class*="mandatory"]',
   );
-  return /(^|\s)\*(\s|$)|\brequired\b/i.test(`${label} ${containerText}`);
+
+  // A required marker on the control, its container, or the container's legend.
+  const markedElements = [element, container, container?.querySelector('legend')];
+  for (const candidate of markedElements) {
+    if (!candidate) continue;
+    const className =
+      typeof candidate.className === 'string' ? candidate.className : candidate.getAttribute('class');
+    if (className && REQUIRED_CLASS.test(className)) return true;
+    if (candidate.querySelector('[class*="asterisk"], [class*="required-indicator"]')) return true;
+  }
+
+  const containerText = cleanText(container?.textContent);
+  const legendText = cleanText(container?.querySelector('legend')?.textContent);
+  return REQUIRED_TEXT.test(`${label} ${containerText} ${legendText}`);
 }
 
 function nearestHeading(element: HTMLElement): string {

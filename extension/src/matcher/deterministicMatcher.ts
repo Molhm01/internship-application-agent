@@ -291,6 +291,50 @@ function profileValue(
       reference: 'profile.preferences.discoverySource',
       value: profile.preferences.discoverySource,
     },
+    // Present only when the user said they have no middle name. A blank middle
+    // name is silence, not an answer, and cannot tick this box.
+    no_middle_name: {
+      reference: 'profile.personal.noMiddleName',
+      value: personal.noMiddleName === true ? true : undefined,
+    },
+    name_suffix: { reference: 'profile.personal.suffix', value: personal.suffix },
+    // Its own field, so a form asking for a metro area no longer gets the city
+    // and no longer picks an unrelated location from a list.
+    metro_region: {
+      reference: 'profile.personal.address.metroRegion',
+      value: personal.address.metroRegion,
+    },
+    highest_degree_awarded: {
+      reference: 'profile.education.highestDegreeAwarded',
+      // Deliberately not `education?.degree`: the degree being pursued is a
+      // different answer, and substituting it would be a fabrication for any
+      // applicant who has not finished it yet.
+      value: undefined,
+    },
+    salary_minimum: {
+      reference: 'profile.preferences.salaryMinimum',
+      value: profile.preferences.salaryMinimum,
+    },
+    salary_expectation: {
+      reference: 'profile.preferences.salaryPreference',
+      value: profile.preferences.salaryPreference,
+    },
+    // Opt-in only. `undefined` when absent, so the box stays unticked, and the
+    // schema has no way to say "the user refused" because unticked covers both.
+    marketing_text_consent: {
+      reference: 'profile.preferences.marketingTextConsent',
+      value: profile.preferences.marketingTextConsent === true ? true : undefined,
+    },
+    preferred_locations: {
+      reference: 'profile.preferences.preferredLocations',
+      value: profile.preferences.preferredLocations.length
+        ? profile.preferences.preferredLocations.join(', ')
+        : undefined,
+    },
+    security_clearance: {
+      reference: 'profile.eligibility.securityClearanceStatus',
+      value: profile.eligibility.securityClearanceStatus,
+    },
   };
   const found = direct[canonical];
   return found?.value !== undefined && found.value !== ''

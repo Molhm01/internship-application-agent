@@ -16,3 +16,5 @@ export * from './questionModel.js';
 export * from './navigationState.js';
 export * from './passwordPolicy.js';
 export * from './accountCreation.js';
+export * from './companyRelationship.js';
+export * from './requiredFieldAudit.js';

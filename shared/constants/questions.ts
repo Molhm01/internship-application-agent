@@ -11,6 +11,10 @@ export const CANONICAL_QUESTIONS = [
   'first_name',
   'middle_name',
   'last_name',
+  // A form that asks the applicant to confirm they have no middle name is a
+  // different question from the middle-name box, and a blank cannot answer it.
+  'no_middle_name',
+  'name_suffix',
   'full_name',
   'preferred_name',
   'pronouns',
@@ -24,6 +28,9 @@ export const CANONICAL_QUESTIONS = [
   'postal_code',
   'country',
   'current_location',
+  // The nearest metropolitan area, which Taleo and iCIMS ask for and which is
+  // routinely not the city of residence.
+  'metro_region',
   'phone_country_code',
   // Links
   'linkedin',
@@ -44,6 +51,8 @@ export const CANONICAL_QUESTIONS = [
   // a month picker is never handed a year and vice versa.
   'graduation_month',
   'graduation_year',
+  // Distinct from 'degree', which is what the applicant is currently pursuing.
+  'highest_degree_awarded',
   // Experience
   'employer',
   'job_title',
@@ -88,6 +97,7 @@ export const CANONICAL_QUESTIONS = [
   'criminal_history',
   'security_clearance',
   'salary_expectation',
+  'salary_minimum',
   // Open-ended
   'why_this_company',
   'why_this_role',
@@ -96,6 +106,20 @@ export const CANONICAL_QUESTIONS = [
   'referral',
   'referral_source',
   'employee_referral',
+  'referral_name',
+  'referral_email',
+  'referral_relationship',
+  // Facts about the applicant's relationship with this one employer. None has a
+  // profile-wide default, and an unanswered one becomes a question for the user.
+  'previously_employed',
+  'previously_applied',
+  'previously_interviewed',
+  'family_member_employed',
+  // Opt-in only, and never ticked from silence.
+  'marketing_text_consent',
+  // Which locations and which industry the applicant is interested in.
+  'preferred_locations',
+  'industry',
   'recruiting_event',
   'job_board_source',
   'terms_attestation',
@@ -152,6 +176,8 @@ export const FIELD_SECTION_LABELS: Record<FieldSection, string> = {
 export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection> = {
   first_name: 'personal_information',
   middle_name: 'personal_information',
+  no_middle_name: 'personal_information',
+  name_suffix: 'personal_information',
   last_name: 'personal_information',
   full_name: 'personal_information',
   preferred_name: 'personal_information',
@@ -161,6 +187,7 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   phone: 'contact_information',
   address_line1: 'contact_information',
   address_line2: 'contact_information',
+  metro_region: 'contact_information',
   city: 'contact_information',
   state: 'contact_information',
   postal_code: 'contact_information',
@@ -184,6 +211,7 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   graduation_date: 'education',
   graduation_month: 'education',
   graduation_year: 'education',
+  highest_degree_awarded: 'education',
 
   employer: 'experience',
   job_title: 'experience',
@@ -224,12 +252,23 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   criminal_history: 'demographics',
   security_clearance: 'demographics',
   salary_expectation: 'demographics',
+  salary_minimum: 'additional_questions',
 
   why_this_company: 'additional_questions',
   why_this_role: 'additional_questions',
   additional_information: 'additional_questions',
   how_did_you_hear: 'additional_questions',
   referral: 'additional_questions',
+  referral_name: 'additional_questions',
+  referral_email: 'additional_questions',
+  referral_relationship: 'additional_questions',
+  previously_employed: 'additional_questions',
+  previously_applied: 'additional_questions',
+  previously_interviewed: 'additional_questions',
+  family_member_employed: 'additional_questions',
+  marketing_text_consent: 'additional_questions',
+  preferred_locations: 'additional_questions',
+  industry: 'additional_questions',
   referral_source: 'additional_questions',
   employee_referral: 'additional_questions',
   recruiting_event: 'additional_questions',
