@@ -170,7 +170,11 @@ describe('classifying an upload field', () => {
   it('reports an unlabelled generic slot as unknown rather than guessing résumé', () => {
     expect(
       classifyUploadField(
-        fileField({ label: 'Upload document', normalizedLabel: 'upload document', question: 'Upload document' }),
+        fileField({
+          label: 'Upload document',
+          normalizedLabel: 'upload document',
+          question: 'Upload document',
+        }),
       ),
     ).toBe('unknown');
   });

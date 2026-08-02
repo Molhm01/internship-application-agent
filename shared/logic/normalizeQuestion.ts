@@ -450,9 +450,43 @@ const INTENT_PHRASES: ReadonlyArray<{ question: CanonicalQuestion; phrases: read
 
 /** Words that carry no distinguishing meaning in a question label. */
 const STOP_WORDS = new Set([
-  'a', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'been', 'by', 'can', 'currently', 'do',
-  'does', 'for', 'from', 'have', 'in', 'is', 'it', 'of', 'on', 'or', 'our', 'please', 'the',
-  'this', 'to', 'us', 'we', 'what', 'which', 'will', 'with', 'would', 'you', 'your',
+  'a',
+  'an',
+  'and',
+  'any',
+  'are',
+  'as',
+  'at',
+  'be',
+  'been',
+  'by',
+  'can',
+  'currently',
+  'do',
+  'does',
+  'for',
+  'from',
+  'have',
+  'in',
+  'is',
+  'it',
+  'of',
+  'on',
+  'or',
+  'our',
+  'please',
+  'the',
+  'this',
+  'to',
+  'us',
+  'we',
+  'what',
+  'which',
+  'will',
+  'with',
+  'would',
+  'you',
+  'your',
 ]);
 
 function contentTokens(value: string): Set<string> {
@@ -492,7 +526,9 @@ export function scoreQuestionIntent(rawLabel: string): QuestionMatch {
       if (score > best.confidence) best = { question: entry.question, confidence: score };
     }
   }
-  return best.confidence >= SEMANTIC_MATCH_THRESHOLD ? best : { question: 'unknown', confidence: 0 };
+  return best.confidence >= SEMANTIC_MATCH_THRESHOLD
+    ? best
+    : { question: 'unknown', confidence: 0 };
 }
 
 /**

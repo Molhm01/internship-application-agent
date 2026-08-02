@@ -20,12 +20,7 @@ import { calculatePlanStatistics } from '../planner/deterministicPlanner.js';
  */
 
 export type UploadKind =
-  | 'resume'
-  | 'cover_letter'
-  | 'transcript'
-  | 'portfolio'
-  | 'other'
-  | 'unknown';
+  'resume' | 'cover_letter' | 'transcript' | 'portfolio' | 'other' | 'unknown';
 
 const RESUME_WORDS = /\b(resume|résumé|cv|curriculum vitae)\b/i;
 const COVER_WORDS = /\bcover\s*letter\b|\bcovering\s*letter\b|\bmotivation\s*letter\b/i;

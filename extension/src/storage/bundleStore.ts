@@ -118,7 +118,9 @@ export async function saveBundle(transfer: ApplicationBundleTransfer): Promise<A
         `The ${document.kind} arrived with ${bytes.length} bytes but declared ${document.byteLength}.`,
       );
     }
-    await withStore(BLOB_STORE, 'readwrite', (store) => runRequest(store.put(bytes, bytesReference)));
+    await withStore(BLOB_STORE, 'readwrite', (store) =>
+      runRequest(store.put(bytes, bytesReference)),
+    );
     stored[document.kind] = {
       kind: document.kind,
       filename: document.filename,

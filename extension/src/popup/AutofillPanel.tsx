@@ -84,10 +84,7 @@ export function AutofillPanel({
       {running ? (
         <div className="scan-progress" aria-live="polite">
           <strong>{phaseLabel ?? 'Preparing…'}</strong>
-          <progress
-            max={progress?.fieldsTotal || 1}
-            value={progress?.fieldsCompleted ?? 0}
-          />
+          <progress max={progress?.fieldsTotal || 1} value={progress?.fieldsCompleted ?? 0} />
           <button type="button" onClick={() => void state.cancel()}>
             Cancel
           </button>
@@ -132,6 +129,16 @@ export function AutofillPanel({
         onClick={() => void state.run()}
       >
         {running ? 'Autofilling…' : 'Autofill Application'}
+      </button>
+
+      {/* The full field-by-field view. The popup shows what needs attention;
+          this is for someone who wants to see every question and its source. */}
+      <button
+        type="button"
+        className="link-button"
+        onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('review.html') })}
+      >
+        Review every detected field
       </button>
     </section>
   );

@@ -61,9 +61,10 @@ test('popup reports the live agent server and Ollama connection state', async ()
     await expect(page.locator(`.status-row[data-row="${row}"]`)).not.toBeEmpty();
   }
   await expect(page.locator('.status-row[data-row="Fields Detected"]')).not.toBeEmpty();
-  await expect(page.getByRole('button', { name: 'Analyze Application' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Review Scan' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Fill Approved Fields' })).toBeDisabled();
+  // On a blank extension page there is no application to fill, so the popup
+  // says so rather than offering an action that cannot work.
+  await expect(page.getByText('No supported application form detected on this page')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Autofill Application' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Open Settings' })).toBeEnabled();
   await page.close();
 });

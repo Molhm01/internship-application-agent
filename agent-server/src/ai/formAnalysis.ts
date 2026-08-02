@@ -24,7 +24,7 @@ import type { Logger } from '../logging/logger.js';
  */
 
 const SYSTEM_PROMPT = [
-  'You map job-application questions to a candidate\'s saved facts.',
+  "You map job-application questions to a candidate's saved facts.",
   '',
   'You receive QUESTIONS (each with a questionId, its wording, its control type,',
   'and where applicable the exact options the page offers) and FACTS (each with',

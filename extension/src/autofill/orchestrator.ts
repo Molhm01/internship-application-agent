@@ -188,7 +188,8 @@ export async function runApplicationAutofill(
       approvedAnswerMatches: countSource(results, 'approved_answer'),
       uncertainSuggestions: reviewing.filter((result) => result.reviewReason === 'ai_suggestion')
         .length,
-      manualBlockers: reviewing.filter((result) => result.reviewReason === 'manual_required').length,
+      manualBlockers: reviewing.filter((result) => result.reviewReason === 'manual_required')
+        .length,
       failedFields: reviewing.filter((result) => result.reviewReason === 'failed').length,
       skippedFields: results.filter((result) => result.action === 'skip').length,
       submissionPrevented: true,
@@ -226,7 +227,10 @@ export async function runApplicationAutofill(
   // loop merely finished its fifth and exited through the condition.
   for (let pass = 1; pass <= MAX_ITERATIONS; pass += 1) {
     iterations = pass;
-    emit(iterations === 1 ? 'scanning' : 'rescanning', iterations === 1 ? 'Scanning' : 'Rescanning');
+    emit(
+      iterations === 1 ? 'scanning' : 'rescanning',
+      iterations === 1 ? 'Scanning' : 'Rescanning',
+    );
     const scanned = await dependencies.scan();
     if (scanned.error || !scanned.scan) {
       terminal = scanned.error ?? agentError('SCAN_FAILED', 'The application could not be read.');
@@ -251,7 +255,9 @@ export async function runApplicationAutofill(
       break;
     }
 
-    const fieldsById = new Map<string, DetectedField>(scan.fields.map((field) => [field.id, field]));
+    const fieldsById = new Map<string, DetectedField>(
+      scan.fields.map((field) => [field.id, field]),
+    );
 
     emit('discovering_options', 'Inspecting answer choices');
     emit('resolving', 'Matching profile information');
@@ -315,7 +321,10 @@ export async function runApplicationAutofill(
 
     for (const action of plan.actions) {
       const field = fieldsById.get(action.fieldId);
-      const decision: ApprovalDecision = decisions.get(action.id) ?? { approved: false, reason: 'No decision was recorded for this action.' };
+      const decision: ApprovalDecision = decisions.get(action.id) ?? {
+        approved: false,
+        reason: 'No decision was recorded for this action.',
+      };
       const outcome = run?.results.find((result) => result.actionId === action.id);
       const executed = outcome
         ? { verified: outcome.status === 'verified', failed: outcome.status === 'failed' }

@@ -17,7 +17,10 @@ import {
   saveBundle,
   setActiveBundle,
 } from '../../extension/src/storage/bundleStore.js';
-import { isAllowedBridgeOrigin, startBundleBridge } from '../../extension/src/content/bundleBridge.js';
+import {
+  isAllowedBridgeOrigin,
+  startBundleBridge,
+} from '../../extension/src/content/bundleBridge.js';
 import { installChromeMock } from './setup.js';
 
 const RESUME_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
@@ -66,9 +69,7 @@ describe('bundle storage', () => {
     expect(bundle.company).toBe('Northwind Robotics');
     expect(bundle.jobTitle).toBe('Software Engineering Intern');
     expect(bundle.websiteJobId).toBe('job-42');
-    expect(bundle.officialApplicationUrl).toBe(
-      'https://boards.greenhouse.io/northwind/jobs/9911',
-    );
+    expect(bundle.officialApplicationUrl).toBe('https://boards.greenhouse.io/northwind/jobs/9911');
 
     expect(bundle.resume).toMatchObject({
       filename: 'Resume-Northwind-Robotics.pdf',
@@ -164,9 +165,9 @@ describe('page matching', () => {
   });
 
   it('matches the apply sub-page of the same posting', () => {
-    expect(
-      bundleMatchesUrl(bundle, 'https://boards.greenhouse.io/northwind/jobs/9911/apply'),
-    ).toBe(true);
+    expect(bundleMatchesUrl(bundle, 'https://boards.greenhouse.io/northwind/jobs/9911/apply')).toBe(
+      true,
+    );
   });
 
   it('does not match another origin', () => {
@@ -208,7 +209,11 @@ describe('the page bridge', () => {
   /** Delivers a message as if the page had posted it from `origin`. */
   function post(data: unknown, origin = window.location.origin): void {
     window.dispatchEvent(
-      new MessageEvent('message', { data, origin, source: window as unknown as MessageEventSource }),
+      new MessageEvent('message', {
+        data,
+        origin,
+        source: window as unknown as MessageEventSource,
+      }),
     );
   }
 
@@ -264,7 +269,10 @@ describe('the page bridge', () => {
   it('ignores a message from a disallowed origin without contacting the worker', async () => {
     const chrome = installChromeMock();
     stop = startBundleBridge();
-    post({ channel: BUNDLE_BRIDGE.offer, requestId: 'evil-1', bundle: transfer() }, 'https://evil.example.com');
+    post(
+      { channel: BUNDLE_BRIDGE.offer, requestId: 'evil-1', bundle: transfer() },
+      'https://evil.example.com',
+    );
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
   });

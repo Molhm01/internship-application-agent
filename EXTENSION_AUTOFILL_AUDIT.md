@@ -5,24 +5,24 @@ line range it came from, so the "before" state stays checkable after the rewrite
 
 ## 1. Inventory of the active path
 
-| Concern              | File                                                | State at audit time                                            |
-| -------------------- | --------------------------------------------------- | -------------------------------------------------------------- |
-| Manifest             | `extension/manifest.json`                           | MV3, one content script, `all_frames: false`, no web-accessible resources, no `externally_connectable` |
-| Service worker       | `extension/src/background/index.ts` (1213 lines)    | Message router. Owns scan → plan → approve → execute.           |
-| Server client        | `extension/src/background/agentClient.ts`           | Only network client. Per-request `fetch`.                       |
-| Content script       | `extension/src/content/index.ts`                    | Handles `SCAN_APPLICATION`, `EXECUTE_FILL_PLAN`, cancel.        |
-| Handoff              | `extension/src/content/applicationSessionHandoff.ts`| Legacy: reads `#internship-agent-session` from the URL fragment.|
-| Scanner              | `extension/src/scanner/domScanner.ts` (630 lines)   | Canonical scanner. Details in §3.                               |
-| Adapters             | `extension/src/scanner/adapters.ts`                 | 9 adapters, but 5 are `supported: false` and add nothing.       |
-| Label → question     | `shared/logic/normalizeQuestion.ts`                 | 80+ regex rules. Not exact-match only.                          |
-| Matcher              | `extension/src/matcher/deterministicMatcher.ts`     | Canonical key → profile value.                                  |
-| Planner              | `extension/src/planner/deterministicPlanner.ts`     | Builds `DeterministicFillAction[]`.                             |
-| Executor             | `extension/src/executor/domExecutor.ts`             | Native setters, 2 attempts, verification.                       |
-| Combobox executor    | `extension/src/executor/comboboxExecutor.ts`        | Open → read → match → click → verify.                           |
-| Verifier             | `extension/src/verifier/domVerifier.ts`             | Re-reads DOM after each action.                                 |
-| Popup                | `extension/src/popup/App.tsx` + `usePopupState.ts`  | Multi-step: Analyze → Build plan → Approve safe → Fill.         |
-| Profile / documents  | agent server via `agentClient.ts`                   | Server-owned; no extension-owned document bytes.                |
-| Tests                | `tests/extension/*`, `tests/e2e/*`                  | 20 extension suites, 5 Playwright specs.                        |
+| Concern             | File                                                 | State at audit time                                                                                    |
+| ------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Manifest            | `extension/manifest.json`                            | MV3, one content script, `all_frames: false`, no web-accessible resources, no `externally_connectable` |
+| Service worker      | `extension/src/background/index.ts` (1213 lines)     | Message router. Owns scan → plan → approve → execute.                                                  |
+| Server client       | `extension/src/background/agentClient.ts`            | Only network client. Per-request `fetch`.                                                              |
+| Content script      | `extension/src/content/index.ts`                     | Handles `SCAN_APPLICATION`, `EXECUTE_FILL_PLAN`, cancel.                                               |
+| Handoff             | `extension/src/content/applicationSessionHandoff.ts` | Legacy: reads `#internship-agent-session` from the URL fragment.                                       |
+| Scanner             | `extension/src/scanner/domScanner.ts` (630 lines)    | Canonical scanner. Details in §3.                                                                      |
+| Adapters            | `extension/src/scanner/adapters.ts`                  | 9 adapters, but 5 are `supported: false` and add nothing.                                              |
+| Label → question    | `shared/logic/normalizeQuestion.ts`                  | 80+ regex rules. Not exact-match only.                                                                 |
+| Matcher             | `extension/src/matcher/deterministicMatcher.ts`      | Canonical key → profile value.                                                                         |
+| Planner             | `extension/src/planner/deterministicPlanner.ts`      | Builds `DeterministicFillAction[]`.                                                                    |
+| Executor            | `extension/src/executor/domExecutor.ts`              | Native setters, 2 attempts, verification.                                                              |
+| Combobox executor   | `extension/src/executor/comboboxExecutor.ts`         | Open → read → match → click → verify.                                                                  |
+| Verifier            | `extension/src/verifier/domVerifier.ts`              | Re-reads DOM after each action.                                                                        |
+| Popup               | `extension/src/popup/App.tsx` + `usePopupState.ts`   | Multi-step: Analyze → Build plan → Approve safe → Fill.                                                |
+| Profile / documents | agent server via `agentClient.ts`                    | Server-owned; no extension-owned document bytes.                                                       |
+| Tests               | `tests/extension/*`, `tests/e2e/*`                   | 20 extension suites, 5 Playwright specs.                                                               |
 
 ## 2. Root cause of the ~20 % fill rate
 
@@ -54,7 +54,7 @@ reverted the shared half) left the product on the **older multi-step path**:
 Analyze → Build plan → Approve safe → Fill. `approveSafeActions()`
 (`deterministicPlanner.ts:514`) only approves actions with
 `confidence >= 0.8 && !requiresReview && !sensitive && source !== 'ai_suggestion'`.
-Everything else is *planned* but never *executed*. This alone accounts for the
+Everything else is _planned_ but never _executed_. This alone accounts for the
 majority of unfilled-but-answerable fields.
 
 ### 2.2 No semantic layer runs in production — two implementations exist and neither is wired
@@ -72,8 +72,8 @@ only remaining chance is an exact normalized-string hit in that 17-entry map.
 There is no similarity scoring, no alias expansion, and no model consulted.
 
 Concretely: `matchCanonicalQuestion` has a rule for `/\b(legally )?authoriz(ed|ation) to work\b/`
-but nothing matches *"Do you currently have permission to work in the country of
-employment?"* or *"Can you provide evidence of employment eligibility?"*. Those
+but nothing matches _"Do you currently have permission to work in the country of
+employment?"_ or _"Can you provide evidence of employment eligibility?"_. Those
 become `canonicalKey: undefined` → `missing_information` → never filled.
 
 ### 2.3 One model request per field, and only for prose
@@ -81,7 +81,7 @@ become `canonicalKey: undefined` → `missing_information` → never filled.
 `agentClient.generateAnswer()` posts one `/ai/generate-answer` per field.
 `generateAnswerBatch()` posts an array to `/ai/generate-batch`, but
 `ctx.aiAnswers.generateBatch()` loops and issues one Ollama call per request —
-it is a batched *transport*, not a batched *analysis*.
+it is a batched _transport_, not a batched _analysis_.
 
 There is **no** page-level analysis endpoint at all. `POST /applications/analyze`
 is registered in `agent-server/src/api/planned.ts` and answers **HTTP 501**.
@@ -105,7 +105,7 @@ require `!requiresReview`. The planner sets `requiresReview: true` for:
   the 17 `LABEL_SYNONYMS` hits** (`MATCH_CONFIDENCE.synonym = 0.7`,
   `deterministicMatcher.ts:495`)
 
-The last one is a silent trap: a synonym match is *correct* and still can never
+The last one is a silent trap: a synonym match is _correct_ and still can never
 auto-fill.
 
 ### 2.5 Control coverage gaps in the scanner
@@ -123,7 +123,7 @@ without native inputs, `[role="switch"]`, and custom date pickers whose visible
 control is a `button`.
 
 `optionsFor()` (`:239`) returns `undefined` for a `combobox` unless it carries
-`aria-controls` pointing at an *already-rendered* listbox. Most ATS comboboxes
+`aria-controls` pointing at an _already-rendered_ listbox. Most ATS comboboxes
 render their popover only on open, so options arrive empty and the planner
 downgrades to `select_suggested_option` + `requiresReview: true` (see §2.4).
 
@@ -137,19 +137,19 @@ stashed in free-form `metadata` and read by nothing.
 
 ## 3. Explicit checklist requested
 
-| Symptom asked about                | Present? | Evidence                                                                                     |
-| ---------------------------------- | -------- | -------------------------------------------------------------------------------------------- |
-| Exact-label-only matching          | **Partly** | Regex rules exist (`normalizeQuestion.ts`), but the fallback tier is a 17-entry exact map (`LABEL_SYNONYMS`). No similarity scoring anywhere. |
-| Unsupported control types          | **Yes**  | React-Select, ARIA listbox, combobox trigger buttons, custom date pickers, `role="switch"` are not in `CONTROL_SELECTOR`. `contenteditable` is scanned but the planner returns `unsupported` for it (`deterministicPlanner.ts:159`). |
-| Missing semantic analysis          | **Yes**  | `unresolvedResolver` and `semanticOptionResolver` are dead code; no AI analysis of short/option fields. |
-| Missing option analysis            | **Yes**  | Options read only from `<select>`, radio/checkbox groups, and an already-rendered `aria-controls` listbox. |
-| Missing iframe support             | **Partly** | `collectRoots()` walks same-origin `iframe.contentDocument`. Cross-origin frames are only *warned* about — `manifest.json` sets `all_frames: false`, so no content script runs in them. |
-| Missing shadow-DOM support         | **No**   | `collectRoots()` walks open shadow roots (`:497`). Closed roots are unreachable by design. |
-| Missing rerender handling          | **Partly** | `waitForDomSettled()` gives one 120 ms-quiet / 400 ms-max settle window and at most **one** rescan. There is no long-lived `MutationObserver`, so fields revealed after a click (Add Education, country change) are never picked up unless the user rescans. |
-| Missing file handling              | **Yes**  | Uploads require a server-registered `SavedDocument`; there is no extension-owned document store, so tailored PDFs from the website cannot be attached. Only `resume` is ever matched (`deterministicPlanner.ts:123`) — no cover-letter branch exists. |
-| Duplicate/conflicting fill engines | **Yes**  | (a) multi-step popup path — live; (b) `autofill/orchestrator.ts` — orphaned, does not compile; (c) `shared/logic/unresolvedResolver.ts` — orphaned. |
+| Symptom asked about                | Present?                                                                    | Evidence                                                                                                                                                                                                                                                     |
+| ---------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Exact-label-only matching          | **Partly**                                                                  | Regex rules exist (`normalizeQuestion.ts`), but the fallback tier is a 17-entry exact map (`LABEL_SYNONYMS`). No similarity scoring anywhere.                                                                                                                |
+| Unsupported control types          | **Yes**                                                                     | React-Select, ARIA listbox, combobox trigger buttons, custom date pickers, `role="switch"` are not in `CONTROL_SELECTOR`. `contenteditable` is scanned but the planner returns `unsupported` for it (`deterministicPlanner.ts:159`).                         |
+| Missing semantic analysis          | **Yes**                                                                     | `unresolvedResolver` and `semanticOptionResolver` are dead code; no AI analysis of short/option fields.                                                                                                                                                      |
+| Missing option analysis            | **Yes**                                                                     | Options read only from `<select>`, radio/checkbox groups, and an already-rendered `aria-controls` listbox.                                                                                                                                                   |
+| Missing iframe support             | **Partly**                                                                  | `collectRoots()` walks same-origin `iframe.contentDocument`. Cross-origin frames are only _warned_ about — `manifest.json` sets `all_frames: false`, so no content script runs in them.                                                                      |
+| Missing shadow-DOM support         | **No**                                                                      | `collectRoots()` walks open shadow roots (`:497`). Closed roots are unreachable by design.                                                                                                                                                                   |
+| Missing rerender handling          | **Partly**                                                                  | `waitForDomSettled()` gives one 120 ms-quiet / 400 ms-max settle window and at most **one** rescan. There is no long-lived `MutationObserver`, so fields revealed after a click (Add Education, country change) are never picked up unless the user rescans. |
+| Missing file handling              | **Yes**                                                                     | Uploads require a server-registered `SavedDocument`; there is no extension-owned document store, so tailored PDFs from the website cannot be attached. Only `resume` is ever matched (`deterministicPlanner.ts:123`) — no cover-letter branch exists.        |
+| Duplicate/conflicting fill engines | **Yes**                                                                     | (a) multi-step popup path — live; (b) `autofill/orchestrator.ts` — orphaned, does not compile; (c) `shared/logic/unresolvedResolver.ts` — orphaned.                                                                                                          |
 | Model request behavior             | One request **per field**, prose only. `/applications/analyze` returns 501. |
-| Field context incomplete           | **Yes**  | See §2.6. |
+| Field context incomplete           | **Yes**                                                                     | See §2.6.                                                                                                                                                                                                                                                    |
 
 ## 4. Handoff architecture at audit time (to be replaced)
 

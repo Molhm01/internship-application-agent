@@ -31,9 +31,12 @@ export async function registerApplicationSessionRoutes(
   ctx: ServerContext,
 ): Promise<void> {
   // Clear expired sessions once per hour.
-  setInterval(() => {
-    clearExpiredApplicationSessions(ctx.db);
-  }, 60 * 60 * 1000);
+  setInterval(
+    () => {
+      clearExpiredApplicationSessions(ctx.db);
+    },
+    60 * 60 * 1000,
+  );
 
   app.post('/application-sessions', (request, reply) => {
     const parsed = parseBody(applicationSessionInputSchema, request.body);

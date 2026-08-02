@@ -109,7 +109,10 @@ describe('the application is never submitted', () => {
   it('does not mistake an ordinary step with questions for the final step', () => {
     expect(
       isFinalSubmissionStage(
-        scanOf([field({ label: 'First name' })], 'https://boards.example.com/apply/submit-application'),
+        scanOf(
+          [field({ label: 'First name' })],
+          'https://boards.example.com/apply/submit-application',
+        ),
       ),
     ).toBe(false);
   });

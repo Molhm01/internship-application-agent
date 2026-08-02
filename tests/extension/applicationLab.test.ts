@@ -170,9 +170,9 @@ describe('lab: controls that are not inputs', () => {
 
   it('keeps the phone country code separate from the phone number', async () => {
     const fields = await scan('custom-controls.html');
-    expect(
-      fields.find((field) => field.label === 'Phone country code')?.canonicalKey,
-    ).toBe('phone_country_code');
+    expect(fields.find((field) => field.label === 'Phone country code')?.canonicalKey).toBe(
+      'phone_country_code',
+    );
     expect(fields.find((field) => field.label === 'Phone number')?.canonicalKey).toBe('phone');
   });
 });
@@ -237,9 +237,7 @@ describe('lab: protected characteristics and open questions', () => {
   it('finds both legal attestations', async () => {
     const fields = await scan('sensitive-and-custom.html');
     const attestations = fields.filter(
-      (field) =>
-        field.fieldType === 'checkbox' &&
-        /certify|agree to the terms/i.test(field.label),
+      (field) => field.fieldType === 'checkbox' && /certify|agree to the terms/i.test(field.label),
     );
     expect(attestations).toHaveLength(2);
   });

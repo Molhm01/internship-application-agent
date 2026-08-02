@@ -52,7 +52,7 @@ async function applicationPage(name: string): Promise<Page> {
   return page;
 }
 
-test('Analyze Application scans a generic fixture, preserves the form, and opens review', async () => {
+test('the popup detects a generic fixture, preserves the form, and opens review', async () => {
   const popup = await context.newPage();
   const application = await applicationPage('basic-generic.html');
   await application.evaluate(() => {
@@ -71,11 +71,14 @@ test('Analyze Application scans a generic fixture, preserves the form, and opens
 
   await application.bringToFront();
   await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-  await expect(popup.getByRole('button', { name: 'Analyze Application' })).toBeEnabled();
-  await popup.getByRole('button', { name: 'Analyze Application' }).click();
+  // Opening the popup scans the page by itself; there is no separate Analyze
+  // step any more, and Autofill is the only action.
   await expect(popup.locator('.status-row[data-row="ATS"]')).toContainText('Generic HTML form');
   await expect(popup.locator('.status-row[data-row="Fields Detected"]')).toContainText('3');
+  await expect(popup.getByRole('button', { name: 'Autofill Application' })).toBeEnabled();
 
+  // Scanning is read-only: nothing on the employer's form may change, and the
+  // form must not have been submitted.
   const after = await application.locator('input, textarea, select').evaluateAll((controls) =>
     controls.map((control) => {
       const input = control as HTMLInputElement;
@@ -88,7 +91,7 @@ test('Analyze Application scans a generic fixture, preserves the form, and opens
   ).toBe(false);
 
   const reviewPromise = context.waitForEvent('page');
-  await popup.getByRole('button', { name: 'Review Scan' }).click();
+  await popup.getByRole('button', { name: 'Review every detected field' }).click();
   const review = await reviewPromise;
   await review.waitForLoadState();
   await expect(review.getByRole('heading', { name: 'Software Intern' })).toBeVisible();

@@ -79,14 +79,8 @@ import {
   saveBundle,
   setActiveBundle,
 } from '../storage/bundleStore.js';
-import {
-  applyAnalysisToPlan,
-  buildAnalysisRequest,
-} from '../analysis/formAnalysis.js';
-import {
-  attachBundleDocuments,
-  isBundleDocumentReference,
-} from '../uploads/bundleUploads.js';
+import { applyAnalysisToPlan, buildAnalysisRequest } from '../analysis/formAnalysis.js';
+import { attachBundleDocuments, isBundleDocumentReference } from '../uploads/bundleUploads.js';
 import { selectSavedResume } from './standaloneResources.js';
 import {
   answerText,
@@ -229,7 +223,14 @@ async function buildPlan(scanId?: string): Promise<unknown> {
 
   // One batched analysis for everything the deterministic pass could not
   // settle. A fully resolved page makes no model call at all.
-  const analysisNote = await analyzePage(plan, scan, profileResult.data.profile, answersResult.data.answers, bundle, settings);
+  const analysisNote = await analyzePage(
+    plan,
+    scan,
+    profileResult.data.profile,
+    answersResult.data.answers,
+    bundle,
+    settings,
+  );
   if (analysisNote.plan) plan = analysisNote.plan;
 
   await persistPlan(plan);

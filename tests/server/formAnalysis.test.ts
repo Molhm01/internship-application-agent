@@ -30,7 +30,10 @@ function ollamaReturning(content: string | (() => string)) {
       return new Response(
         JSON.stringify({
           model: 'llama3.1:8b',
-          message: { role: 'assistant', content: typeof content === 'function' ? content() : content },
+          message: {
+            role: 'assistant',
+            content: typeof content === 'function' ? content() : content,
+          },
           done: true,
         }),
         { status: 200 },
@@ -126,9 +129,7 @@ describe('POST /ai/analyze-form', () => {
     );
 
     expect(response.statusCode).toBe(200);
-    const parsed = formAnalysisResponseSchema.parse(
-      (response.json()).data,
-    );
+    const parsed = formAnalysisResponseSchema.parse(response.json().data);
     expect(parsed.plan.answers).toHaveLength(2);
     // Two questions, one request. This is the property the whole design exists for.
     expect(ollama.calls).toHaveLength(1);
@@ -168,9 +169,7 @@ describe('POST /ai/analyze-form', () => {
       }),
     );
     server = await createTestServer({ fetchImpl: ollama.fetchImpl });
-    const parsed = formAnalysisResponseSchema.parse(
-      ((await analyze(analyzeBody())).json()).data,
-    );
+    const parsed = formAnalysisResponseSchema.parse((await analyze(analyzeBody())).json().data);
     expect(parsed.plan.answers).toEqual([]);
     expect(parsed.rejected[0]).toContain('question-invented');
   });
@@ -178,9 +177,7 @@ describe('POST /ai/analyze-form', () => {
   it('rejects a malformed plan rather than acting on part of it', async () => {
     const ollama = ollamaReturning('I think the answer is probably yes!');
     server = await createTestServer({ fetchImpl: ollama.fetchImpl });
-    const parsed = formAnalysisResponseSchema.parse(
-      ((await analyze(analyzeBody())).json()).data,
-    );
+    const parsed = formAnalysisResponseSchema.parse((await analyze(analyzeBody())).json().data);
     expect(parsed.plan.answers).toEqual([]);
     expect(parsed.error?.code).toBe('ANALYSIS_REJECTED');
     expect(parsed.error?.recoverable).toBe(true);
@@ -205,9 +202,7 @@ describe('POST /ai/analyze-form', () => {
       }),
     );
     server = await createTestServer({ fetchImpl: ollama.fetchImpl });
-    const parsed = formAnalysisResponseSchema.parse(
-      ((await analyze(analyzeBody())).json()).data,
-    );
+    const parsed = formAnalysisResponseSchema.parse((await analyze(analyzeBody())).json().data);
     expect(parsed.plan.answers).toEqual([]);
     expect(parsed.rejected.some((entry) => entry.includes('some-other-page'))).toBe(true);
   });
@@ -232,9 +227,7 @@ describe('POST /ai/analyze-form', () => {
       }),
     );
     server = await createTestServer({ fetchImpl: ollama.fetchImpl });
-    const parsed = formAnalysisResponseSchema.parse(
-      ((await analyze(analyzeBody())).json()).data,
-    );
+    const parsed = formAnalysisResponseSchema.parse((await analyze(analyzeBody())).json().data);
     expect(parsed.plan.answers).toHaveLength(1);
     expect(JSON.stringify(parsed.plan.answers[0])).not.toContain('submit');
   });

@@ -42,7 +42,10 @@ function field(overrides: Partial<DetectedField> = {}): DetectedField {
   });
 }
 
-function scanOf(fields: DetectedField[], url = 'https://boards.example.com/apply'): ApplicationScanResult {
+function scanOf(
+  fields: DetectedField[],
+  url = 'https://boards.example.com/apply',
+): ApplicationScanResult {
   return applicationScanResultSchema.parse({
     id: 'scan-1',
     createdAt: new Date().toISOString(),
@@ -115,7 +118,10 @@ function planFor(fields: DetectedField[]) {
 describe('semantic equivalence of question wording', () => {
   it.each([
     ['Are you legally authorized to work in the United States?', 'work_authorization'],
-    ['Do you currently have permission to work in the country of employment?', 'work_authorization'],
+    [
+      'Do you currently have permission to work in the country of employment?',
+      'work_authorization',
+    ],
     ['Can you provide evidence of employment eligibility?', 'work_authorization'],
     ['Do you have the legal right to work in this country?', 'work_authorization'],
   ])('maps %s to %s', (label, expected) => {
@@ -272,7 +278,13 @@ describe('what the model is sent', () => {
     const { scan, plan } = planFor([
       field({ id: 'field-q', label: 'Custom question', normalizedLabel: 'custom question' }),
     ]);
-    const built = buildAnalysisRequest({ scan, plan, profile: PROFILE, answers: [], bundle: BUNDLE });
+    const built = buildAnalysisRequest({
+      scan,
+      plan,
+      profile: PROFILE,
+      answers: [],
+      bundle: BUNDLE,
+    });
     expect(built.request!.documents).toEqual([
       { kind: 'resume', filename: 'Resume-Northwind.pdf', mimeType: 'application/pdf' },
       { kind: 'cover_letter', filename: 'Cover-Letter-Northwind.pdf', mimeType: 'application/pdf' },
@@ -569,7 +581,13 @@ describe('applying a fill plan', () => {
       fieldType: 'file',
     });
     const { scan, plan } = planFor([target]);
-    const built = buildAnalysisRequest({ scan, plan, profile: PROFILE, answers: [], bundle: BUNDLE });
+    const built = buildAnalysisRequest({
+      scan,
+      plan,
+      profile: PROFILE,
+      answers: [],
+      bundle: BUNDLE,
+    });
 
     const applied = applyAnalysisToPlan(
       plan,

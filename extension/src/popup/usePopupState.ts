@@ -203,25 +203,28 @@ export function usePopupState(): PopupState {
     setScanState('cancelled');
   }, [progress?.scanId, tab.url]);
 
-  const buildPlan = useCallback(async (scanId?: string): Promise<DeterministicFillPlan | null> => {
-    setFillState('planning');
-    setFillError(null);
-    const effectiveScanId = scanId ?? scan?.id;
-    const response = await sendMessage({
-      type: 'BUILD_DETERMINISTIC_PLAN',
-      ...(effectiveScanId ? { scanId: effectiveScanId } : {}),
-    });
-    if ('plan' in response) {
-      setPlan(response.plan);
-      setReport(null);
-      setFillState('ready_for_review');
-      return response.plan;
-    } else {
-      setFillError(response.error);
-      setFillState('failed');
-      return null;
-    }
-  }, [scan?.id]);
+  const buildPlan = useCallback(
+    async (scanId?: string): Promise<DeterministicFillPlan | null> => {
+      setFillState('planning');
+      setFillError(null);
+      const effectiveScanId = scanId ?? scan?.id;
+      const response = await sendMessage({
+        type: 'BUILD_DETERMINISTIC_PLAN',
+        ...(effectiveScanId ? { scanId: effectiveScanId } : {}),
+      });
+      if ('plan' in response) {
+        setPlan(response.plan);
+        setReport(null);
+        setFillState('ready_for_review');
+        return response.plan;
+      } else {
+        setFillError(response.error);
+        setFillState('failed');
+        return null;
+      }
+    },
+    [scan?.id],
+  );
 
   const approveSafe = useCallback(async (): Promise<DeterministicFillPlan | null> => {
     const response = await sendMessage({ type: 'APPROVE_SAFE_ACTIONS' });
@@ -234,30 +237,33 @@ export function usePopupState(): PopupState {
     return null;
   }, []);
 
-  const execute = useCallback(async (planOverride?: DeterministicFillPlan): Promise<void> => {
-    const executablePlan = planOverride ?? plan;
-    if (!executablePlan) return;
-    setFillState('filling');
-    setFillError(null);
-    setFillProgress(null);
-    const response = await sendMessage({
-      type: 'EXECUTE_APPROVED_ACTIONS',
-      targetUrl: executablePlan.url,
-    });
-    if (response.type === 'FILL_COMPLETE') {
-      setReport(response.report);
-      setFillState(
-        response.report.status === 'completed_with_errors'
-          ? 'completed_with_errors'
-          : response.report.status === 'cancelled'
-            ? 'cancelled'
-            : 'completed',
-      );
-    } else {
-      setFillError(response.error);
-      setFillState(response.error.code === 'EXECUTION_CANCELLED' ? 'cancelled' : 'failed');
-    }
-  }, [plan]);
+  const execute = useCallback(
+    async (planOverride?: DeterministicFillPlan): Promise<void> => {
+      const executablePlan = planOverride ?? plan;
+      if (!executablePlan) return;
+      setFillState('filling');
+      setFillError(null);
+      setFillProgress(null);
+      const response = await sendMessage({
+        type: 'EXECUTE_APPROVED_ACTIONS',
+        targetUrl: executablePlan.url,
+      });
+      if (response.type === 'FILL_COMPLETE') {
+        setReport(response.report);
+        setFillState(
+          response.report.status === 'completed_with_errors'
+            ? 'completed_with_errors'
+            : response.report.status === 'cancelled'
+              ? 'cancelled'
+              : 'completed',
+        );
+      } else {
+        setFillError(response.error);
+        setFillState(response.error.code === 'EXECUTION_CANCELLED' ? 'cancelled' : 'failed');
+      }
+    },
+    [plan],
+  );
 
   useEffect(() => {
     if (

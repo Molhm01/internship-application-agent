@@ -119,7 +119,10 @@ export const applicationSessionInputSchema = applicationSessionSchema
       .string()
       .url()
       .max(2048)
-      .refine(isSafeApplicationDestination, 'url must be a direct HTTPS employer or ATS destination'),
+      .refine(
+        isSafeApplicationDestination,
+        'url must be a direct HTTPS employer or ATS destination',
+      ),
     domain: z.string().max(255).optional(),
     ats: z.string().max(100).optional(),
     status: z.enum(['available', 'claimed', 'completed']).optional(),

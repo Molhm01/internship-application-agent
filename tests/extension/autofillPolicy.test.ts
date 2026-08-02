@@ -322,7 +322,10 @@ describe('grounded guessing', () => {
 
 // ---------------------------------------------------------------------------
 
-function scanResult(fields: DetectedField[], url = 'https://boards.example.com/apply'): ApplicationScanResult {
+function scanResult(
+  fields: DetectedField[],
+  url = 'https://boards.example.com/apply',
+): ApplicationScanResult {
   return {
     id: `scan-${fields.length}-${url.length}`,
     pageId: 'page-1',
@@ -459,7 +462,13 @@ describe('the autofill run', () => {
       plans: [planFor([one])],
       reports: [
         runReport([
-          { actionId: 'action-1', fieldId: 'field-1', status: 'verified', attempts: 1, durationMs: 5 },
+          {
+            actionId: 'action-1',
+            fieldId: 'field-1',
+            status: 'verified',
+            attempts: 1,
+            durationMs: 5,
+          },
         ]),
       ],
     });
@@ -498,7 +507,12 @@ describe('the autofill run', () => {
       scans: [scanResult([field({ id: 'field-2', selector: '#field-2' })])],
       plans: [
         planFor([
-          action({ id: 'action-2', fieldId: 'field-2', action: 'manual_review', proposedValue: undefined }),
+          action({
+            id: 'action-2',
+            fieldId: 'field-2',
+            action: 'manual_review',
+            proposedValue: undefined,
+          }),
         ]),
       ],
       settings: { scrollToFirstReviewField: false },
@@ -521,10 +535,22 @@ describe('the autofill run', () => {
       ],
       reports: [
         runReport([
-          { actionId: 'action-1', fieldId: 'field-1', status: 'verified', attempts: 1, durationMs: 5 },
+          {
+            actionId: 'action-1',
+            fieldId: 'field-1',
+            status: 'verified',
+            attempts: 1,
+            durationMs: 5,
+          },
         ]),
         runReport([
-          { actionId: 'action-2', fieldId: 'field-2', status: 'verified', attempts: 1, durationMs: 5 },
+          {
+            actionId: 'action-2',
+            fieldId: 'field-2',
+            status: 'verified',
+            attempts: 1,
+            durationMs: 5,
+          },
         ]),
       ],
     });
@@ -542,7 +568,13 @@ describe('the autofill run', () => {
       plans: [planFor([action()])],
       reports: [
         runReport([
-          { actionId: 'action-1', fieldId: 'field-1', status: 'failed', attempts: 2, durationMs: 5 },
+          {
+            actionId: 'action-1',
+            fieldId: 'field-1',
+            status: 'failed',
+            attempts: 2,
+            durationMs: 5,
+          },
         ]),
       ],
     });

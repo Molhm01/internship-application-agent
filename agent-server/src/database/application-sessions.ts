@@ -113,14 +113,20 @@ export function createApplicationSession(
   return rowToSession(created);
 }
 
-export function getApplicationSession(db: AgentDatabase, sessionId: string): ApplicationSession | null {
+export function getApplicationSession(
+  db: AgentDatabase,
+  sessionId: string,
+): ApplicationSession | null {
   const row = db.handle
     .prepare('SELECT * FROM application_sessions WHERE session_id = ?')
     .get(sessionId) as ApplicationSessionRow | undefined;
   return row ? rowToSession(row) : null;
 }
 
-export function claimApplicationSession(db: AgentDatabase, sessionId: string): ApplicationSession | null {
+export function claimApplicationSession(
+  db: AgentDatabase,
+  sessionId: string,
+): ApplicationSession | null {
   const row = db.handle
     .prepare(
       `UPDATE application_sessions

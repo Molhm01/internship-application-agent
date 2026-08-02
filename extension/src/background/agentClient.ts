@@ -243,9 +243,7 @@ export async function fetchAgentStatus(): Promise<AgentStatusResult> {
  * timeout follows the request, so a page with eighty questions is not judged by
  * the same clock as one with three.
  */
-export function analyzeForm(
-  body: FormAnalysisRequest,
-): Promise<AgentResult<FormAnalysisResponse>> {
+export function analyzeForm(body: FormAnalysisRequest): Promise<AgentResult<FormAnalysisResponse>> {
   return request({
     method: 'POST',
     path: '/ai/analyze-form',

@@ -146,22 +146,22 @@ describe('POST /application-sessions', () => {
     },
   );
 
-  it.each([
-    'https://jobright.ai/jobs/info/example',
-    'https://www.intern-list.com/job/example',
-  ])('rejects aggregator destination %s', async (url) => {
-    server = await createTestServer();
+  it.each(['https://jobright.ai/jobs/info/example', 'https://www.intern-list.com/job/example'])(
+    'rejects aggregator destination %s',
+    async (url) => {
+      server = await createTestServer();
 
-    const response = await server.app.inject({
-      method: 'POST',
-      url: '/application-sessions',
-      headers: authHeaders,
-      payload: websiteHandoffBody({ url }),
-    });
+      const response = await server.app.inject({
+        method: 'POST',
+        url: '/application-sessions',
+        headers: authHeaders,
+        payload: websiteHandoffBody({ url }),
+      });
 
-    expect(response.statusCode).toBe(422);
-    expect(response.body).not.toContain(TEST_TOKEN);
-  });
+      expect(response.statusCode).toBe(422);
+      expect(response.body).not.toContain(TEST_TOKEN);
+    },
+  );
 
   it.each([
     'https://careers.example.com/jobs/123',

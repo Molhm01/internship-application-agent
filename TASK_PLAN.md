@@ -7,7 +7,7 @@
    - createApplicationSession(input)
    - claimApplicationSession(sessionId)
    - updateApplicationSessionStatus(sessionId, status)
-   - clearApplicationSessionCache() 
+   - clearApplicationSessionCache()
 4. Add SQLite table for application sessions
 5. Add authenticated localhost agent-server routes:
    - POST /application-sessions

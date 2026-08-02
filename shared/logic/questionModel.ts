@@ -154,9 +154,7 @@ export function toNormalizedQuestion(field: DetectedField): NormalizedQuestion {
  * disabled are excluded: they are not questions being asked right now, and
  * proposing answers for them would inflate every count in the report.
  */
-export function buildNormalizedQuestions(
-  fields: readonly DetectedField[],
-): NormalizedQuestion[] {
+export function buildNormalizedQuestions(fields: readonly DetectedField[]): NormalizedQuestion[] {
   const questions = new Map<string, NormalizedQuestion>();
   for (const field of fields) {
     if (!field.visible || field.disabled) continue;

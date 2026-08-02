@@ -61,7 +61,9 @@ export const normalizedQuestionSchema = z.object({
   section: fieldSectionSchema.optional(),
   controlType: questionControlTypeSchema,
   required: z.boolean().default(false),
-  currentValue: z.union([z.string().max(20_000), z.array(z.string().max(2000)), z.boolean()]).optional(),
+  currentValue: z
+    .union([z.string().max(20_000), z.array(z.string().max(2000)), z.boolean()])
+    .optional(),
   options: z.array(fieldOptionSchema).max(500).optional(),
   validation: z.string().max(2000).optional(),
   sensitiveCategory: questionSensitiveCategorySchema.optional(),

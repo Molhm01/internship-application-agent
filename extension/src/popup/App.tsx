@@ -26,17 +26,8 @@ function FailureDetail({
 }
 
 export function App(): JSX.Element {
-  const {
-    status,
-    tab,
-    loading,
-    refresh,
-    scanState,
-    scan,
-    progress,
-    scanError,
-    cancel,
-  } = usePopupState();
+  const { status, tab, loading, refresh, scanState, scan, progress, scanError, cancel } =
+    usePopupState();
   const autofill = useAutofillState(tab.url);
   const serverConnected = Boolean(status?.health);
   const health = status?.health;

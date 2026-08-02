@@ -31,7 +31,10 @@ export const bundleDocumentTransferSchema = z.object({
   filename: z.string().min(1).max(255),
   mimeType: z.enum(BUNDLE_DOCUMENT_MIME_TYPES),
   /** Base64 of the file bytes. Never placed in a URL. */
-  contentBase64: z.string().min(1).max(Math.ceil((MAXIMUM_BUNDLE_DOCUMENT_BYTES * 4) / 3) + 16),
+  contentBase64: z
+    .string()
+    .min(1)
+    .max(Math.ceil((MAXIMUM_BUNDLE_DOCUMENT_BYTES * 4) / 3) + 16),
   byteLength: z.number().int().positive().max(MAXIMUM_BUNDLE_DOCUMENT_BYTES),
   generatedAt: isoDateTimeSchema,
 });

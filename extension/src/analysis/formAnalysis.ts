@@ -73,49 +73,197 @@ export function relevantFacts(
     /** The questions this fact can answer. */
     answers: readonly string[];
   }> = [
-    { id: 'profile.personal.legalFirstName', label: 'legal first name', value: personal.legalFirstName, answers: ['first_name', 'full_name', 'preferred_name'] },
-    { id: 'profile.personal.legalMiddleName', label: 'legal middle name', value: personal.legalMiddleName, answers: ['middle_name', 'full_name'] },
-    { id: 'profile.personal.legalLastName', label: 'legal last name', value: personal.legalLastName, answers: ['last_name', 'full_name'] },
-    { id: 'profile.personal.preferredName', label: 'preferred name', value: personal.preferredName, answers: ['preferred_name'] },
-    { id: 'profile.personal.email', label: 'email address', value: personal.email, answers: ['email'] },
-    { id: 'profile.personal.phone', label: 'phone number', value: personal.phone, answers: ['phone', 'phone_country_code'] },
-    { id: 'profile.personal.address.line1', label: 'street address', value: personal.address.line1, answers: ['address_line1', 'current_location'] },
-    { id: 'profile.personal.address.line2', label: 'address line 2', value: personal.address.line2, answers: ['address_line2'] },
-    { id: 'profile.personal.address.city', label: 'city', value: personal.address.city, answers: ['city', 'current_location'] },
-    { id: 'profile.personal.address.state', label: 'state or province', value: personal.address.state, answers: ['state', 'current_location'] },
-    { id: 'profile.personal.address.postalCode', label: 'postal code', value: personal.address.postalCode, answers: ['postal_code'] },
-    { id: 'profile.personal.address.country', label: 'country', value: personal.address.country, answers: ['country', 'current_location', 'phone_country_code'] },
-    { id: 'profile.personal.linkedin', label: 'LinkedIn URL', value: personal.linkedin, answers: ['linkedin', 'website'] },
-    { id: 'profile.personal.github', label: 'GitHub URL', value: personal.github, answers: ['github', 'website'] },
-    { id: 'profile.personal.portfolio', label: 'portfolio URL', value: personal.portfolio, answers: ['portfolio', 'website'] },
-    { id: 'profile.personal.personalWebsite', label: 'personal website', value: personal.personalWebsite, answers: ['website'] },
-    { id: 'profile.education[0].institution', label: 'school', value: education?.institution, answers: ['school'] },
-    { id: 'profile.education[0].degree', label: 'degree', value: education?.degree, answers: ['degree', 'degree_level', 'education_status'] },
-    { id: 'profile.education[0].major', label: 'major', value: education?.major, answers: ['major'] },
-    { id: 'profile.education[0].minor', label: 'minor', value: education?.minor, answers: ['minor'] },
+    {
+      id: 'profile.personal.legalFirstName',
+      label: 'legal first name',
+      value: personal.legalFirstName,
+      answers: ['first_name', 'full_name', 'preferred_name'],
+    },
+    {
+      id: 'profile.personal.legalMiddleName',
+      label: 'legal middle name',
+      value: personal.legalMiddleName,
+      answers: ['middle_name', 'full_name'],
+    },
+    {
+      id: 'profile.personal.legalLastName',
+      label: 'legal last name',
+      value: personal.legalLastName,
+      answers: ['last_name', 'full_name'],
+    },
+    {
+      id: 'profile.personal.preferredName',
+      label: 'preferred name',
+      value: personal.preferredName,
+      answers: ['preferred_name'],
+    },
+    {
+      id: 'profile.personal.email',
+      label: 'email address',
+      value: personal.email,
+      answers: ['email'],
+    },
+    {
+      id: 'profile.personal.phone',
+      label: 'phone number',
+      value: personal.phone,
+      answers: ['phone', 'phone_country_code'],
+    },
+    {
+      id: 'profile.personal.address.line1',
+      label: 'street address',
+      value: personal.address.line1,
+      answers: ['address_line1', 'current_location'],
+    },
+    {
+      id: 'profile.personal.address.line2',
+      label: 'address line 2',
+      value: personal.address.line2,
+      answers: ['address_line2'],
+    },
+    {
+      id: 'profile.personal.address.city',
+      label: 'city',
+      value: personal.address.city,
+      answers: ['city', 'current_location'],
+    },
+    {
+      id: 'profile.personal.address.state',
+      label: 'state or province',
+      value: personal.address.state,
+      answers: ['state', 'current_location'],
+    },
+    {
+      id: 'profile.personal.address.postalCode',
+      label: 'postal code',
+      value: personal.address.postalCode,
+      answers: ['postal_code'],
+    },
+    {
+      id: 'profile.personal.address.country',
+      label: 'country',
+      value: personal.address.country,
+      answers: ['country', 'current_location', 'phone_country_code'],
+    },
+    {
+      id: 'profile.personal.linkedin',
+      label: 'LinkedIn URL',
+      value: personal.linkedin,
+      answers: ['linkedin', 'website'],
+    },
+    {
+      id: 'profile.personal.github',
+      label: 'GitHub URL',
+      value: personal.github,
+      answers: ['github', 'website'],
+    },
+    {
+      id: 'profile.personal.portfolio',
+      label: 'portfolio URL',
+      value: personal.portfolio,
+      answers: ['portfolio', 'website'],
+    },
+    {
+      id: 'profile.personal.personalWebsite',
+      label: 'personal website',
+      value: personal.personalWebsite,
+      answers: ['website'],
+    },
+    {
+      id: 'profile.education[0].institution',
+      label: 'school',
+      value: education?.institution,
+      answers: ['school'],
+    },
+    {
+      id: 'profile.education[0].degree',
+      label: 'degree',
+      value: education?.degree,
+      answers: ['degree', 'degree_level', 'education_status'],
+    },
+    {
+      id: 'profile.education[0].major',
+      label: 'major',
+      value: education?.major,
+      answers: ['major'],
+    },
+    {
+      id: 'profile.education[0].minor',
+      label: 'minor',
+      value: education?.minor,
+      answers: ['minor'],
+    },
     { id: 'profile.education[0].gpa', label: 'GPA', value: education?.gpa, answers: ['gpa'] },
-    { id: 'profile.education[0].graduationDate', label: 'graduation date', value: education?.graduationDate, answers: ['graduation_date', 'graduation_month', 'graduation_year'] },
-    { id: 'profile.eligibility.willingToRelocate', label: 'willing to relocate', value: eligibility.willingToRelocate, answers: ['willing_to_relocate'] },
-    { id: 'profile.eligibility.willingToTravelPercent', label: 'willing to travel (percent)', value: eligibility.willingToTravelPercent, answers: ['willing_to_travel'] },
-    { id: 'profile.eligibility.hasDriversLicense', label: 'holds a driver licence', value: eligibility.hasDriversLicense, answers: ['drivers_license'] },
-    { id: 'profile.eligibility.meetsMinimumAge', label: 'meets the minimum age', value: eligibility.meetsMinimumAge, answers: ['minimum_age'] },
-    { id: 'profile.eligibility.earliestStartDate', label: 'earliest start date', value: eligibility.earliestStartDate, answers: ['earliest_start_date', 'notice_period'] },
-    { id: 'profile.eligibility.internshipAvailability', label: 'internship availability', value: eligibility.internshipAvailability, answers: ['internship_availability', 'onsite_availability', 'hybrid_availability', 'remote_availability'] },
-    { id: 'profile.preferences.discoverySource', label: 'how they found the role', value: profile.preferences.discoverySource, answers: ['how_did_you_hear', 'referral', 'referral_source', 'job_board_source'] },
+    {
+      id: 'profile.education[0].graduationDate',
+      label: 'graduation date',
+      value: education?.graduationDate,
+      answers: ['graduation_date', 'graduation_month', 'graduation_year'],
+    },
+    {
+      id: 'profile.eligibility.willingToRelocate',
+      label: 'willing to relocate',
+      value: eligibility.willingToRelocate,
+      answers: ['willing_to_relocate'],
+    },
+    {
+      id: 'profile.eligibility.willingToTravelPercent',
+      label: 'willing to travel (percent)',
+      value: eligibility.willingToTravelPercent,
+      answers: ['willing_to_travel'],
+    },
+    {
+      id: 'profile.eligibility.hasDriversLicense',
+      label: 'holds a driver licence',
+      value: eligibility.hasDriversLicense,
+      answers: ['drivers_license'],
+    },
+    {
+      id: 'profile.eligibility.meetsMinimumAge',
+      label: 'meets the minimum age',
+      value: eligibility.meetsMinimumAge,
+      answers: ['minimum_age'],
+    },
+    {
+      id: 'profile.eligibility.earliestStartDate',
+      label: 'earliest start date',
+      value: eligibility.earliestStartDate,
+      answers: ['earliest_start_date', 'notice_period'],
+    },
+    {
+      id: 'profile.eligibility.internshipAvailability',
+      label: 'internship availability',
+      value: eligibility.internshipAvailability,
+      answers: [
+        'internship_availability',
+        'onsite_availability',
+        'hybrid_availability',
+        'remote_availability',
+      ],
+    },
+    {
+      id: 'profile.preferences.discoverySource',
+      label: 'how they found the role',
+      value: profile.preferences.discoverySource,
+      answers: ['how_did_you_hear', 'referral', 'referral_source', 'job_board_source'],
+    },
   ];
 
-  return candidates
-    .filter((candidate) => candidate.value !== undefined && candidate.value !== '')
-    // An unknown question could be about anything the user saved, so it gets the
-    // ordinary facts — never the sensitive ones, which are not in this list at all.
-    .filter(
-      (candidate) => asksSomethingUnknown || candidate.answers.some((name) => wanted.has(name as never)),
-    )
-    .map((candidate) => ({
-      id: candidate.id,
-      label: candidate.label,
-      value: String(candidate.value),
-    }));
+  return (
+    candidates
+      .filter((candidate) => candidate.value !== undefined && candidate.value !== '')
+      // An unknown question could be about anything the user saved, so it gets the
+      // ordinary facts — never the sensitive ones, which are not in this list at all.
+      .filter(
+        (candidate) =>
+          asksSomethingUnknown || candidate.answers.some((name) => wanted.has(name as never)),
+      )
+      .map((candidate) => ({
+        id: candidate.id,
+        label: candidate.label,
+        value: String(candidate.value),
+      }))
+  );
 }
 
 export interface AnalysisRequestInput {
@@ -168,13 +316,18 @@ export function buildAnalysisRequest(input: AnalysisRequestInput): AnalysisReque
       .map((answer) => ({
         id: answer.id,
         question: answer.canonicalQuestion,
-        answer: typeof answer.answer === 'boolean' ? (answer.answer ? 'Yes' : 'No') : String(answer.answer),
+        answer:
+          typeof answer.answer === 'boolean'
+            ? answer.answer
+              ? 'Yes'
+              : 'No'
+            : String(answer.answer),
       })),
     jobContext: {
-      ...(input.bundle?.company ?? input.scan.jobContext.company
+      ...((input.bundle?.company ?? input.scan.jobContext.company)
         ? { company: input.bundle?.company ?? input.scan.jobContext.company }
         : {}),
-      ...(input.bundle?.jobTitle ?? input.scan.jobContext.jobTitle
+      ...((input.bundle?.jobTitle ?? input.scan.jobContext.jobTitle)
         ? { jobTitle: input.bundle?.jobTitle ?? input.scan.jobContext.jobTitle }
         : {}),
       // Truncated deliberately: the model needs the gist, not the whole posting,
@@ -276,7 +429,12 @@ function actionFromAnswer(
 
   switch (answer.action) {
     case 'LEAVE_BLANK':
-      return { ...base, action: 'skip', requiresReview: false, reason: answer.reason || 'Left blank.' };
+      return {
+        ...base,
+        action: 'skip',
+        requiresReview: false,
+        reason: answer.reason || 'Left blank.',
+      };
     case 'REQUIRE_USER_REVIEW':
       return { ...base, action: 'manual_review', requiresReview: true };
     case 'UPLOAD_RESUME':
