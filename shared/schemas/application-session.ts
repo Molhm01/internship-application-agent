@@ -71,17 +71,34 @@ export const applicationSessionSchema = z.object({
   officialApplyUrl: z.string().url().max(2048).optional(),
   websiteJobId: z.string().max(200).optional(),
   location: z.string().max(200).optional(),
-  eligibilityScore: z.number().optional(),
+  eligibilityScore: z.number().min(0).max(1).optional(),
   tailoredResumeDocumentId: z.string().max(200).optional(),
   tailoredCoverLetterDocumentId: z.string().max(200).optional(),
   startAutofill: z.boolean().optional(),
 });
 
+function isSafeApplicationDestination(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return false;
+    const host = parsed.hostname.toLowerCase();
+    return ![
+      'jobright.ai',
+      'www.jobright.ai',
+      'intern-list.com',
+      'www.intern-list.com',
+      'simplify.jobs',
+      'www.simplify.jobs',
+    ].some((candidate) => host === candidate || host.endsWith(`.${candidate}`));
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Input schema for creating new application sessions. `url`/`domain`/`ats` are
- * derived server-side (from `officialApplyUrl`) when the website creates a
- * session, so they are optional here even though they are required on the
- * stored record.
+ * Canonical input schema for creating application sessions. The caller must
+ * supply the final employer/ATS destination as `url`; discovery aggregators
+ * are never valid session targets.
  */
 export const applicationSessionInputSchema = applicationSessionSchema
   .omit({
@@ -89,6 +106,7 @@ export const applicationSessionInputSchema = applicationSessionSchema
     createdAt: true,
     expiresAt: true,
     claimedAt: true,
+    officialApplyUrl: true,
     url: true,
     domain: true,
     ats: true,
@@ -97,11 +115,16 @@ export const applicationSessionInputSchema = applicationSessionSchema
     /** Optional caller-supplied id, primarily for tests. */
     id: z.string().min(16).max(36).optional(),
     expiresAt: z.number().int().optional(),
-    url: z.string().max(2048).optional(),
+    url: z
+      .string()
+      .url()
+      .max(2048)
+      .refine(isSafeApplicationDestination, 'url must be a direct HTTPS employer or ATS destination'),
     domain: z.string().max(255).optional(),
     ats: z.string().max(100).optional(),
     status: z.enum(['available', 'claimed', 'completed']).optional(),
-  });
+  })
+  .strict();
 
 export type ApplicationSessionInput = z.infer<typeof applicationSessionInputSchema>;
 

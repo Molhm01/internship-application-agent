@@ -40,12 +40,20 @@ export const CANONICAL_QUESTIONS = [
   'education_status',
   'education_start_date',
   'graduation_date',
+  // Some forms split graduation into two controls; each is its own question so
+  // a month picker is never handed a year and vice versa.
+  'graduation_month',
+  'graduation_year',
   // Experience
   'employer',
   'job_title',
   'employment_start_date',
   'employment_end_date',
   'years_of_experience',
+  // Free-text summaries of prior work and prior projects, distinct from the
+  // structured employer/title controls above.
+  'employment_history',
+  'project_experience',
   // Documents
   'resume',
   'cover_letter',
@@ -174,12 +182,16 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   education_status: 'education',
   education_start_date: 'education',
   graduation_date: 'education',
+  graduation_month: 'education',
+  graduation_year: 'education',
 
   employer: 'experience',
   job_title: 'experience',
   employment_start_date: 'experience',
   employment_end_date: 'experience',
   years_of_experience: 'experience',
+  employment_history: 'experience',
+  project_experience: 'projects',
 
   resume: 'documents',
   cover_letter: 'documents',
@@ -270,6 +282,10 @@ export const CANONICAL_QUESTION_ALIASES: Readonly<Record<string, CanonicalQuesti
   why_company: 'why_this_company',
   why_role: 'why_this_role',
   project: 'custom_written_answer',
+  work_history: 'employment_history',
+  projects: 'project_experience',
+  grad_month: 'graduation_month',
+  grad_year: 'graduation_year',
 };
 
 /** Resolves any accepted spelling of a question to its canonical identifier. */

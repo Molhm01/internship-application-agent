@@ -16,7 +16,7 @@ import {
   type FillRunReport,
   type ReviewReason,
 } from '@internship-agent/shared';
-import { decideApproval } from './approvalPolicy.js';
+import { decideApproval, type ApprovalDecision } from './approvalPolicy.js';
 
 /**
  * One-button autofill.
@@ -30,8 +30,16 @@ import { decideApproval } from './approvalPolicy.js';
 
 export const MAX_ITERATIONS = 5;
 
-/** Text that means the next control ends the application rather than continues it. */
+/**
+ * Text that means the next control ends the application rather than continues
+ * it. Matched against a URL with its separators flattened, so
+ * `/review-and-submit` and `/review_and_submit` read the same as the words.
+ */
 const FINAL_STAGE = /\b(submit application|submit your application|review and submit)\b/i;
+
+function flattenSeparators(value: string): string {
+  return value.replace(/[-_+/]+/g, ' ');
+}
 const CAPTCHA = /\b(captcha|recaptcha|hcaptcha|i'?m not a robot)\b/i;
 const MFA =
   /\b(verification code|two[- ]factor|2fa|authenticator|one[- ]time (code|password)|multi[- ]factor)\b/i;
@@ -96,7 +104,7 @@ export function isFinalSubmissionStage(scan: ApplicationScanResult): boolean {
   const answerable = scan.fields.filter(
     (field) => field.visible && !field.disabled && field.fieldType !== 'unknown',
   );
-  return answerable.length === 0 && FINAL_STAGE.test(scan.url);
+  return answerable.length === 0 && FINAL_STAGE.test(flattenSeparators(scan.url));
 }
 
 function reviewReasonFor(
@@ -203,7 +211,11 @@ export async function runApplicationAutofill(
     return report('cancelled', agentError('AUTOFILL_CANCELLED', 'Cancelled before starting.'));
   }
 
-  for (iterations = 1; iterations <= MAX_ITERATIONS; iterations += 1) {
+  // `pass` is the loop counter; `iterations` is how many passes actually ran.
+  // Keeping them apart is what stops the report claiming a sixth pass when the
+  // loop merely finished its fifth and exited through the condition.
+  for (let pass = 1; pass <= MAX_ITERATIONS; pass += 1) {
+    iterations = pass;
     emit(iterations === 1 ? 'scanning' : 'rescanning', iterations === 1 ? 'Scanning' : 'Rescanning');
     const scanned = await dependencies.scan();
     if (scanned.error || !scanned.scan) {
@@ -255,7 +267,7 @@ export async function runApplicationAutofill(
     }
 
     emit('planning', 'Preparing answers');
-    const decisions = new Map<string, { approved: boolean; reviewReason?: ReviewReason }>();
+    const decisions = new Map<string, ApprovalDecision>();
     const approvals = new Map<string, boolean>();
     for (const action of plan.actions) {
       const decision = decideApproval(action, settings, fieldsById.get(action.fieldId));
@@ -293,7 +305,7 @@ export async function runApplicationAutofill(
 
     for (const action of plan.actions) {
       const field = fieldsById.get(action.fieldId);
-      const decision = decisions.get(action.id) ?? { approved: false };
+      const decision: ApprovalDecision = decisions.get(action.id) ?? { approved: false, reason: 'No decision was recorded for this action.' };
       const outcome = run?.results.find((result) => result.actionId === action.id);
       const executed = outcome
         ? { verified: outcome.status === 'verified', failed: outcome.status === 'failed' }

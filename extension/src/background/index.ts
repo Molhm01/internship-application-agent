@@ -8,6 +8,7 @@ import {
   answerGenerationMessageSchema,
   settingsUpdatedMessageSchema,
   answerGenerationRecordSchema,
+  applicationBundleTransferSchema,
   classifyQuestionDeterministically,
   extractQuestionConstraints,
   isAiEligibleField,
@@ -41,8 +42,6 @@ import {
   listOllamaModels,
   testAiGeneration,
   workerFailure,
-  getApplicationSession,
-  claimApplicationSession,
 } from './agentClient.js';
 import { clearLastScan, loadLastScan, saveLastScan } from '../storage/scans.js';
 import {
@@ -68,9 +67,14 @@ import {
 } from '../storage/generatedAnswers.js';
 import { loadSettings } from '../storage/settings.js';
 import {
-  loadApplicationSession,
-  saveApplicationSession,
-} from '../storage/applicationSession.js';
+  bundleForUrl,
+  deleteBundle,
+  listBundles,
+  loadActiveBundle,
+  saveBundle,
+  setActiveBundle,
+} from '../storage/bundleStore.js';
+import { selectSavedResume } from './standaloneResources.js';
 import {
   answerText,
   applyRecordToPlan,
@@ -182,30 +186,20 @@ async function buildPlan(scanId?: string): Promise<unknown> {
   if (!scan || (scanId && scan.id !== scanId)) {
     return { error: fillFailure('INVALID_FILL_PLAN', 'No matching completed scan exists.').error };
   }
-  const [profileResult, answersResult, documentsResult, settings, applicationSession] = await Promise.all([
+  const [profileResult, answersResult, documentsResult, settings] = await Promise.all([
     getProfile(),
     listAnswers(),
     listDocuments(),
     loadSettings(),
-    loadApplicationSession(),
   ]);
   if (profileResult.error) return { error: profileResult.error };
   if (answersResult.error) return { error: answersResult.error };
   if (documentsResult.error) return { error: documentsResult.error };
-  const selectedDocument =
-    (applicationSession &&
-    applicationSession.tailoredResumeDocumentId &&
-    samePageUrl(applicationSession.officialApplyUrl ?? applicationSession.url, scan.url)
-      ? documentsResult.data.documents.find(
-          (document) => document.id === applicationSession.tailoredResumeDocumentId,
-        )
-      : undefined) ??
-    documentsResult.data.documents.find(
-      (document) => document.id === settings.selectedDocumentId,
-    ) ??
-    documentsResult.data.documents.find(
-      (document) => document.id === documentsResult.data.defaultResumeId,
-    );
+  const selectedDocument = selectSavedResume(
+    documentsResult.data.documents,
+    settings.selectedDocumentId,
+    documentsResult.data.defaultResumeId,
+  );
   const plan = buildDeterministicPlan(
     scan,
     profileResult.data.profile,
@@ -217,40 +211,53 @@ async function buildPlan(scanId?: string): Promise<unknown> {
   return { plan };
 }
 
-function samePageUrl(left: string, right: string): boolean {
-  try {
-    const a = new URL(left);
-    const b = new URL(right);
-    a.hash = '';
-    b.hash = '';
-    return a.toString() === b.toString();
-  } catch {
-    return false;
-  }
-}
-
-async function claimSessionForTab(
-  sessionId: string,
-  tabUrl: string | undefined,
-): Promise<unknown> {
-  const current = await getApplicationSession(sessionId);
-  if (current.error) return current;
-  const expectedUrl = current.data.officialApplyUrl ?? current.data.url;
-  if (!tabUrl || !samePageUrl(expectedUrl, tabUrl)) {
+/**
+ * Stores a bundle the website handed over and answers with the acknowledgement
+ * the page is waiting for. The website opens the employer URL only after this
+ * resolves, so a failure here means the user never leaves Internship Pilot with
+ * documents that were not saved.
+ */
+async function storeApplicationBundle(transfer: unknown): Promise<unknown> {
+  const parsed = applicationBundleTransferSchema.safeParse(transfer);
+  if (!parsed.success) {
     return {
-      error: answerFailure(
-        'VALIDATION_FAILED',
-        'The application session does not match the page that attempted to claim it.',
-      ),
+      result: {
+        ok: false as const,
+        reason: `The application bundle failed schema validation: ${parsed.error.issues
+          .slice(0, 3)
+          .map((issue) => `${issue.path.join('.')} ${issue.message}`)
+          .join('; ')}`,
+      },
     };
   }
-  const result =
-    current.data.status === 'available'
-      ? await claimApplicationSession(sessionId)
-      : current;
-  if (result.error) return result;
-  await saveApplicationSession(result.data);
-  return result;
+  try {
+    const bundle = await saveBundle(parsed.data);
+    console.info('[agent] application bundle saved', {
+      bundleId: bundle.id,
+      company: bundle.company,
+      documents: [bundle.resume?.kind, bundle.coverLetter?.kind].filter(Boolean),
+    });
+    return {
+      result: {
+        ok: true as const,
+        bundleId: bundle.id,
+        storedDocuments: [
+          ...(bundle.resume ? ['resume' as const] : []),
+          ...(bundle.coverLetter ? ['cover_letter' as const] : []),
+        ],
+        storedAt: new Date().toISOString(),
+      },
+    };
+  } catch (cause) {
+    return {
+      result: {
+        ok: false as const,
+        reason: `The extension could not store the bundle: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      },
+    };
+  }
 }
 
 function answerFailure(code: AgentError['code'], message: string, fieldId?: string): AgentError {
@@ -903,14 +910,24 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 /** Maps a message to the client call that serves it. */
-function handle(message: ExtensionMessage, sender?: chrome.runtime.MessageSender): Promise<unknown> | null {
+function handle(message: ExtensionMessage): Promise<unknown> | null {
   switch (message.type) {
     case 'AGENT_STATUS_REQUEST':
       return fetchAgentStatus();
-    case 'APPLICATION_SESSION_CLAIM':
-      return claimSessionForTab(message.sessionId, sender?.tab?.url);
-    case 'GET_APPLICATION_SESSION':
-      return loadApplicationSession().then((data) => ({ data }));
+    case 'SAVE_APPLICATION_BUNDLE':
+      return storeApplicationBundle(message.bundle);
+    case 'GET_ACTIVE_BUNDLE':
+      // A page-specific lookup when the caller knows which tab it means, so two
+      // applications open in two tabs each see their own documents.
+      return (message.url ? bundleForUrl(message.url) : loadActiveBundle()).then((bundle) => ({
+        data: bundle,
+      }));
+    case 'LIST_BUNDLES':
+      return listBundles().then((bundles) => ({ data: { bundles } }));
+    case 'SET_ACTIVE_BUNDLE':
+      return setActiveBundle(message.bundleId).then((bundle) => ({ data: bundle }));
+    case 'DELETE_BUNDLE':
+      return deleteBundle(message.bundleId).then(() => ({ ok: true as const }));
     case 'OLLAMA_MODELS_LIST':
       return listOllamaModels();
     case 'TEST_AI_GENERATION':
@@ -1106,7 +1123,7 @@ function handle(message: ExtensionMessage, sender?: chrome.runtime.MessageSender
   }
 }
 
-chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
   if (
     typeof message === 'object' &&
     message !== null &&
@@ -1182,7 +1199,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     }
   }
   trace('worker', 'received request', { type: message?.type });
-  const pending = handle(message, sender);
+  const pending = handle(message);
 
   if (!pending) {
     // Returning false makes Chrome resolve the sender's promise with `undefined`.

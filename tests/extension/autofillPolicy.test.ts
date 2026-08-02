@@ -85,7 +85,7 @@ describe('autofill settings', () => {
       authToken: 'token',
       selectedModel: 'model:latest',
       selectedDocumentId: null,
-      ai: {},
+      ai: { generationModel: 'model:latest' },
       settingsVersion: 1,
       settingsUpdatedAt: new Date().toISOString(),
     });

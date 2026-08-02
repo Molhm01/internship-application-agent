@@ -4,6 +4,7 @@ import type { HealthResponse } from '@internship-agent/shared';
 import { App } from '../../extension/src/popup/App.js';
 import type { AgentStatusResult } from '../../extension/src/messaging/messages.js';
 import { installChromeMock } from './setup.js';
+import { emptyApplicationScan } from './popupFixtures.js';
 
 afterEach(cleanup);
 
@@ -38,9 +39,15 @@ function mockPopup(
   tabUrl = 'https://boards.example.com/apply/123',
 ): void {
   const chromeMock = installChromeMock();
-  chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) =>
-    Promise.resolve(message.type === 'GET_LAST_SCAN' ? { scan: null } : status),
-  );
+  chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+    if (message.type === 'GET_LAST_SCAN') {
+      return Promise.resolve({ scan: emptyApplicationScan(tabUrl) });
+    }
+    if (message.type === 'GET_FILL_PLAN') {
+      return Promise.resolve({ plan: null, report: null });
+    }
+    return Promise.resolve(status);
+  });
   chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: tabUrl }]);
   chromeMock.tabs.sendMessage.mockResolvedValue({
     present: true,
@@ -158,7 +165,7 @@ describe('popup connection status', () => {
     );
   });
 
-  it('says fields are not analyzed rather than reporting zero', async () => {
+  it('reports that no supported form was detected after scanning zero fields', async () => {
     mockPopup({
       health: health(),
       latencyMs: 7,
@@ -167,11 +174,13 @@ describe('popup connection status', () => {
     });
 
     render(<App />);
-    await waitFor(() => expect(screen.getByText('Not analyzed yet')).toBeDefined());
-    expect(screen.queryByText('0')).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByText('No supported application form detected on this page')).toBeDefined(),
+    );
+    expect(screen.getByText('0')).toBeDefined();
   });
 
-  it('enables read-only analysis while keeping fill gated', async () => {
+  it('keeps settings available when no supported form is detected', async () => {
     mockPopup({
       health: health(),
       latencyMs: 7,
@@ -182,26 +191,23 @@ describe('popup connection status', () => {
     render(<App />);
     await waitFor(() => expect(screen.getAllByText('Connected').length).toBeGreaterThan(0));
 
-    expect(screen.getByRole('button', { name: 'Analyze Application' })).toHaveProperty(
-      'disabled',
-      false,
-    );
-    expect(screen.getByRole('button', { name: 'Review Scan' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Fill Approved Fields' })).toHaveProperty(
-      'disabled',
-      true,
-    );
+    expect(screen.getByText('No supported application form detected on this page')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Open Settings' })).toHaveProperty('disabled', false);
   });
 
   it('tells the user to reload the page when the content script is unreachable', async () => {
     const chromeMock = installChromeMock();
-    chromeMock.runtime.sendMessage.mockResolvedValue({
+    const status = {
       health: health(),
       latencyMs: 7,
       serverUrl: 'http://127.0.0.1:4317',
       tokenConfigured: true,
-    } satisfies AgentStatusResult);
+    } satisfies AgentStatusResult;
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
+      if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
+      return Promise.resolve(status);
+    });
     chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: 'https://example.com/apply' }]);
     chromeMock.tabs.sendMessage.mockRejectedValue(new Error('Receiving end does not exist'));
 

@@ -9,6 +9,7 @@ import {
 import { App } from '../../extension/src/popup/App.js';
 import type { AgentStatusResult, ResumeSelection } from '../../extension/src/messaging/messages.js';
 import { installChromeMock } from './setup.js';
+import { emptyApplicationScan } from './popupFixtures.js';
 
 afterEach(cleanup);
 
@@ -52,10 +53,17 @@ function mountPopup(status: Partial<AgentStatusResult>): void {
     tokenConfigured: true,
     ...status,
   } satisfies AgentStatusResult;
-  chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) =>
-    Promise.resolve(message.type === 'GET_LAST_SCAN' ? { scan: null } : result),
-  );
-  chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: 'https://boards.example.com/apply/1' }]);
+  const tabUrl = 'https://boards.example.com/apply/1';
+  chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+    if (message.type === 'GET_LAST_SCAN') {
+      return Promise.resolve({ scan: emptyApplicationScan(tabUrl) });
+    }
+    if (message.type === 'GET_FILL_PLAN') {
+      return Promise.resolve({ plan: null, report: null });
+    }
+    return Promise.resolve(result);
+  });
+  chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: tabUrl }]);
   chromeMock.tabs.sendMessage.mockResolvedValue({
     present: true,
     url: 'https://boards.example.com/apply/1',
@@ -182,35 +190,37 @@ describe('popup selected resume', () => {
   });
 });
 
-describe('popup milestone gating', () => {
-  it('enables analysis and keeps filling disabled while settings stays reachable', async () => {
+describe('popup standalone gating', () => {
+  it('shows the no-form state while settings stays reachable', async () => {
     mountPopup({ health: health(), selectedResume: null });
 
     await waitFor(() => expect(screen.getAllByText('Connected').length).toBeGreaterThan(0));
 
-    expect(screen.getByRole('button', { name: 'Analyze Application' })).toHaveProperty(
-      'disabled',
-      false,
-    );
-    expect(screen.getByRole('button', { name: 'Review Scan' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Fill Approved Fields' })).toHaveProperty(
-      'disabled',
-      true,
-    );
+    expect(screen.getByText('No supported application form detected on this page')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Open Settings' })).toHaveProperty('disabled', false);
-    expect(screen.getByText('Not analyzed yet')).toBeDefined();
+    expect(screen.getByText('0')).toBeDefined();
   });
 
   it('opens the real settings page when Open Settings is clicked', async () => {
     const chromeMock = installChromeMock();
-    chromeMock.runtime.sendMessage.mockResolvedValue({
+    const status = {
       health: health(),
       latencyMs: 5,
       serverUrl: 'http://127.0.0.1:4317',
       tokenConfigured: true,
       selectedResume: null,
-    } satisfies AgentStatusResult);
-    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: 'https://example.com/apply' }]);
+    } satisfies AgentStatusResult;
+    const tabUrl = 'https://example.com/apply';
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'GET_LAST_SCAN') {
+        return Promise.resolve({ scan: emptyApplicationScan(tabUrl) });
+      }
+      if (message.type === 'GET_FILL_PLAN') {
+        return Promise.resolve({ plan: null, report: null });
+      }
+      return Promise.resolve(status);
+    });
+    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: tabUrl }]);
     render(<App />);
 
     await waitFor(() => expect(screen.getAllByText('Connected').length).toBeGreaterThan(0));

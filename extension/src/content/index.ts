@@ -19,12 +19,14 @@ import { scanApplication } from '../scanner/scanApplication.js';
 import { ATS_ADAPTERS } from '../scanner/adapters.js';
 import { completeReport, createRunningReport } from '../reporter/fillReporter.js';
 import { validatePageIdentity } from '../executor/pageProtection.js';
-import { claimSessionFromCurrentPage } from './applicationSessionHandoff.js';
+import { startBundleBridge } from './bundleBridge.js';
 
 const controllers = new Map<string, AbortController>();
 const fillControllers = new Map<string, AbortController>();
 
-void claimSessionFromCurrentPage();
+// Listening costs nothing on a page that never posts a bundle, and it means the
+// user never has to have the popup open for the handoff to land.
+startBundleBridge();
 
 function scanError(
   code: AgentError['code'],

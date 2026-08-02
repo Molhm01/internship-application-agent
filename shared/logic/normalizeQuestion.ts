@@ -118,9 +118,22 @@ const RULES: readonly Rule[] = [
   { question: 'major', patterns: [/\b(major|discipline|field of study|concentration)\b/] },
   { question: 'minor', patterns: [/\bminor\b/] },
   { question: 'gpa', patterns: [/\bgpa\b/, /\bgrade point average\b/] },
+  // Split graduation controls, before the combined rule they would otherwise hit.
+  {
+    question: 'graduation_month',
+    patterns: [/\b(graduation|grad|completion)\b.*\bmonth\b/, /\bmonth of graduation\b/],
+  },
+  {
+    question: 'graduation_year',
+    patterns: [/\b(graduation|grad|completion)\b.*\byear\b/, /\byear of graduation\b/],
+  },
   {
     question: 'graduation_date',
-    patterns: [/\b(graduation|grad)\b.*\b(date|year|month)\b/, /\bend date\b.*\beducation\b/],
+    patterns: [
+      /\b(graduation|grad)\b.*\b(date|year|month)\b/,
+      /\bend date\b.*\beducation\b/,
+      /\b(expected|anticipated) (completion|graduation)\b/,
+    ],
   },
   { question: 'education_start_date', patterns: [/\bstart date\b.*\b(school|education)\b/] },
 
@@ -133,6 +146,22 @@ const RULES: readonly Rule[] = [
     patterns: [/^(?!.*\b(earliest|available|availability|when can you)\b).*\bstart date\b/],
   },
   { question: 'employment_end_date', patterns: [/\bend date\b/] },
+  {
+    question: 'employment_history',
+    patterns: [
+      /\b(work|employment|professional) (history|experience)\b/,
+      /\bprevious (roles?|positions?|employers?)\b/,
+      /\bdescribe your (work|professional) experience\b/,
+    ],
+  },
+  {
+    question: 'project_experience',
+    patterns: [
+      /\b(relevant |personal |notable )?projects?\b.*\b(describe|tell us|worked on|built)\b/,
+      /\b(describe|tell us about)\b.*\bprojects?\b/,
+      /\bproject experience\b/,
+    ],
+  },
 
   // Eligibility
   {
@@ -142,15 +171,42 @@ const RULES: readonly Rule[] = [
       /\bwork authoriz(ed|ation)\b/,
       /\beligible to work\b/,
       /\bright to work\b/,
+      // Equivalent wordings employers actually use. Each asks the same thing as
+      // "Are you legally authorized to work?" and must reach the same saved
+      // fact rather than falling through as an unrecognized question.
+      /\bpermission to work\b/,
+      /\b(legally )?permitted to work\b/,
+      /\bemployment eligibilit(y|ies)\b/,
+      /\beligibility to work\b/,
+      /\bwork (lawfully|legally)\b/,
+      /\blegal(ly)? (able|entitled) to work\b/,
+      /\bwork permit\b(?!.*\bsponsor)/,
     ],
   },
   {
     question: 'sponsorship_required',
-    patterns: [/\bsponsor(ship)?\b/, /\bvisa\b.*\b(require|need|support)\b/],
+    patterns: [
+      /\bsponsor(ship|ing|ed)?\b/,
+      /\bvisa\b.*\b(require|need|support|status)\b/,
+      /\b(require|need)\b.*\bvisa\b/,
+      /\bimmigration (support|status|sponsorship)\b/,
+      /\bh1 ?b\b/,
+      /\bemployment authorization\b.*\b(sponsor|support)\b/,
+    ],
   },
   { question: 'citizenship', patterns: [/\bcitizen(ship)?\b/, /\bnationality\b/] },
-  { question: 'willing_to_relocate', patterns: [/\brelocat(e|ion)\b/] },
+  { question: 'willing_to_relocate', patterns: [/\brelocat(e|ion)\b/, /\bwilling to move\b/] },
   { question: 'willing_to_travel', patterns: [/\btravel\b/] },
+  {
+    question: 'remote_availability',
+    patterns: [
+      /\b(work|working)\b.*\bremotely\b/,
+      /\bremote (work|position|role)\b/,
+      /\bwork from home\b/,
+    ],
+  },
+  { question: 'onsite_availability', patterns: [/\b(on ?site|in ?person|in office)\b/] },
+  { question: 'hybrid_availability', patterns: [/\bhybrid\b/] },
   { question: 'drivers_license', patterns: [/\bdriver'?s? licen[cs]e\b/] },
   {
     question: 'minimum_age',
@@ -284,9 +340,151 @@ export interface QuestionMatch {
 }
 
 /**
- * Maps a human label to a canonical question. Returns `unknown` with zero
- * confidence rather than guessing when nothing matches — an unrecognized
- * question is reported as unrecognized.
+ * Reference wordings for questions whose phrasing varies most between
+ * employers. The rule table above is exact and cheap; this is the tier that
+ * catches a rewording no pattern anticipated, scored rather than asserted.
+ *
+ * It never invents an answer — it only proposes which saved question a label is
+ * probably asking about, at a confidence the caller can act on or ignore.
+ */
+const INTENT_PHRASES: ReadonlyArray<{ question: CanonicalQuestion; phrases: readonly string[] }> = [
+  {
+    question: 'work_authorization',
+    phrases: [
+      'are you legally authorized to work in the united states',
+      'do you currently have permission to work in the country of employment',
+      'can you provide evidence of employment eligibility',
+      'are you able to provide proof of your right to work',
+      'do you have the legal right to work in this country',
+    ],
+  },
+  {
+    question: 'sponsorship_required',
+    phrases: [
+      'will you now or in the future require sponsorship',
+      'do you require visa sponsorship',
+      'would the company need to sponsor your employment authorization',
+      'do you need immigration support to work here',
+    ],
+  },
+  {
+    question: 'willing_to_relocate',
+    phrases: [
+      'are you willing to relocate for this position',
+      'would you consider moving to the job location',
+    ],
+  },
+  {
+    question: 'earliest_start_date',
+    phrases: [
+      'when are you available to start',
+      'what is your earliest possible start date',
+      'how soon could you begin working',
+    ],
+  },
+  {
+    question: 'how_did_you_hear',
+    phrases: [
+      'how did you hear about this opportunity',
+      'where did you find out about this role',
+      'what brought you to this job posting',
+    ],
+  },
+  {
+    question: 'why_this_company',
+    phrases: [
+      'why do you want to work here',
+      'what interests you about our company',
+      'why are you interested in joining our team',
+    ],
+  },
+  {
+    question: 'why_this_role',
+    phrases: [
+      'why are you interested in this position',
+      'what draws you to this particular role',
+      'what motivates you to apply for this job',
+    ],
+  },
+  {
+    question: 'technical_skills',
+    phrases: [
+      'which programming languages are you proficient in',
+      'describe your technical skills',
+      'what technologies have you worked with',
+    ],
+  },
+  {
+    question: 'minimum_age',
+    phrases: ['are you at least 18 years of age', 'do you meet the minimum age requirement'],
+  },
+  {
+    question: 'drivers_license',
+    phrases: ['do you hold a valid driver licence', 'do you have a current driving licence'],
+  },
+  {
+    question: 'remote_availability',
+    phrases: ['are you able to work remotely', 'would you be comfortable working from home'],
+  },
+  {
+    question: 'referral',
+    phrases: ['were you referred by a current employee', 'who referred you to this position'],
+  },
+];
+
+/** Words that carry no distinguishing meaning in a question label. */
+const STOP_WORDS = new Set([
+  'a', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'been', 'by', 'can', 'currently', 'do',
+  'does', 'for', 'from', 'have', 'in', 'is', 'it', 'of', 'on', 'or', 'our', 'please', 'the',
+  'this', 'to', 'us', 'we', 'what', 'which', 'will', 'with', 'would', 'you', 'your',
+]);
+
+function contentTokens(value: string): Set<string> {
+  return new Set(
+    normalizeLabel(value)
+      .split(' ')
+      .filter((token) => token.length > 1 && !STOP_WORDS.has(token)),
+  );
+}
+
+/** Jaccard overlap of the meaningful words in two labels, 0…1. */
+function overlap(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  let shared = 0;
+  for (const token of left) if (right.has(token)) shared += 1;
+  return shared / (left.size + right.size - shared);
+}
+
+/**
+ * The lowest overlap that still means "these ask the same thing". Below this a
+ * label is reported as unrecognized rather than mapped to something close-ish.
+ */
+export const SEMANTIC_MATCH_THRESHOLD = 0.45;
+
+/**
+ * Scores a label against the reference wordings. Returns the best question and
+ * its overlap, or `unknown` at zero when nothing is close enough.
+ */
+export function scoreQuestionIntent(rawLabel: string): QuestionMatch {
+  const tokens = contentTokens(rawLabel);
+  if (tokens.size === 0) return { question: 'unknown', confidence: 0 };
+
+  let best: QuestionMatch = { question: 'unknown', confidence: 0 };
+  for (const entry of INTENT_PHRASES) {
+    for (const phrase of entry.phrases) {
+      const score = overlap(tokens, contentTokens(phrase));
+      if (score > best.confidence) best = { question: entry.question, confidence: score };
+    }
+  }
+  return best.confidence >= SEMANTIC_MATCH_THRESHOLD ? best : { question: 'unknown', confidence: 0 };
+}
+
+/**
+ * Maps a human label to a canonical question.
+ *
+ * Two tiers: the exact rule table first, then similarity against reference
+ * wordings. Returns `unknown` with zero confidence rather than guessing when
+ * neither is convincing — an unrecognized question is reported as unrecognized.
  */
 export function matchCanonicalQuestion(rawLabel: string): QuestionMatch {
   const normalized = normalizeLabel(rawLabel);
@@ -300,7 +498,7 @@ export function matchCanonicalQuestion(rawLabel: string): QuestionMatch {
     }
   }
 
-  return { question: 'unknown', confidence: 0 };
+  return scoreQuestionIntent(normalized);
 }
 
 /** Default section for a canonical question. */

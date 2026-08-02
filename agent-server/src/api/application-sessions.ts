@@ -14,18 +14,12 @@ import { parseBody } from '../validation/request.js';
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Derives the required url/domain/ats stored fields when the caller (the
- * website handoff) only supplied officialApplyUrl. The extension, which
- * already knows the page's url/domain/ats, may still pass them explicitly. */
 function deriveStoredFields(input: z.infer<typeof applicationSessionInputSchema>): {
   url: string;
   domain: string;
   ats: string;
 } {
-  const url = input.url ?? input.officialApplyUrl;
-  if (!url) {
-    throw new Error('Either url or officialApplyUrl is required');
-  }
+  const url = input.url;
   const domain = input.domain ?? new URL(url).hostname;
   const ats = input.ats ?? 'website-handoff';
   return { url, domain, ats };
@@ -44,6 +38,12 @@ export async function registerApplicationSessionRoutes(
   app.post('/application-sessions', (request, reply) => {
     const parsed = parseBody(applicationSessionInputSchema, request.body);
     if (!parsed.ok) {
+      if (process.env.NODE_ENV === 'development') {
+        ctx.logger.warn('application session input failed validation', {
+          fields: parsed.error.debugContext.fields,
+          message: parsed.error.message,
+        });
+      }
       return reply.status(422).send({ ok: false, error: parsed.error });
     }
     const input = parsed.data;
@@ -72,7 +72,7 @@ export async function registerApplicationSessionRoutes(
         jobContext: input.jobContext,
         company: input.company,
         jobTitle: input.jobTitle,
-        officialApplyUrl: input.officialApplyUrl,
+        officialApplyUrl: input.url,
         websiteJobId: input.websiteJobId,
         location: input.location,
         eligibilityScore: input.eligibilityScore,

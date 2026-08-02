@@ -28,7 +28,10 @@ import type {
   AnswerGenerationStore,
   QuestionClassificationResult,
   SettingsUpdatedMessage,
-  ApplicationSession,
+  ApplicationBundle,
+  ApplicationBundleTransfer,
+  BundleAcknowledgement,
+  BundleRejection,
 } from '@internship-agent/shared';
 import {
   clearLastScanResponseSchema,
@@ -59,8 +62,11 @@ import {
 export type ExtensionMessage =
   | { type: 'AGENT_STATUS_REQUEST' }
   | { type: 'CONTENT_PING' }
-  | { type: 'APPLICATION_SESSION_CLAIM'; sessionId: string }
-  | { type: 'GET_APPLICATION_SESSION' }
+  | { type: 'SAVE_APPLICATION_BUNDLE'; bundle: ApplicationBundleTransfer }
+  | { type: 'GET_ACTIVE_BUNDLE'; url?: string }
+  | { type: 'LIST_BUNDLES' }
+  | { type: 'SET_ACTIVE_BUNDLE'; bundleId: string }
+  | { type: 'DELETE_BUNDLE'; bundleId: string }
   | { type: 'PROFILE_GET' }
   | { type: 'PROFILE_SAVE'; profile: ProfileUpdate }
   | { type: 'DOCUMENTS_LIST' }
@@ -127,8 +133,14 @@ export interface ContentPingResult {
 
 export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends 'AGENT_STATUS_REQUEST'
   ? AgentStatusResult
-  : M extends 'APPLICATION_SESSION_CLAIM' | 'GET_APPLICATION_SESSION'
-    ? AgentResult<ApplicationSession | null>
+  : M extends 'SAVE_APPLICATION_BUNDLE'
+    ? { result: BundleAcknowledgement | BundleRejection }
+    : M extends 'GET_ACTIVE_BUNDLE' | 'SET_ACTIVE_BUNDLE'
+    ? AgentResult<ApplicationBundle | null>
+    : M extends 'LIST_BUNDLES'
+    ? AgentResult<{ bundles: ApplicationBundle[] }>
+    : M extends 'DELETE_BUNDLE'
+    ? { ok: true } | { ok: false; error: AgentError }
     : M extends 'OLLAMA_MODELS_LIST'
     ? AgentResult<ModelsResponse>
     : M extends 'TEST_AI_GENERATION'

@@ -15,3 +15,6 @@ export * from './settings.js';
 export * from './semanticOption.js';
 export * from './discoveredOptions.js';
 export * from './application-session.js';
+export * from './autofill.js';
+export * from './applicationBundle.js';
+export * from './formAnalysis.js';

@@ -86,9 +86,29 @@ describe('DOM field scanning', () => {
     expect(extractAccessibleLabel(document.querySelector('#three')!).signals).toContain(
       'aria_label',
     );
+    // A placeholder is a hint, not a name: it is used only when nothing else
+    // named the control, so here the preceding labelled input wins.
     expect(extractAccessibleLabel(document.querySelector('#four')!).signals).toContain(
-      'placeholder',
+      'preceding_sibling',
     );
+  });
+
+  it('uses a placeholder only when nothing else names the control', () => {
+    body('<body><form><input id="lonely" placeholder="LinkedIn URL"></form></body>');
+    expect(extractAccessibleLabel(document.querySelector('#lonely')!)).toEqual({
+      label: 'LinkedIn URL',
+      signals: ['placeholder'],
+    });
+  });
+
+  it('prefers a real label over a placeholder on the same control', () => {
+    body(
+      '<body><form><label for="x">Portfolio website</label>' +
+        '<input id="x" placeholder="https://example.com"></form></body>',
+    );
+    const found = extractAccessibleLabel(document.querySelector('#x')!);
+    expect(found.label).toBe('Portfolio website');
+    expect(found.signals).not.toContain('placeholder');
   });
 
   it('detects types, required flags, sections, options, grouping, files, and validation', async () => {

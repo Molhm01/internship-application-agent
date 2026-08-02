@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { aiGenerationSettingsSchema } from './ai.js';
 import { isoDateTimeSchema } from './common.js';
+import { autofillSettingsSchema } from './autofill.js';
 
 /**
  * The single persisted extension-settings contract. AI enablement is deliberately
@@ -14,6 +15,12 @@ export const extensionSettingsSchema = z.object({
   selectedDocumentId: z.string().min(1).nullable(),
   aiGenerationEnabled: z.boolean().default(false),
   ai: aiGenerationSettingsSchema,
+  /**
+   * What one-button autofill may apply without a person looking first. Every
+   * member defaults, so an installation that predates these keys is upgraded on
+   * read rather than being rejected.
+   */
+  autofill: autofillSettingsSchema.default({}),
   settingsVersion: z.number().int().nonnegative(),
   settingsUpdatedAt: isoDateTimeSchema,
 });

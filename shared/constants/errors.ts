@@ -91,6 +91,23 @@ export const ERROR_CODES = [
   'INVALID_SCAN_RESULT',
   'PAGE_CHANGED_DURING_SCAN',
   'BACKGROUND_WORKER_UNAVAILABLE',
+  // One-button application autofill.
+  'AUTOFILL_DISABLED',
+  'AUTOFILL_CANCELLED',
+  'SCAN_FAILED',
+  'RESOLUTION_FAILED',
+  'CAPTCHA_DETECTED',
+  'MFA_DETECTED',
+  'FINAL_SUBMISSION_STAGE',
+  'MAX_ITERATIONS_REACHED',
+  // Website → extension application-bundle handoff.
+  'BUNDLE_MISSING',
+  'BUNDLE_REJECTED',
+  'BUNDLE_STORAGE_FAILED',
+  'BUNDLE_DOCUMENT_MISSING',
+  // Batched page-level form analysis.
+  'ANALYSIS_FAILED',
+  'ANALYSIS_REJECTED',
   // Transport / server-side codes used by the local agent server.
   'UNAUTHORIZED',
   'ORIGIN_REJECTED',
@@ -238,6 +255,30 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'Return to the application step you want to inspect and start a new scan.',
   BACKGROUND_WORKER_UNAVAILABLE:
     'Reload the extension from chrome://extensions, reopen the application page, and retry.',
+  AUTOFILL_DISABLED: 'Turn application autofill back on in extension settings, then retry.',
+  AUTOFILL_CANCELLED: 'Start autofill again when you are ready.',
+  SCAN_FAILED:
+    'Reload the application page, wait until the form is visible, then run autofill again.',
+  RESOLUTION_FAILED:
+    'Open extension settings and confirm your profile and saved answers loaded, then retry.',
+  CAPTCHA_DETECTED: 'Solve the CAPTCHA yourself, then run autofill again.',
+  MFA_DETECTED: 'Enter the verification code yourself, then run autofill again.',
+  FINAL_SUBMISSION_STAGE:
+    'This is the final submission step. Review every answer and submit it yourself.',
+  MAX_ITERATIONS_REACHED:
+    'The form kept revealing new questions. Run autofill again to continue from where it stopped.',
+  BUNDLE_MISSING:
+    'Open the job on Internship Pilot and click "Apply with Application Agent" to send the tailored documents to the extension.',
+  BUNDLE_REJECTED:
+    'The application bundle failed validation and was not stored. Regenerate the tailored documents and try again.',
+  BUNDLE_STORAGE_FAILED:
+    'The extension could not save the application bundle. Reload the extension and try again.',
+  BUNDLE_DOCUMENT_MISSING:
+    'A tailored document is missing from the saved bundle. Send it again from Internship Pilot.',
+  ANALYSIS_FAILED:
+    'The local model could not analyze this page. Retry, or fill the highlighted fields yourself.',
+  ANALYSIS_REJECTED:
+    'The model returned an unusable answer plan and it was discarded. Nothing was filled from it.',
   UNAUTHORIZED:
     'Paste the agent server token into extension settings. The token is printed when the server starts.',
   ORIGIN_REJECTED: 'This request origin is not allowed to reach the local agent server.',

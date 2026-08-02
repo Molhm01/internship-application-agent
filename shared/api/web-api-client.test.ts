@@ -58,13 +58,13 @@ describe('WebApiClient', () => {
         url: 'https://example.com',
         domain: 'example.com',
         ats: 'ats-system',
-        createdAt: Date.now(),
         expiresAt: Date.now() + 24 * 60 * 60 * 1000,
       };
 
       const mockResponse = {
         ...input,
         sessionId: 'new-session-id',
+        createdAt: Date.now(),
         status: 'available',
       };
 

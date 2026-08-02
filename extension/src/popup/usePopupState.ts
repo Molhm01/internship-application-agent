@@ -11,7 +11,6 @@ import {
   type FillProgress,
   type FillRunReport,
   type FillUiState,
-  type ApplicationSession,
 } from '@internship-agent/shared';
 import type { AgentStatusResult } from '../messaging/messages.js';
 import { sendMessage } from '../messaging/messages.js';
@@ -29,21 +28,21 @@ export interface PopupState {
   status: AgentStatusResult | null;
   tab: TabInfo;
   loading: boolean;
-  applicationSession: ApplicationSession | null;
   scanState: ScanState;
   scan: ApplicationScanResult | null;
   progress: ScanProgress | null;
   scanError: AgentError | null;
   refresh: () => void;
-  analyze: () => Promise<void>;
+  analyze: () => Promise<ApplicationScanResult | null>;
   cancel: () => Promise<void>;
   plan: DeterministicFillPlan | null;
   report: FillRunReport | null;
   fillState: FillUiState;
   fillProgress: FillProgress | null;
   fillError: AgentError | null;
-  buildPlan: () => Promise<void>;
-  execute: () => Promise<void>;
+  buildPlan: (scanId?: string) => Promise<DeterministicFillPlan | null>;
+  approveSafe: () => Promise<DeterministicFillPlan | null>;
+  execute: (plan?: DeterministicFillPlan) => Promise<void>;
   cancelFill: () => Promise<void>;
 }
 
@@ -98,7 +97,6 @@ export function usePopupState(): PopupState {
   const [status, setStatus] = useState<AgentStatusResult | null>(null);
   const [tab, setTab] = useState<TabInfo>(EMPTY_TAB);
   const [loading, setLoading] = useState(true);
-  const [applicationSession, setApplicationSession] = useState<ApplicationSession | null>(null);
   const [nonce, setNonce] = useState(0);
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [scan, setScan] = useState<ApplicationScanResult | null>(null);
@@ -128,23 +126,21 @@ export function usePopupState(): PopupState {
     setLoading(true);
     const load = async (): Promise<void> => {
       try {
-        const [statusResult, tabResult, lastResult, fillResult, sessionResult] = await Promise.all([
+        const [statusResult, tabResult, lastResult, fillResult] = await Promise.all([
           sendMessage({ type: 'AGENT_STATUS_REQUEST' }),
           readActiveTab(),
           sendMessage({ type: 'GET_LAST_SCAN' }),
           sendMessage({ type: 'GET_FILL_PLAN' }),
-          sendMessage({ type: 'GET_APPLICATION_SESSION' }),
         ]);
         if (cancelled) return;
         setStatus(statusResult);
-        setApplicationSession(sessionResult.data ?? null);
+        const currentScan = lastResult.scan?.url === tabResult.url ? lastResult.scan : null;
         setTab({
           ...tabResult,
-          fieldsDetected:
-            lastResult.scan?.url === tabResult.url ? lastResult.scan.statistics.total : null,
+          fieldsDetected: currentScan?.statistics.total ?? null,
         });
-        setScan(lastResult.scan ?? null);
-        if (lastResult.scan) setScanState('completed');
+        setScan(currentScan);
+        setScanState(currentScan ? 'completed' : 'idle');
         setPlan(fillResult.plan);
         setReport(fillResult.report);
         setFillError(fillResult.error ?? null);
@@ -169,7 +165,7 @@ export function usePopupState(): PopupState {
     };
   }, [nonce]);
 
-  const analyze = useCallback(async (): Promise<void> => {
+  const analyze = useCallback(async (): Promise<ApplicationScanResult | null> => {
     setScanState('scanning');
     setScanError(null);
     setProgress(null);
@@ -185,13 +181,16 @@ export function usePopupState(): PopupState {
         setFillState('idle');
         setTab((current) => ({ ...current, fieldsDetected: response.result.statistics.total }));
         setScanState('completed');
+        return response.result;
       } else {
         setScanError(response.error);
         setScanState(response.error.code === 'SCAN_CANCELLED' ? 'cancelled' : 'failed');
+        return null;
       }
     } catch (cause) {
       setScanError(internalError(cause));
       setScanState('failed');
+      return null;
     }
   }, [tab.url]);
 
@@ -204,31 +203,46 @@ export function usePopupState(): PopupState {
     setScanState('cancelled');
   }, [progress?.scanId, tab.url]);
 
-  const buildPlan = useCallback(async (): Promise<void> => {
+  const buildPlan = useCallback(async (scanId?: string): Promise<DeterministicFillPlan | null> => {
     setFillState('planning');
     setFillError(null);
+    const effectiveScanId = scanId ?? scan?.id;
     const response = await sendMessage({
       type: 'BUILD_DETERMINISTIC_PLAN',
-      ...(scan?.id ? { scanId: scan.id } : {}),
+      ...(effectiveScanId ? { scanId: effectiveScanId } : {}),
     });
     if ('plan' in response) {
       setPlan(response.plan);
       setReport(null);
       setFillState('ready_for_review');
+      return response.plan;
     } else {
       setFillError(response.error);
       setFillState('failed');
+      return null;
     }
   }, [scan?.id]);
 
-  const execute = useCallback(async (): Promise<void> => {
-    if (!plan) return;
+  const approveSafe = useCallback(async (): Promise<DeterministicFillPlan | null> => {
+    const response = await sendMessage({ type: 'APPROVE_SAFE_ACTIONS' });
+    if ('plan' in response) {
+      setPlan(response.plan);
+      return response.plan;
+    }
+    setFillError(response.error);
+    setFillState('failed');
+    return null;
+  }, []);
+
+  const execute = useCallback(async (planOverride?: DeterministicFillPlan): Promise<void> => {
+    const executablePlan = planOverride ?? plan;
+    if (!executablePlan) return;
     setFillState('filling');
     setFillError(null);
     setFillProgress(null);
     const response = await sendMessage({
       type: 'EXECUTE_APPROVED_ACTIONS',
-      targetUrl: plan.url,
+      targetUrl: executablePlan.url,
     });
     if (response.type === 'FILL_COMPLETE') {
       setReport(response.report);
@@ -245,6 +259,17 @@ export function usePopupState(): PopupState {
     }
   }, [plan]);
 
+  useEffect(() => {
+    if (
+      !loading &&
+      tab.contentScriptReachable &&
+      Boolean(tab.url?.startsWith('http')) &&
+      scanState === 'idle'
+    ) {
+      void analyze();
+    }
+  }, [analyze, loading, scanState, tab.contentScriptReachable, tab.url]);
+
   const cancelFill = useCallback(async (): Promise<void> => {
     await sendMessage({
       type: 'FILL_CANCEL',
@@ -258,7 +283,6 @@ export function usePopupState(): PopupState {
     status,
     tab,
     loading,
-    applicationSession,
     scanState,
     scan,
     progress,
@@ -272,6 +296,7 @@ export function usePopupState(): PopupState {
     fillProgress,
     fillError,
     buildPlan,
+    approveSafe,
     execute,
     cancelFill,
   };

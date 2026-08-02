@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { AUTH_HEADER } from '@internship-agent/shared';
+import { AUTH_HEADER, applicationSessionInputSchema } from '@internship-agent/shared';
 import { TEST_TOKEN, authHeaders, createTestServer, type TestServer } from './helpers.js';
 
 let server: TestServer | null = null;
@@ -14,10 +14,10 @@ function websiteHandoffBody(overrides: Record<string, unknown> = {}): Record<str
   return {
     company: 'Acme Robotics',
     jobTitle: 'Software Engineering Intern',
-    officialApplyUrl: 'https://boards.greenhouse.io/acme/jobs/12345',
+    url: 'https://boards.greenhouse.io/acme/jobs/12345',
     websiteJobId: 'acme-12345',
     location: 'Boston, MA',
-    eligibilityScore: 0.92,
+    eligibilityScore: 0.65,
     tailoredResumeDocumentId: 'doc-resume-1',
     tailoredCoverLetterDocumentId: 'doc-cover-1',
     startAutofill: false,
@@ -26,6 +26,10 @@ function websiteHandoffBody(overrides: Record<string, unknown> = {}): Record<str
 }
 
 describe('POST /application-sessions', () => {
+  it('accepts the exact website handoff payload under the canonical schema', () => {
+    expect(applicationSessionInputSchema.safeParse(websiteHandoffBody()).success).toBe(true);
+  });
+
   it('creates a session and returns 200/201 with an id when the token is valid', async () => {
     server = await createTestServer();
 
@@ -93,7 +97,7 @@ describe('POST /application-sessions', () => {
     expect(raw).not.toContain(TEST_TOKEN);
   });
 
-  it('derives url/domain from officialApplyUrl when the caller omits them', async () => {
+  it('derives domain from the canonical application url', async () => {
     server = await createTestServer();
 
     const response = await server.app.inject({
@@ -107,5 +111,73 @@ describe('POST /application-sessions', () => {
     const body = response.json<{ data: { url: string; domain: string } }>();
     expect(body.data.url).toBe('https://boards.greenhouse.io/acme/jobs/12345');
     expect(body.data.domain).toBe('boards.greenhouse.io');
+  });
+
+  it('rejects unknown legacy URL fields intentionally', async () => {
+    server = await createTestServer();
+
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/application-sessions',
+      headers: authHeaders,
+      payload: websiteHandoffBody({
+        officialApplyUrl: 'https://boards.greenhouse.io/acme/jobs/12345',
+      }),
+    });
+
+    expect(response.statusCode).toBe(422);
+    const body = response.json<{ error: { debugContext: { fields: string[] } } }>();
+    expect(body.error.debugContext.fields).toContain('(root)');
+  });
+
+  it.each([-0.01, 1.01, 65, null])(
+    'rejects non-canonical eligibilityScore %s',
+    async (eligibilityScore) => {
+      server = await createTestServer();
+
+      const response = await server.app.inject({
+        method: 'POST',
+        url: '/application-sessions',
+        headers: authHeaders,
+        payload: websiteHandoffBody({ eligibilityScore }),
+      });
+
+      expect(response.statusCode).toBe(422);
+    },
+  );
+
+  it.each([
+    'https://jobright.ai/jobs/info/example',
+    'https://www.intern-list.com/job/example',
+  ])('rejects aggregator destination %s', async (url) => {
+    server = await createTestServer();
+
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/application-sessions',
+      headers: authHeaders,
+      payload: websiteHandoffBody({ url }),
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.body).not.toContain(TEST_TOKEN);
+  });
+
+  it.each([
+    'https://careers.example.com/jobs/123',
+    'https://jobs.lever.co/acme/123',
+    'https://boards.greenhouse.io/acme/jobs/123',
+  ])('accepts direct employer/ATS destination %s', async (url) => {
+    server = await createTestServer();
+
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/application-sessions',
+      headers: authHeaders,
+      payload: websiteHandoffBody({ url }),
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.body).not.toContain('document contents must stay private');
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  approvedAnswerSchema,
   applicationScanResultSchema,
   deterministicFillPlanSchema,
   profileSchema,
@@ -167,6 +168,52 @@ describe('deterministic fill planner', () => {
     expect(
       setActionApproval(plan, upload!.id, true).actions.find((action) => action.id === upload!.id),
     ).toMatchObject({ approved: true });
+  });
+
+  it('builds a standalone plan from the saved profile, approved answers, and résumé', () => {
+    const standaloneScan = applicationScanResultSchema.parse({
+      ...scan,
+      fields: [
+        scan.fields[0],
+        {
+          ...scan.fields[0],
+          id: 'why-company',
+          label: 'Why this company?',
+          normalizedLabel: 'why this company',
+          canonicalKey: 'why_this_company',
+          question: 'Why this company?',
+          selector: '#why-company',
+        },
+        scan.fields[2],
+      ],
+    });
+    const answer = approvedAnswerSchema.parse({
+      id: 'answer-1',
+      canonicalQuestion: 'Why this company?',
+      normalizedQuestion: 'why this company',
+      aliases: [],
+      answerType: 'text',
+      answer: 'I value the company mission.',
+      category: 'motivation',
+      approved: true,
+      autoFillAllowed: true,
+      sensitive: false,
+      tailoringAllowed: false,
+      requiresReview: false,
+      lastUpdatedAt: NOW,
+    });
+
+    const plan = buildDeterministicPlan(standaloneScan, profile, [answer], selectedResume);
+
+    expect(plan.actions.find((action) => action.fieldId === 'first')?.source).toBe('profile');
+    expect(plan.actions.find((action) => action.fieldId === 'why-company')).toMatchObject({
+      source: 'approved_answer',
+      proposedValue: 'I value the company mission.',
+    });
+    expect(plan.actions.find((action) => action.fieldId === 'file')).toMatchObject({
+      source: 'document',
+      documentId: 'document-1',
+    });
   });
 
   it('persists approval mutations and resets user overrides', () => {

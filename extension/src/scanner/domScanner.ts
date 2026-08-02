@@ -17,13 +17,42 @@ export interface DomScanResult {
   warnings: string[];
 }
 
+/**
+ * Every control a person can answer through, not only the ones HTML calls
+ * inputs. ATS forms routinely render a dropdown as a `button` that owns a
+ * popover, and React Select renders one as a `div` with no ARIA role at all.
+ * Anything omitted here is invisible to the whole pipeline, so this list is the
+ * single widest gate in the product.
+ */
 const CONTROL_SELECTOR = [
   'input:not([type="hidden"])',
   'textarea',
   'select',
-  '[role="combobox"]',
   '[contenteditable="true"]',
+  '[contenteditable=""]',
+  // ARIA widget roles.
+  '[role="combobox"]',
+  '[role="listbox"]',
+  '[role="radiogroup"]',
+  '[role="switch"]',
+  '[role="spinbutton"]',
+  '[role="textbox"]',
+  // A button that opens a list of choices is a dropdown, whatever it is built
+  // from. `aria-haspopup` and `aria-expanded` are how such a control announces
+  // itself to assistive technology, so they are how we find it too.
+  'button[aria-haspopup="listbox"]',
+  'button[aria-haspopup="menu"]',
+  'button[aria-haspopup="dialog"][aria-expanded]',
+  'button[aria-expanded][aria-controls]',
+  // React Select and its many forks. The root carries the accessible name; the
+  // inner input is a search box, not the question.
+  '.select__control',
+  '[class*="-control"][class*="css-"]',
+  '[class*="react-select"] [class*="control"]',
 ].join(',');
+
+/** Roles whose element is a container for other controls, not a control. */
+const CONTAINER_ROLES = new Set(['radiogroup']);
 
 const IGNORED_INPUT_TYPES = new Set(['button', 'submit', 'reset', 'image', 'password']);
 const APPLICATION_HINT =
@@ -88,6 +117,23 @@ function isHoneypot(element: HTMLElement): boolean {
 
 function shouldIgnore(element: HTMLElement): boolean {
   if (!isVisibleControl(element) || isHoneypot(element)) return true;
+  // A radiogroup is the container for its radios; scanning both would report
+  // the same question twice, once with no options.
+  if (CONTAINER_ROLES.has(element.getAttribute('role') ?? '')) return true;
+  // React Select's inner text input is the search box of a control this scan
+  // already found. The control root carries the label and the options.
+  if (
+    isInput(element) &&
+    element.closest('.select__control, [class*="react-select"], [class*="css-"][class*="-control"]')
+  ) {
+    return true;
+  }
+  // An input inside a combobox the scan already reports is that combobox's
+  // editable part, not a second question.
+  if (isInput(element)) {
+    const owner = element.parentElement?.closest('[role="combobox"], [role="listbox"]');
+    if (owner) return true;
+  }
   if (
     isInput(element) &&
     (IGNORED_INPUT_TYPES.has(element.type.toLowerCase()) || element.disabled)
@@ -97,6 +143,8 @@ function shouldIgnore(element: HTMLElement): boolean {
   if ((isTextArea(element) || isSelect(element)) && element.disabled) {
     return true;
   }
+  if (element.getAttribute('aria-disabled') === 'true') return true;
+  if (element.hasAttribute('readonly') && !isCustomCombobox(element)) return true;
   const descriptor = [
     element.id,
     element.getAttribute('name'),
@@ -135,8 +183,19 @@ interface LabelResult {
   signals: string[];
 }
 
+/** Containers an ATS wraps one question in. */
+const FIELD_CONTAINER_SELECTOR =
+  '[data-automation-id*="formField"], [data-qa*="field"], .field, .form-field, .application-question, .application-field, .questions, .question, [role="group"], fieldset';
+
+/**
+ * The accessible name of a control, in the order a screen reader would resolve
+ * it — with one deliberate departure: `placeholder` is consulted **last**.
+ *
+ * A placeholder is a hint, not a label. Treating it as the primary name is how
+ * "e.g. Jane" ends up being matched as the question, so it is only used when
+ * nothing else named the control at all.
+ */
 export function extractAccessibleLabel(element: HTMLElement): LabelResult {
-  const signals: string[] = [];
   const id = element.id;
   if (id) {
     const explicit = element.ownerDocument.querySelector<HTMLLabelElement>(
@@ -156,35 +215,121 @@ export function extractAccessibleLabel(element: HTMLElement): LabelResult {
   const labelled = textByIds(element, 'aria-labelledby');
   if (labelled) return { label: labelled, signals: ['aria_labelledby'] };
 
-  const placeholder = cleanText(element.getAttribute('placeholder'));
-  if (placeholder) return { label: placeholder, signals: ['placeholder'] };
-
   const legend = cleanText(
     element.closest('fieldset')?.querySelector(':scope > legend')?.textContent,
   );
   if (legend) return { label: legend, signals: ['fieldset_legend'] };
 
-  const previous = cleanText(element.previousElementSibling?.textContent);
-  if (previous && previous.length <= 500) return { label: previous, signals: ['nearby_text'] };
-
-  const container = element.closest(
-    '[data-automation-id*="formField"], .field, .form-field, .application-question, .questions, [role="group"]',
+  const container = element.closest(FIELD_CONTAINER_SELECTOR);
+  const containerLabel = cleanText(
+    container?.querySelector(
+      'label, legend, .label, .question, [data-automation-id*="label"], [class*="label"]',
+    )?.textContent,
   );
-  const candidate = cleanText(
-    container?.querySelector('label, .label, .question, [data-automation-id*="label"]')
-      ?.textContent,
-  );
-  if (candidate) return { label: candidate, signals: ['nearby_text'] };
+  if (containerLabel) return { label: containerLabel, signals: ['container_label'] };
 
-  signals.push('unlabelled');
-  return { label: cleanText(element.getAttribute('name') ?? element.id), signals };
+  // Walk backwards through siblings: many forms put the question in a bare
+  // <p> or <div> immediately above the control.
+  let previous: Element | null = element;
+  for (let steps = 0; steps < 3 && (previous = previous.previousElementSibling); steps += 1) {
+    const text = cleanText(previous.textContent);
+    if (text && text.length <= 500) return { label: text, signals: ['preceding_sibling'] };
+  }
+
+  const heading = nearestHeading(element);
+  if (heading) return { label: heading, signals: ['section_heading'] };
+
+  const placeholder = cleanText(element.getAttribute('placeholder'));
+  if (placeholder) return { label: placeholder, signals: ['placeholder'] };
+
+  return {
+    label: cleanText(element.getAttribute('name') ?? element.id),
+    signals: ['unlabelled'],
+  };
+}
+
+/** Text near the control that is not its label: hints, examples, limits. */
+function nearbyDescription(element: HTMLElement): string {
+  const container = element.closest(FIELD_CONTAINER_SELECTOR);
+  if (!container) return '';
+  const parts = Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'p, small, .hint, .help, .helper, .description, [class*="hint"], [class*="help"], [class*="description"]',
+    ),
+  )
+    .map((node) => cleanText(node.textContent))
+    .filter((text) => text.length > 0 && text.length <= 600);
+  return [...new Set(parts)].join(' ').slice(0, 1500);
+}
+
+/** Wording around a file input that says which document belongs in it. */
+function uploadInstructions(element: HTMLElement): string {
+  if (!(isInput(element) && element.type.toLowerCase() === 'file')) return '';
+  const accept = cleanText(element.getAttribute('accept'));
+  const container = element.closest(FIELD_CONTAINER_SELECTOR) ?? element.parentElement;
+  const text = cleanText(container?.textContent).slice(0, 800);
+  return [text, accept ? `accepts ${accept}` : ''].filter(Boolean).join(' — ');
+}
+
+/**
+ * Where the control lives relative to the top document. An empty array means
+ * the main document; entries name each nested frame or shadow host in order, so
+ * the report can say *where* a field was found rather than only that it was.
+ */
+function locationPath(element: HTMLElement): { framePath: string[]; shadowPath: string[] } {
+  const framePath: string[] = [];
+  const shadowPath: string[] = [];
+
+  let root: Node | null = element.getRootNode();
+  let current: HTMLElement | null = element;
+  while (root instanceof ShadowRoot) {
+    const host = root.host;
+    shadowPath.unshift(host.tagName.toLowerCase() + (host.id ? `#${host.id}` : ''));
+    current = host as HTMLElement;
+    root = current.getRootNode();
+  }
+
+  let view: Window | null = current?.ownerDocument.defaultView ?? null;
+  while (view?.parent && view.parent !== view) {
+    try {
+      const frame: Element | null = view.frameElement;
+      if (!frame) break;
+      framePath.unshift(frame.getAttribute('src') ?? frame.tagName.toLowerCase());
+      view = view.parent as Window;
+    } catch {
+      framePath.unshift('cross-origin-frame');
+      break;
+    }
+  }
+
+  return { framePath, shadowPath };
+}
+
+/** True when the element is a custom dropdown built from something else. */
+export function isCustomCombobox(element: HTMLElement): boolean {
+  const role = element.getAttribute('role');
+  if (role === 'combobox' || role === 'listbox') return true;
+  if (element.matches('.select__control, [class*="react-select"] [class*="control"]')) return true;
+  if (
+    element.tagName === 'BUTTON' &&
+    (element.hasAttribute('aria-haspopup') ||
+      (element.hasAttribute('aria-expanded') && element.hasAttribute('aria-controls')))
+  ) {
+    return true;
+  }
+  // Emotion-hashed React Select roots: `css-1abcde-control`.
+  return /(^|\s)css-[a-z0-9]+-control(\s|$)/.test(element.className || '');
 }
 
 function inferType(element: HTMLElement, grouped = false): FieldType {
   if (isTextArea(element)) return 'textarea';
   if (isSelect(element)) return element.multiple ? 'multi_select' : 'select';
   if (element.isContentEditable) return 'contenteditable';
-  if (element.getAttribute('role') === 'combobox') {
+  if (element.getAttribute('role') === 'radiogroup') return 'radio';
+  if (element.getAttribute('role') === 'switch') return 'checkbox';
+  if (element.getAttribute('role') === 'textbox') return 'text';
+  if (element.getAttribute('role') === 'spinbutton') return 'number';
+  if (isCustomCombobox(element)) {
     return element.getAttribute('aria-multiselectable') === 'true' ? 'multi_select' : 'combobox';
   }
   if (!isInput(element)) return 'unknown';
@@ -262,19 +407,43 @@ function optionsFor(elements: HTMLElement[], fieldType: FieldType): FieldOption[
       return { label, value: input.value, ...(input.checked ? { selected: true } : {}) };
     });
   }
-  const controls = first.getAttribute('aria-controls');
-  const list = controls ? first.ownerDocument.getElementById(controls) : null;
-  if (list) {
-    const found = Array.from(list.querySelectorAll<HTMLElement>('[role="option"]')).map(
-      (option) => ({
+  // A custom dropdown announces its list through `aria-controls` or
+  // `aria-owns`, or renders it as a descendant. Each is tried; the first that
+  // yields real options wins. When none does, the options genuinely are not on
+  // the page yet and the executor reads them at fill time.
+  const readOptions = (list: Element | null | undefined): FieldOption[] | undefined => {
+    if (!list) return undefined;
+    const found = Array.from(list.querySelectorAll<HTMLElement>('[role="option"], option'))
+      .map((option) => ({
         label: cleanText(option.textContent),
-        value: option.getAttribute('data-value') ?? cleanText(option.textContent),
-        ...(option.getAttribute('aria-selected') === 'true' ? { selected: true } : {}),
-      }),
-    );
+        value:
+          option.getAttribute('data-value') ??
+          option.getAttribute('value') ??
+          cleanText(option.textContent),
+        ...(option.getAttribute('aria-selected') === 'true' || option.matches(':checked')
+          ? { selected: true }
+          : {}),
+        ...(option.getAttribute('aria-disabled') === 'true' || option.hasAttribute('disabled')
+          ? { disabled: true }
+          : {}),
+      }))
+      .filter((option) => option.label.length > 0);
     return found.length ? found : undefined;
-  }
-  return undefined;
+  };
+
+  const byId = (attribute: string): Element | null => {
+    const value = cleanText(first.getAttribute(attribute)).split(' ')[0];
+    return value ? first.ownerDocument.getElementById(value) : null;
+  };
+
+  return (
+    readOptions(byId('aria-controls')) ??
+    readOptions(byId('aria-owns')) ??
+    readOptions(first.querySelector('[role="listbox"]')) ??
+    // React Select renders its menu as a sibling of the control inside the
+    // shared container, so the popover is found from the parent, not the root.
+    readOptions(first.parentElement?.querySelector('[class*="menu"], [role="listbox"]'))
+  );
 }
 
 function isRequired(element: HTMLElement, label: string): boolean {
@@ -439,6 +608,7 @@ function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedFie
   );
   if (confidence < 0.5) warnings.push('Low-confidence field detection.');
   const selector = selectorFor(first);
+  const { framePath, shadowPath } = locationPath(first);
   const value =
     grouped && (type === 'radio' || type === 'multi_select')
       ? elements
@@ -484,6 +654,19 @@ function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedFie
       frameUrl: first.ownerDocument.location?.href,
       groupedControls: elements.length,
       readOnly: true,
+      // Context the resolver and the model both read. Recorded here rather than
+      // folded into the label so the label stays the question the page asked.
+      ...(first.getAttribute('name') ? { name: first.getAttribute('name') } : {}),
+      ...(first.id ? { elementId: first.id } : {}),
+      ...(first.getAttribute('autocomplete')
+        ? { autocomplete: first.getAttribute('autocomplete') }
+        : {}),
+      ...(first.getAttribute('role') ? { role: first.getAttribute('role') } : {}),
+      ...(heading ? { sectionHeading: heading } : {}),
+      ...(nearbyDescription(first) ? { nearbyText: nearbyDescription(first) } : {}),
+      ...(uploadInstructions(first) ? { uploadInstructions: uploadInstructions(first) } : {}),
+      ...(framePath.length ? { framePath } : {}),
+      ...(shadowPath.length ? { shadowPath } : {}),
     },
   });
 }
@@ -627,4 +810,70 @@ export async function scanDom(
 
 export function isSupportedField(field: DetectedField): boolean {
   return FILLABLE_FIELD_TYPES.includes(field.fieldType);
+}
+
+/** How long the DOM must be quiet before a mutation-driven rescan is worth it. */
+export const RESCAN_DEBOUNCE_MS = 400;
+/** Never rescan more often than this, however busy the page is. */
+export const RESCAN_MINIMUM_INTERVAL_MS = 1500;
+
+export interface FormObserver {
+  stop(): void;
+}
+
+/**
+ * Calls back when the form has changed *and* then settled.
+ *
+ * Real applications mutate constantly — validation classes, focus rings,
+ * analytics attributes. Reacting to each one would rescan forever, so this
+ * filters to structural changes, debounces them, and enforces a floor between
+ * callbacks. The caller stays responsible for bounding how many rescans it
+ * actually performs.
+ */
+export function observeFormMutations(
+  document: Document,
+  onSettled: () => void,
+  options: { debounceMs?: number; minimumIntervalMs?: number } = {},
+): FormObserver {
+  const debounceMs = options.debounceMs ?? RESCAN_DEBOUNCE_MS;
+  const minimumIntervalMs = options.minimumIntervalMs ?? RESCAN_MINIMUM_INTERVAL_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let lastRun = 0;
+  let stopped = false;
+
+  const fire = (): void => {
+    if (stopped) return;
+    const now = Date.now();
+    if (now - lastRun < minimumIntervalMs) {
+      timer = setTimeout(fire, minimumIntervalMs - (now - lastRun));
+      return;
+    }
+    lastRun = now;
+    onSettled();
+  };
+
+  const observer = new MutationObserver((records) => {
+    const structural = records.some(
+      (record) =>
+        record.type === 'childList' &&
+        [...record.addedNodes, ...record.removedNodes].some(
+          (node) =>
+            node instanceof Element &&
+            (node.matches?.(CONTROL_SELECTOR) || node.querySelector?.(CONTROL_SELECTOR)),
+        ),
+    );
+    if (!structural) return;
+    clearTimeout(timer);
+    timer = setTimeout(fire, debounceMs);
+  });
+
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+
+  return {
+    stop(): void {
+      stopped = true;
+      clearTimeout(timer);
+      observer.disconnect();
+    },
+  };
 }

@@ -8,14 +8,6 @@ function openSettings(): void {
   void chrome.runtime.openOptionsPage();
 }
 
-function openReview(): void {
-  void chrome.tabs.create({ url: chrome.runtime.getURL('review.html') });
-}
-
-function openFillPlan(): void {
-  void chrome.tabs.create({ url: chrome.runtime.getURL('fill-plan.html') });
-}
-
 function FailureDetail({
   message,
   suggestedAction,
@@ -36,13 +28,11 @@ export function App(): JSX.Element {
     status,
     tab,
     loading,
-    applicationSession,
     refresh,
     scanState,
     scan,
     progress,
     scanError,
-    analyze,
     cancel,
     plan,
     report,
@@ -50,6 +40,7 @@ export function App(): JSX.Element {
     fillProgress,
     fillError,
     buildPlan,
+    approveSafe,
     execute,
     cancelFill,
   } = usePopupState();
@@ -149,19 +140,7 @@ export function App(): JSX.Element {
   const currentScan = scan?.url === tab.url ? scan : null;
   const eligible = Boolean(tab.url?.startsWith('http') && tab.contentScriptReachable);
   const currentPlan = plan?.url === tab.url && plan.scanId === currentScan?.id ? plan : null;
-  const approvedCount = currentPlan?.actions.filter((action) => action.approved).length ?? 0;
-  const handoffSession = (() => {
-    if (!applicationSession || !tab.url) return null;
-    try {
-      const expected = new URL(applicationSession.officialApplyUrl ?? applicationSession.url);
-      const actual = new URL(tab.url);
-      expected.hash = '';
-      actual.hash = '';
-      return expected.toString() === actual.toString() ? applicationSession : null;
-    } catch {
-      return null;
-    }
-  })();
+  const applicationFormDetected = Boolean(currentScan && currentScan.statistics.total > 0);
 
   return (
     <main className="popup">
@@ -239,22 +218,6 @@ export function App(): JSX.Element {
           detail={resume.detail}
         />
       </section>
-      {handoffSession ? (
-        <section aria-label="Application session" className="panel">
-          <StatusRow label="Company" tone="ok" value={handoffSession.company ?? 'Unavailable'} />
-          <StatusRow label="Job Title" tone="ok" value={handoffSession.jobTitle ?? 'Unavailable'} />
-          <StatusRow
-            label="Tailored Résumé"
-            tone={handoffSession.tailoredResumeDocumentId ? 'ok' : 'warn'}
-            value={handoffSession.tailoredResumeDocumentId ? 'Ready' : 'Unavailable'}
-          />
-          <StatusRow
-            label="Tailored Cover Letter"
-            tone={handoffSession.tailoredCoverLetterDocumentId ? 'ok' : 'warn'}
-            value={handoffSession.tailoredCoverLetterDocumentId ? 'Ready' : 'Unavailable'}
-          />
-        </section>
-      ) : null}
       {scanState === 'scanning' ? (
         <section className="panel scan-progress" aria-live="polite">
           <strong>{progress?.message ?? 'Starting read-only scan…'}</strong>
@@ -292,27 +255,32 @@ export function App(): JSX.Element {
         </section>
       ) : null}
       <section aria-label="Actions" className="popup__actions">
-        <button
-          type="button"
-          className="primary"
-          disabled={!eligible || !currentScan}
-          onClick={async () => {
-            // One-button orchestration: scan → plan → execute sequentially
-            if (scanState !== 'scanning') {
-              await analyze();
-            } else {
-              return;
-            }
-            if (!currentScan) return;
-
-            await buildPlan();
-            if (plan && approvedCount > 0) {
-              await execute();
-            }
-          }}
-        >
-          Autofill Application{fillState === 'filling' ? ` (${fillProgress?.completed ?? 0}/${fillProgress?.total})` : null}
-        </button>
+        {applicationFormDetected ? (
+          <button
+            type="button"
+            className="primary"
+            disabled={!eligible || fillState === 'planning' || fillState === 'filling'}
+            onClick={async () => {
+              const nextPlan = currentPlan ?? (await buildPlan(currentScan?.id));
+              if (!nextPlan) return;
+              const approvedPlan = await approveSafe();
+              if (approvedPlan?.actions.some((action) => action.approved)) {
+                await execute(approvedPlan);
+              }
+            }}
+          >
+            Autofill Application
+            {fillState === 'filling'
+              ? ` (${fillProgress?.completed ?? 0}/${fillProgress?.total})`
+              : null}
+          </button>
+        ) : scanState === 'scanning' || loading ? (
+          <button type="button" className="primary" disabled>
+            Detecting application form…
+          </button>
+        ) : (
+          <p>No supported application form detected on this page</p>
+        )}
         <button type="button" className="primary" onClick={openSettings}>
           Open Settings
         </button>
