@@ -13,6 +13,7 @@ import { DocumentsSection } from './sections/DocumentsSection.js';
 import { AnswersSection } from './sections/AnswersSection.js';
 import { ConnectionSection } from './sections/ConnectionSection.js';
 import { AiSettingsSection } from './sections/AiSettingsSection.js';
+import { EmployerAccountsSection } from './sections/EmployerAccountsSection.js';
 import { DiagnosticsSection } from './sections/DiagnosticsSection.js';
 
 /** Tabs whose content is part of the profile record and share one save button. */
@@ -39,6 +40,7 @@ const TABS = [
   { id: 'documents', label: 'Documents' },
   { id: 'answers', label: 'Approved answers' },
   { id: 'ai', label: 'AI answers' },
+  { id: 'employer-accounts', label: 'Employer accounts' },
   { id: 'connection', label: 'Connection' },
   { id: 'diagnostics', label: 'Diagnostics' },
 ] as const;
@@ -130,6 +132,7 @@ export function App(): JSX.Element {
         {tab === 'documents' ? <DocumentsSection /> : null}
         {tab === 'answers' ? <AnswersSection /> : null}
         {tab === 'ai' ? <AiSettingsSection /> : null}
+        {tab === 'employer-accounts' ? <EmployerAccountsSection /> : null}
         {tab === 'connection' ? (
           <ConnectionSection onConnectionChanged={controller.reload} />
         ) : null}

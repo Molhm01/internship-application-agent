@@ -236,8 +236,12 @@ describe('standalone popup autofill', () => {
     render(<App />);
     expect(await screen.findByText('Page: Sign-in page')).toBeDefined();
     expect(screen.getByText(/This page is asking how you want to apply/)).toBeDefined();
-    expect(screen.getByText('New User')).toBeDefined();
-    expect(screen.getByText('Apply as Guest')).toBeDefined();
+    // Each route is named in the user's words, with the page's own wording kept
+    // alongside so they can find the control the ATS actually rendered.
+    expect(screen.getByText('Create employer account')).toBeDefined();
+    expect(screen.getByText(/the page calls this .New User./)).toBeDefined();
+    expect(screen.getByText('Apply as guest')).toBeDefined();
+    expect(screen.getByText('I already have an account')).toBeDefined();
     expect(
       screen.getByText(/does not pick between creating an account and applying as a guest/),
     ).toBeDefined();

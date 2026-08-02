@@ -2,17 +2,20 @@ import {
   AGENT_SERVER_URL,
   DEFAULT_OLLAMA_MODEL,
   aiGenerationSettingsSchema,
+  employerAccountSettingsSchema,
   extensionSettingsSchema,
   type AiGenerationSettings,
+  type EmployerAccountSettings,
   type ExtensionSettings,
 } from '@internship-agent/shared';
 
 export type { ExtensionSettings } from '@internship-agent/shared';
 
 export type ExtensionSettingsUpdate = Partial<
-  Omit<ExtensionSettings, 'ai' | 'settingsVersion' | 'settingsUpdatedAt'>
+  Omit<ExtensionSettings, 'ai' | 'employerAccounts' | 'settingsVersion' | 'settingsUpdatedAt'>
 > & {
   ai?: Partial<AiGenerationSettings>;
+  employerAccounts?: Partial<EmployerAccountSettings>;
 };
 
 const now = (): string => new Date().toISOString();
@@ -26,6 +29,9 @@ export const DEFAULT_SETTINGS: ExtensionSettings = extensionSettingsSchema.parse
   ai: aiGenerationSettingsSchema.parse({
     generationModel: DEFAULT_OLLAMA_MODEL,
   }),
+  // Off, and with no acknowledgement. Creating an account on someone else's
+  // system under the user's name is not a default.
+  employerAccounts: employerAccountSettingsSchema.parse({}),
   settingsVersion: 1,
   settingsUpdatedAt: now(),
 });
@@ -103,6 +109,11 @@ function normalizeStoredSettings(raw: unknown): {
     aiGenerationEnabled: migrateEnablement(candidate, rawAi),
     ai,
     settingsVersion: typeof candidate.settingsVersion === 'number' ? candidate.settingsVersion : 1,
+    // Parsed leniently and defaulted on failure. A corrupt block must never
+    // grant the permission, and `employerAccountSettingsSchema` defaults
+    // `autoCreateEnabled` to false — so the failure direction is "off".
+    employerAccounts: employerAccountSettingsSchema.safeParse(candidate.employerAccounts).data ??
+      employerAccountSettingsSchema.parse({}),
     settingsUpdatedAt:
       typeof candidate.settingsUpdatedAt === 'string'
         ? candidate.settingsUpdatedAt
@@ -130,10 +141,21 @@ export async function saveSettings(update: ExtensionSettingsUpdate): Promise<Ext
     ...current.ai,
     ...(update.ai ?? {}),
   });
+  // Turning the switch off drops the acknowledgement with it. Otherwise a user
+  // who turned this off and later back on would be silently re-granted the
+  // permission on the strength of a confirmation they gave for a past decision.
+  const mergedAccounts = employerAccountSettingsSchema.parse({
+    ...current.employerAccounts,
+    ...(update.employerAccounts ?? {}),
+    ...(update.employerAccounts?.autoCreateEnabled === false
+      ? { acknowledgedAt: undefined, acknowledgedDisclosureVersion: undefined }
+      : {}),
+  });
   const next = extensionSettingsSchema.parse({
     ...current,
     ...update,
     ai: mergedAi,
+    employerAccounts: mergedAccounts,
     selectedModel: mergedAi.generationModel,
     settingsVersion: current.settingsVersion + 1,
     settingsUpdatedAt: now(),

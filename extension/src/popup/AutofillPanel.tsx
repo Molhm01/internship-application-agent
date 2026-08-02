@@ -2,7 +2,9 @@ import {
   PAGE_KIND_LABELS,
   REVIEW_BADGES,
   type ApplicationAutofillReport,
+  type NavigationAction,
   type NavigationState,
+  type PortalStrategy,
 } from '@internship-agent/shared';
 import type { AutofillState } from './useAutofillState.js';
 
@@ -22,33 +24,71 @@ interface AutofillPanelProps {
   fieldsDetected: number | null;
   /** What kind of page this is and where it leads, when the scan knew. */
   navigation?: NavigationState;
+  /** The user's saved employer-portal strategy, shown as a recommendation. */
+  portalStrategy?: PortalStrategy;
   /** One sentence about the AI agent, or null while it is still unknown. */
   agentStatus: string | null;
 }
 
+/** The three routes, in the user's words rather than the ATS's. */
+const ROUTE_LABELS: Partial<Record<NavigationAction['intent'], string>> = {
+  create_account: 'Create employer account',
+  apply_as_guest: 'Apply as guest',
+  login: 'I already have an account',
+};
+
 /**
  * The routes off a sign-in or choose-how-to-apply page.
  *
- * These are shown, never taken. Creating an employer account and applying as a
- * guest have permanently different consequences for the user, so the agent
- * offers both and picks neither.
+ * The user's saved strategy is shown as a recommendation, never as a decision
+ * already taken. Creating an employer account and applying as a guest have
+ * permanently different and largely irreversible consequences, so the agent
+ * names what it would do and leaves the click to the person.
  */
-function RouteChoices({ navigation }: { navigation: NavigationState }): JSX.Element | null {
-  const routes = navigation.actions.filter(
-    (action) =>
-      action.intent === 'login' ||
-      action.intent === 'create_account' ||
-      action.intent === 'apply_as_guest',
-  );
+function RouteChoices({
+  navigation,
+  portalStrategy,
+}: {
+  navigation: NavigationState;
+  portalStrategy?: PortalStrategy;
+}): JSX.Element | null {
+  const routes = navigation.actions.filter((action) => action.intent in ROUTE_LABELS);
   if (routes.length === 0) return null;
+
+  const guest = routes.find((route) => route.intent === 'apply_as_guest');
+  const create = routes.find((route) => route.intent === 'create_account');
+  const recommended =
+    portalStrategy === 'prefer_guest'
+      ? (guest ?? create)
+      : portalStrategy === 'create_when_required'
+        ? (guest ?? create)
+        : null;
+
   return (
     <div className="autofill__routes">
       <p className="autofill__analysis">This page is asking how you want to apply:</p>
       <ul className="autofill__documents">
         {routes.map((route) => (
-          <li key={`${route.intent}-${route.selector}`}>{route.label}</li>
+          <li key={`${route.intent}-${route.selector}`}>
+            <strong>{ROUTE_LABELS[route.intent]}</strong>
+            {route.label && route.label !== ROUTE_LABELS[route.intent]
+              ? ` — the page calls this “${route.label}”`
+              : null}
+            {recommended && recommended.selector === route.selector ? ' · recommended' : null}
+          </li>
         ))}
       </ul>
+      {portalStrategy === 'prefer_guest' && guest ? (
+        <p className="autofill__analysis">
+          You asked to prefer applying as a guest, so no account is needed here.
+        </p>
+      ) : null}
+      {portalStrategy === 'create_when_required' && guest ? (
+        <p className="autofill__analysis">
+          You asked to create an account only when required. A guest route exists, so an account is
+          not required here.
+        </p>
+      ) : null}
       <p className="autofill__never-submits">
         Choose one yourself. The agent does not pick between creating an account and applying as a
         guest.
@@ -86,6 +126,7 @@ export function AutofillPanel({
   eligible,
   fieldsDetected,
   navigation,
+  portalStrategy,
   agentStatus,
 }: AutofillPanelProps): JSX.Element {
   const { bundle, loadingBundle, running, progress, phaseLabel, report, error } = state;
@@ -138,7 +179,12 @@ export function AutofillPanel({
         </section>
       ) : null}
 
-      {navigation ? <RouteChoices navigation={navigation} /> : null}
+      {navigation ? (
+        <RouteChoices
+          navigation={navigation}
+          {...(portalStrategy ? { portalStrategy } : {})}
+        />
+      ) : null}
 
       {navigation?.kind === 'final_submit' ? (
         <p className="autofill__never-submits">

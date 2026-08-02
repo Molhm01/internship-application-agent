@@ -1,4 +1,6 @@
-import { ATS_DISPLAY_NAMES } from '@internship-agent/shared';
+import { useEffect, useState } from 'react';
+import { ATS_DISPLAY_NAMES, type PortalStrategy } from '@internship-agent/shared';
+import { loadSettings } from '../storage/settings.js';
 import { StatusRow, type StatusTone } from './StatusRow.js';
 import { usePopupState } from './usePopupState.js';
 import { useAutofillState } from './useAutofillState.js';
@@ -29,6 +31,14 @@ export function App(): JSX.Element {
   const { status, tab, loading, refresh, scanState, scan, progress, scanError, cancel } =
     usePopupState();
   const autofill = useAutofillState(tab.url);
+  // The extension's own setting wins over the website's, because it is the more
+  // local and more recent statement of what the user wants on this machine.
+  const [settingsStrategy, setSettingsStrategy] = useState<PortalStrategy | undefined>(undefined);
+  useEffect(() => {
+    void loadSettings().then((loaded) => setSettingsStrategy(loaded.employerAccounts.portalStrategy));
+  }, []);
+  const portalStrategy =
+    settingsStrategy ?? autofill.bundle?.accountPreferences?.portalStrategy ?? undefined;
   // What the AI can actually do right now, said plainly. An unreachable agent
   // is reported as such rather than as a bare error code.
   const agentStatus = loading
@@ -232,6 +242,7 @@ export function App(): JSX.Element {
           eligible={eligible}
           fieldsDetected={currentScan?.statistics.total ?? null}
           {...(currentScan?.navigation ? { navigation: currentScan.navigation } : {})}
+          {...(portalStrategy ? { portalStrategy } : {})}
           agentStatus={agentStatus}
         />
       ) : scanState === 'scanning' || loading ? (

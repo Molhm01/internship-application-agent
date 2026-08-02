@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { aiGenerationSettingsSchema } from './ai.js';
 import { isoDateTimeSchema } from './common.js';
 import { autofillSettingsSchema } from './autofill.js';
+import { employerAccountSettingsSchema } from './employerAccounts.js';
 
 /**
  * The single persisted extension-settings contract. AI enablement is deliberately
@@ -21,6 +22,12 @@ export const extensionSettingsSchema = z.object({
    * read rather than being rejected.
    */
   autofill: autofillSettingsSchema.default({}),
+  /**
+   * Employer-portal account creation. Defaults so an installation that predates
+   * these keys upgrades on read — and defaults to off, so the upgrade never
+   * silently grants a permission the user was never asked for.
+   */
+  employerAccounts: employerAccountSettingsSchema.default({}),
   settingsVersion: z.number().int().nonnegative(),
   settingsUpdatedAt: isoDateTimeSchema,
 });
