@@ -206,8 +206,17 @@ export async function readBundleDocument(
   const bytes = await withStore(BLOB_STORE, 'readonly', (store) =>
     runRequest(store.get(document.bytesReference) as IDBRequest<unknown>),
   );
-  if (bytes instanceof Uint8Array) return bytes;
+  // Structured clone can hand back the value as a typed array, as a raw buffer,
+  // or — across realms, which is what a service worker restart looks like — as
+  // an object that is none of those by `instanceof` but still holds the bytes.
+  if (ArrayBuffer.isView(bytes)) {
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
   if (bytes instanceof ArrayBuffer) return new Uint8Array(bytes);
+  if (bytes && typeof bytes === 'object' && 'byteLength' in bytes) {
+    const candidate = bytes as { buffer?: ArrayBufferLike; byteLength: number };
+    if (candidate.buffer) return new Uint8Array(candidate.buffer);
+  }
   return null;
 }
 
