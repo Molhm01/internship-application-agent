@@ -100,6 +100,7 @@ const BUNDLE: ApplicationBundle = {
     byteLength: 90,
     generatedAt: NOW,
   },
+  approvedAnswers: [],
   createdAt: NOW,
 };
 

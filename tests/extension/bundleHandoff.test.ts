@@ -34,6 +34,22 @@ function transfer(overrides: Partial<ApplicationBundleTransfer> = {}): Applicati
     jobDescription: 'Build robots that do not fall over.',
     officialApplicationUrl: 'https://boards.greenhouse.io/northwind/jobs/9911',
     createdAt: '2026-08-02T09:00:00.000Z',
+    profile: {
+      id: 'primary',
+      personal: { legalFirstName: 'Jordan', legalLastName: 'Ellis', address: { city: 'Clifton' } },
+      education: [],
+      experience: [],
+      projects: [],
+      certifications: [],
+      volunteering: [],
+      skills: {},
+      eligibility: { workAuthorization: 'U.S. Citizen' },
+      preferences: {},
+      sensitivePolicies: [{ category: 'gender', policy: 'decline_to_answer' }],
+      updatedAt: '2026-08-02T08:00:00.000Z',
+    },
+    approvedAnswers: [],
+    accountPreferences: { applicationEmail: 'jordan.applies@example.com', wantsAccountCreationHelp: true },
     documents: [
       {
         kind: 'resume',
@@ -85,6 +101,23 @@ describe('bundle storage', () => {
     // The bytes themselves, not a reference to a page that may be gone.
     expect(await readBundleDocument(bundle.resume!)).toEqual(RESUME_BYTES);
     expect(await readBundleDocument(bundle.coverLetter!)).toEqual(COVER_BYTES);
+  });
+
+  it('stores the canonical profile the website sent with the documents', async () => {
+    const bundle = await saveBundle(transfer());
+    expect(bundle.profile?.personal.legalFirstName).toBe('Jordan');
+    expect(bundle.profile?.eligibility.workAuthorization).toBe('U.S. Citizen');
+    expect(bundle.profile?.sensitivePolicies).toEqual([
+      { category: 'gender', policy: 'decline_to_answer' },
+    ]);
+    expect(bundle.accountPreferences?.applicationEmail).toBe('jordan.applies@example.com');
+    expect(bundle.accountPreferences?.wantsAccountCreationHelp).toBe(true);
+  });
+
+  it('never stores a credential alongside the bundle', async () => {
+    const bundle = await saveBundle(transfer());
+    const serialized = JSON.stringify(bundle);
+    expect(serialized).not.toMatch(/password|passwd|secret|credential/i);
   });
 
   it('refuses bytes that do not match the declared length', async () => {

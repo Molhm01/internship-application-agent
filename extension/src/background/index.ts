@@ -194,27 +194,45 @@ async function buildPlan(scanId?: string): Promise<unknown> {
   if (!scan || (scanId && scan.id !== scanId)) {
     return { error: fillFailure('INVALID_FILL_PLAN', 'No matching completed scan exists.').error };
   }
+  const bundle = await bundleForUrl(scan.url);
   const [profileResult, answersResult, documentsResult, settings] = await Promise.all([
     getProfile(),
     listAnswers(),
     listDocuments(),
     loadSettings(),
   ]);
-  if (profileResult.error) return { error: profileResult.error };
-  if (answersResult.error) return { error: answersResult.error };
-  if (documentsResult.error) return { error: documentsResult.error };
-  const selectedDocument = selectSavedResume(
-    documentsResult.data.documents,
-    settings.selectedDocumentId,
-    documentsResult.data.defaultResumeId,
-  );
-  const bundle = await bundleForUrl(scan.url);
-  let plan = buildDeterministicPlan(
-    scan,
-    profileResult.data.profile,
-    answersResult.data.answers,
-    selectedDocument,
-  );
+
+  // Internship Pilot is the source of truth. The bundle's snapshot is used when
+  // it exists; the agent server is only a fallback for a standalone run.
+  //
+  // Critically, a server that is down is no longer fatal. It used to abort the
+  // whole plan — so a user with a complete profile and tailored documents in
+  // the bundle got nothing filled because a local process was not running.
+  const profile = bundle?.profile ?? profileResult.data?.profile;
+  if (!profile) {
+    return {
+      error: fillFailure(
+        'PROFILE_MISSING',
+        bundle
+          ? 'This application bundle carried no profile, and the local agent server has no saved profile either.'
+          : 'No profile is available. Open a job on Internship Pilot and click "Apply with Application Agent", or start the local agent server.',
+      ).error,
+    };
+  }
+  const answers = [...(bundle?.approvedAnswers ?? []), ...(answersResult.data?.answers ?? [])];
+  const warnings: string[] = [];
+  if (profileResult.error && !bundle?.profile) {
+    warnings.push(`Saved profile could not be read: ${profileResult.error.message}`);
+  }
+  const selectedDocument = documentsResult.data
+    ? selectSavedResume(
+        documentsResult.data.documents,
+        settings.selectedDocumentId,
+        documentsResult.data.defaultResumeId,
+      )
+    : undefined;
+
+  let plan = buildDeterministicPlan(scan, profile, answers, selectedDocument);
 
   // Documents the website tailored for *this* job outrank whatever generic
   // resume is registered on the server, so upload actions are rebound before
@@ -223,19 +241,13 @@ async function buildPlan(scanId?: string): Promise<unknown> {
 
   // One batched analysis for everything the deterministic pass could not
   // settle. A fully resolved page makes no model call at all.
-  const analysisNote = await analyzePage(
-    plan,
-    scan,
-    profileResult.data.profile,
-    answersResult.data.answers,
-    bundle,
-    settings,
-  );
+  const analysisNote = await analyzePage(plan, scan, profile, answers, bundle, settings);
   if (analysisNote.plan) plan = analysisNote.plan;
+  warnings.push(...analysisNote.warnings);
 
   await persistPlan(plan);
   await clearAnswerGenerationStore();
-  return { plan, ...(analysisNote.warnings.length ? { warnings: analysisNote.warnings } : {}) };
+  return { plan, ...(warnings.length ? { warnings } : {}) };
 }
 
 /**

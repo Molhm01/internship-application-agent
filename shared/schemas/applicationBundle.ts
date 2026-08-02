@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { idSchema, isoDateTimeSchema } from './common.js';
+import { profileSchema } from './profile.js';
+import { approvedAnswerSchema } from './answers.js';
 
 /**
  * The application bundle: everything Internship Pilot hands to the extension
@@ -41,6 +43,19 @@ export const bundleDocumentTransferSchema = z.object({
 
 export type BundleDocumentTransfer = z.infer<typeof bundleDocumentTransferSchema>;
 
+/**
+ * Account-creation preferences. Deliberately holds no password: the website
+ * never sees one, and the extension keeps credentials in its own encrypted
+ * vault rather than anywhere a bundle could reach.
+ */
+export const accountPreferencesSchema = z.object({
+  applicationEmail: z.string().email().max(320).optional(),
+  preferredUsername: z.string().max(200).optional(),
+  wantsAccountCreationHelp: z.boolean().default(false),
+});
+
+export type AccountPreferences = z.infer<typeof accountPreferencesSchema>;
+
 /** What the page posts. Validated before a single byte is written. */
 export const applicationBundleTransferSchema = z.object({
   websiteJobId: z.string().min(1).max(200),
@@ -49,6 +64,14 @@ export const applicationBundleTransferSchema = z.object({
   jobDescription: z.string().max(60_000).default(''),
   officialApplicationUrl: z.string().url().max(4000),
   documents: z.array(bundleDocumentTransferSchema).min(1).max(4),
+  /**
+   * The canonical profile, as Internship Pilot holds it. The website is the
+   * source of truth; the extension answers factual questions from this rather
+   * than keeping a second copy that could disagree.
+   */
+  profile: profileSchema.optional(),
+  approvedAnswers: z.array(approvedAnswerSchema).max(500).default([]),
+  accountPreferences: accountPreferencesSchema.optional(),
   createdAt: isoDateTimeSchema,
 });
 
@@ -79,6 +102,10 @@ export const applicationBundleSchema = z.object({
   officialApplicationUrl: z.string().url().max(4000),
   resume: storedBundleDocumentSchema.optional(),
   coverLetter: storedBundleDocumentSchema.optional(),
+  /** The profile snapshot this bundle arrived with, if any. */
+  profile: profileSchema.optional(),
+  approvedAnswers: z.array(approvedAnswerSchema).max(500).default([]),
+  accountPreferences: accountPreferencesSchema.optional(),
   createdAt: isoDateTimeSchema,
   /** Set the first time an application page for this bundle is recognized. */
   lastMatchedUrl: z.string().url().max(4000).optional(),

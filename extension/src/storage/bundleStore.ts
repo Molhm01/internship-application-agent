@@ -138,6 +138,12 @@ export async function saveBundle(transfer: ApplicationBundleTransfer): Promise<A
     jobTitle: transfer.jobTitle,
     jobDescription: transfer.jobDescription,
     officialApplicationUrl: transfer.officialApplicationUrl,
+    // The website is the source of truth for identity; the snapshot travels
+    // with the bundle so the extension never keeps a second copy that could
+    // disagree with what the user maintains on Internship Pilot.
+    ...(transfer.profile ? { profile: transfer.profile } : {}),
+    approvedAnswers: transfer.approvedAnswers,
+    ...(transfer.accountPreferences ? { accountPreferences: transfer.accountPreferences } : {}),
     ...(stored.resume ? { resume: stored.resume } : {}),
     ...(stored.cover_letter ? { coverLetter: stored.cover_letter } : {}),
     createdAt: transfer.createdAt,

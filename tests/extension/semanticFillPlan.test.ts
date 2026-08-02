@@ -107,6 +107,7 @@ const BUNDLE: ApplicationBundle = {
     byteLength: 90,
     generatedAt: '2026-08-02T08:01:00.000Z',
   },
+  approvedAnswers: [],
   createdAt: '2026-08-02T08:02:00.000Z',
 };
 
