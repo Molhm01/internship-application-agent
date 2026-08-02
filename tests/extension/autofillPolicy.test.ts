@@ -367,7 +367,7 @@ function planFor(actions: DeterministicFillAction[]): DeterministicFillPlan {
       unsupported: 0,
       sensitive: 0,
     },
-  } as DeterministicFillPlan;
+  };
 }
 
 function runReport(results: FillRunReport['results']): FillRunReport {
@@ -389,7 +389,7 @@ function runReport(results: FillRunReport['results']): FillRunReport {
     results,
     warnings: [],
     submitted: false,
-  } as FillRunReport;
+  };
 }
 
 interface HarnessOptions {

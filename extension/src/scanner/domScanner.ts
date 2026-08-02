@@ -295,7 +295,7 @@ function locationPath(element: HTMLElement): { framePath: string[]; shadowPath: 
       const frame: Element | null = view.frameElement;
       if (!frame) break;
       framePath.unshift(frame.getAttribute('src') ?? frame.tagName.toLowerCase());
-      view = view.parent as Window;
+      view = view.parent;
     } catch {
       framePath.unshift('cross-origin-frame');
       break;
@@ -574,17 +574,50 @@ function helpAndValidation(element: HTMLElement): {
   };
 }
 
+/**
+ * The question text for a group of radios or checkboxes.
+ *
+ * Tried in order: the fieldset legend, the radiogroup's own accessible name,
+ * and the field container's label. Each option's own `<label>` is deliberately
+ * excluded — an option label is an answer, not the question.
+ */
+function groupQuestionLabel(first: HTMLElement): LabelResult | null {
+  const legend = cleanText(
+    first.closest('fieldset')?.querySelector(':scope > legend')?.textContent,
+  );
+  if (legend) return { label: legend, signals: ['fieldset_legend'] };
+
+  const container = first.closest(FIELD_CONTAINER_SELECTOR);
+  // A label in the container that does not wrap an option is the container's
+  // own caption — the question a person actually reads. It is preferred over a
+  // group `aria-label`, which is usually a terse screen-reader abbreviation
+  // ("Work eligibility") of a much more specific visible question.
+  const candidate = Array.from(
+    container?.querySelectorAll<HTMLElement>('label, legend, .label, .question') ?? [],
+  ).find((node) => !node.contains(first));
+  const text = cleanText(candidate?.textContent);
+  if (text) return { label: text, signals: ['container_label'] };
+
+  const group = first.closest('[role="radiogroup"], [role="group"]');
+  if (group) {
+    const aria = cleanText(group.getAttribute('aria-label'));
+    if (aria) return { label: aria, signals: ['aria_label'] };
+    const labelled = textByIds(group as HTMLElement, 'aria-labelledby');
+    if (labelled) return { label: labelled, signals: ['aria_labelledby'] };
+  }
+
+  return null;
+}
+
 function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedField | null {
   const first = elements[0];
   if (!first) return null;
   const grouped = elements.length > 1;
   const type = inferType(first, grouped);
-  const groupLegend = grouped
-    ? cleanText(first.closest('fieldset')?.querySelector(':scope > legend')?.textContent)
-    : '';
-  const accessible = groupLegend
-    ? { label: groupLegend, signals: ['fieldset_legend'] }
-    : extractAccessibleLabel(first);
+  // The question a radio or checkbox group asks is the group's label, never the
+  // label of its first option. "Yes" is an answer; it is not the question.
+  const groupLabel = grouped ? groupQuestionLabel(first) : null;
+  const accessible = groupLabel ?? extractAccessibleLabel(first);
   const label = accessible.label;
   const normalizedLabel = normalizeLabel(label);
   const match = matchCanonicalQuestion(label);

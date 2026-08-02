@@ -44,7 +44,7 @@ let reposition: (() => void) | null = null;
 
 function ensureLayer(): HTMLElement {
   if (layer?.isConnected) return layer;
-  host = document.getElementById(HOST_ID) as HTMLElement | null;
+  host = document.getElementById(HOST_ID);
   if (!host) {
     host = document.createElement('div');
     host.id = HOST_ID;
@@ -203,9 +203,7 @@ export function reviewOrder(): ActiveHighlight[] {
     .filter((highlight) => highlight.element.isConnected)
     .sort((first, second) => {
       const position = first.element.compareDocumentPosition(second.element);
-      // eslint-disable-next-line no-bitwise -- compareDocumentPosition is a bitmask.
       if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-      // eslint-disable-next-line no-bitwise -- as above.
       if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
       return 0;
     });

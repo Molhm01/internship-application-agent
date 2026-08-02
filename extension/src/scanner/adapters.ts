@@ -30,6 +30,33 @@ function browserContext(context: ScanContext): BrowserScanContext {
   return context as BrowserScanContext;
 }
 
+/**
+ * Vendor-specific knowledge an adapter contributes. Every field is optional and
+ * every one is a *hint*: nothing here can prevent a field from being scanned or
+ * filled, and nothing here is required for an unknown form to work.
+ */
+export interface AdapterHints {
+  /** Containers this vendor wraps one question in. */
+  sectionSelectors?: readonly string[];
+  /** Where this vendor puts its file inputs. */
+  uploadSelectors?: readonly string[];
+  /** Wording on a control that advances to the next step. */
+  navigationText?: RegExp;
+  /** Wording on a control that ends the application. */
+  finalSubmitText?: RegExp;
+  /** Same-origin frames this vendor renders its application inside. */
+  iframeSelectors?: readonly string[];
+  /** True when only the currently rendered step is ever present. */
+  multiStep?: boolean;
+}
+
+const GENERIC_HINTS: AdapterHints = {
+  sectionSelectors: ['fieldset', '.field', '.form-field'],
+  uploadSelectors: ['input[type="file"]'],
+  navigationText: /\b(next|continue)\b/i,
+  finalSubmitText: /\b(submit|send application|complete application)\b/i,
+};
+
 interface AdapterConfig {
   id: AtsId;
   priority: number;
@@ -37,17 +64,20 @@ interface AdapterConfig {
   markers?: readonly string[];
   supported: boolean;
   selectors?: Parameters<typeof extractJobContext>[2];
+  hints?: AdapterHints;
 }
 
 class BrowserAdapter implements AtsAdapter {
   readonly id: AtsId;
   readonly displayName: string;
   readonly priority: number;
+  readonly hints: AdapterHints;
 
   constructor(private readonly config: AdapterConfig) {
     this.id = config.id;
     this.displayName = ATS_DISPLAY_NAMES[config.id];
     this.priority = config.priority;
+    this.hints = config.hints ?? GENERIC_HINTS;
   }
 
   detect(context: PageDetectionContext): AdapterDetection {
@@ -132,6 +162,15 @@ class BrowserAdapter implements AtsAdapter {
   }
 }
 
+/**
+ * Adapters provide detection and hints. They never replace the generic
+ * semantic engine: every one of them scans through the same `scanDom`, fills
+ * through the same executor, and an employer form nobody recognizes still gets
+ * the full treatment through `generic`.
+ *
+ * `supported: true` here means "we have vendor-specific knowledge", not "this
+ * is the only way it works".
+ */
 export const ATS_ADAPTERS: readonly AtsAdapter[] = [
   new BrowserAdapter({
     id: 'greenhouse',
@@ -144,6 +183,12 @@ export const ATS_ADAPTERS: readonly AtsAdapter[] = [
       jobTitle: ['h1.app-title', '.job__title h1', 'h1'],
       location: ['.location', '.job__location'],
       description: ['#content', '.job__description'],
+    },
+    hints: {
+      sectionSelectors: ['#application_form fieldset', '.field', '.application-question'],
+      uploadSelectors: ['#resume_fieldset', '#cover_letter_fieldset', 'input[type="file"]'],
+      navigationText: /\b(next|continue)\b/i,
+      finalSubmitText: /\b(submit application|submit your application)\b/i,
     },
   }),
   new BrowserAdapter({
@@ -159,6 +204,12 @@ export const ATS_ADAPTERS: readonly AtsAdapter[] = [
       department: ['.posting-categories .department'],
       description: ['.posting-page .content', '.section-wrapper'],
     },
+    hints: {
+      sectionSelectors: ['.application-question', '.application-additional', '.card'],
+      uploadSelectors: ['input[name="resume"]', 'input[type="file"]'],
+      navigationText: /\b(next|continue)\b/i,
+      finalSubmitText: /\bsubmit application\b/i,
+    },
   }),
   new BrowserAdapter({
     id: 'workday',
@@ -173,48 +224,182 @@ export const ATS_ADAPTERS: readonly AtsAdapter[] = [
       description: ['[data-automation-id="jobPostingDescription"]'],
       requisitionId: ['[data-automation-id="requisitionId"]'],
     },
+    hints: {
+      sectionSelectors: [
+        '[data-automation-id*="formField"]',
+        '[data-automation-id="section"]',
+        '[data-automation-id*="Section"]',
+      ],
+      uploadSelectors: [
+        '[data-automation-id="file-upload-input-ref"]',
+        '[data-automation-id*="resume"]',
+        'input[type="file"]',
+      ],
+      navigationText: /\b(next|continue|save and continue)\b/i,
+      finalSubmitText: /\b(submit|review and submit)\b/i,
+      // Workday reveals one step at a time; only the rendered step is scanned.
+      multiStep: true,
+    },
   }),
   new BrowserAdapter({
     id: 'ashby',
     priority: 80,
     hosts: /(^|\.)jobs\.ashbyhq\.com$/i,
-    markers: ['[class*="ashby"]'],
-    supported: false,
+    markers: ['[class*="ashby"]', '[class*="_fieldEntry"]', '#root [class*="ashby-application"]'],
+    supported: true,
+    selectors: {
+      company: ['[class*="companyName"]', 'header img[alt]'],
+      jobTitle: ['h1', '[class*="jobTitle"]'],
+      location: ['[class*="location"]'],
+      description: ['[class*="jobDescription"]', '#overview'],
+    },
+    hints: {
+      sectionSelectors: ['[class*="_fieldEntry"]', '[class*="fieldGroup"]'],
+      uploadSelectors: ['input[type="file"]', '[class*="fileUpload"]'],
+      navigationText: /\b(next|continue)\b/i,
+      finalSubmitText: /\bsubmit application\b/i,
+    },
   }),
   new BrowserAdapter({
     id: 'icims',
     priority: 75,
     hosts: /(^|\.)icims\.com$/i,
-    markers: ['[class*="iCIMS"]', '[id*="iCIMS"]'],
-    supported: false,
+    markers: ['[class*="iCIMS"]', '[id*="iCIMS"]', '#icims_content_iframe'],
+    supported: true,
+    selectors: {
+      company: ['.iCIMS_Header img[alt]'],
+      jobTitle: ['.iCIMS_Header h1', 'h1'],
+      location: ['.iCIMS_JobHeaderField'],
+      description: ['.iCIMS_JobContent'],
+    },
+    hints: {
+      sectionSelectors: ['.iCIMS_InfoField', '.iCIMS_TableRow'],
+      uploadSelectors: ['input[type="file"]', '[id*="resume"]'],
+      navigationText: /\b(next|continue)\b/i,
+      finalSubmitText: /\bsubmit\b/i,
+      // iCIMS renders its application inside a same-origin frame.
+      iframeSelectors: ['#icims_content_iframe', 'iframe[src*="icims"]'],
+    },
   }),
   new BrowserAdapter({
     id: 'smartrecruiters',
     priority: 70,
     hosts: /(^|\.)smartrecruiters\.com$/i,
-    markers: ['[class*="smartrecruiters"]'],
-    supported: false,
+    markers: ['[class*="smartrecruiters"]', '[data-test*="application"]', '#st-app'],
+    supported: true,
+    selectors: {
+      company: ['[data-test="company-name"]'],
+      jobTitle: ['[data-test="job-title"]', 'h1'],
+      location: ['[data-test="job-location"]'],
+      description: ['[data-test="job-description"]'],
+    },
+    hints: {
+      sectionSelectors: ['[data-test*="field"]', 'fieldset'],
+      uploadSelectors: ['input[type="file"]', '[data-test*="resume"]'],
+      navigationText: /\b(next|continue)\b/i,
+      finalSubmitText: /\b(submit|i'?m interested)\b/i,
+    },
+  }),
+  new BrowserAdapter({
+    id: 'oracle',
+    priority: 68,
+    hosts: /(^|\.)oraclecloud\.com$/i,
+    markers: ['[data-ofa]', '.job-details__apply', '#ORA_JOB_APPLY'],
+    supported: true,
+    selectors: {
+      jobTitle: ['.job-details__title', 'h1'],
+      location: ['.job-details__location'],
+      description: ['.job-details__description-content'],
+      requisitionId: ['.job-details__requisition-id'],
+    },
+    hints: {
+      sectionSelectors: ['.apply-flow__section', '[data-ofa] fieldset'],
+      uploadSelectors: ['input[type="file"]'],
+      navigationText: /\b(continue|next)\b/i,
+      finalSubmitText: /\bsubmit\b/i,
+      multiStep: true,
+    },
   }),
   new BrowserAdapter({
     id: 'successfactors',
     priority: 65,
-    hosts: /(^|\.)successfactors\.(com|eu)$/i,
-    markers: ['[class*="successFactors"]', '[id*="successFactors"]'],
-    supported: false,
+    hosts: /(^|\.)(successfactors|sapsf)\.(com|eu)$/i,
+    markers: ['[class*="successFactors"]', '[id*="successFactors"]', '#careerSiteApplication'],
+    supported: true,
+    selectors: {
+      jobTitle: ['[data-careersite-propertyid="title"]', 'h1'],
+      location: ['[data-careersite-propertyid="location"]'],
+      description: ['[data-careersite-propertyid="jobdescription"]'],
+    },
+    hints: {
+      sectionSelectors: ['.jobDetail', 'fieldset', '.formField'],
+      uploadSelectors: ['input[type="file"]'],
+      navigationText: /\b(next|continue)\b/i,
+      finalSubmitText: /\bsubmit\b/i,
+      multiStep: true,
+    },
   }),
   new BrowserAdapter({
     id: 'taleo',
     priority: 60,
     hosts: /(^|\.)taleo\.net$/i,
-    markers: ['[id*="taleo"]', '[class*="taleo"]'],
-    supported: false,
+    markers: ['[id*="taleo"]', '[class*="taleo"]', '#requisitionDescriptionInterface'],
+    supported: true,
+    selectors: {
+      jobTitle: ['.titlepage', 'h1'],
+      location: ['#requisitionDescriptionInterface\\.ID1200'],
+      description: ['#requisitionDescriptionInterface'],
+    },
+    hints: {
+      sectionSelectors: ['.editable-block', 'fieldset'],
+      uploadSelectors: ['input[type="file"]'],
+      navigationText: /\b(next|save and continue)\b/i,
+      finalSubmitText: /\b(submit|finish)\b/i,
+      multiStep: true,
+    },
   }),
   new BrowserAdapter({
     id: 'generic',
     priority: 1,
     supported: true,
+    hints: {
+      sectionSelectors: ['fieldset', '.field', '.form-field'],
+      uploadSelectors: ['input[type="file"]'],
+      navigationText: /\b(next|continue)\b/i,
+      finalSubmitText: /\b(submit|send application|complete application)\b/i,
+    },
   }),
 ];
+
+/** The hints for an adapter, or the generic ones when it has none. */
+export function hintsFor(id: AtsId): AdapterHints {
+  const found = ATS_ADAPTERS.find((adapter) => adapter.id === id);
+  return (found as BrowserAdapter | undefined)?.hints ?? GENERIC_HINTS;
+}
+
+/**
+ * True when a control ends the application rather than advancing it.
+ *
+ * Checked against the adapter's own wording first, then a vendor-neutral list,
+ * so an unrecognized employer form still refuses to click Submit.
+ */
+export function isFinalSubmitControl(id: AtsId, text: string): boolean {
+  const hints = hintsFor(id);
+  const flattened = text.replace(/[-_+/]+/g, ' ').trim();
+  if (hints.navigationText?.test(flattened) && !hints.finalSubmitText?.test(flattened)) {
+    return false;
+  }
+  return (
+    (hints.finalSubmitText?.test(flattened) ?? false) || UNIVERSAL_FINAL_SUBMIT.test(flattened)
+  );
+}
+
+/**
+ * Wording that ends an application on any form, whoever built it. This is the
+ * backstop behind every adapter, not an alternative to them.
+ */
+const UNIVERSAL_FINAL_SUBMIT =
+  /\b(submit application|submit your application|send application|complete application|finish (and )?submit|review and submit)\b/i;
 
 export interface SelectedAdapter {
   adapter: AtsAdapter;

@@ -13,6 +13,7 @@ export const ATS_IDS = [
   'smartrecruiters',
   'successfactors',
   'taleo',
+  'oracle',
   'unknown',
 ] as const;
 
@@ -28,6 +29,7 @@ export const ATS_DISPLAY_NAMES: Record<AtsId, string> = {
   smartrecruiters: 'SmartRecruiters',
   successfactors: 'SAP SuccessFactors',
   taleo: 'Oracle Taleo',
+  oracle: 'Oracle Recruiting Cloud',
   unknown: 'Not detected',
 };
 

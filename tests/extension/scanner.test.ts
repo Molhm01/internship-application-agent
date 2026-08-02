@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { matchCanonicalQuestion, normalizeLabel } from '@internship-agent/shared';
-import { selectAdapter } from '../../extension/src/scanner/adapters.js';
+import {
+  ATS_ADAPTERS,
+  isFinalSubmitControl,
+  selectAdapter,
+} from '../../extension/src/scanner/adapters.js';
 import {
   extractAccessibleLabel,
   isVisibleControl,
@@ -64,10 +68,45 @@ describe('ATS adapter selection', () => {
       'ashby',
       'icims',
       'smartrecruiters',
+      'oracle',
       'successfactors',
       'taleo',
       'generic',
     ]);
+  });
+
+  it('gives every vendor real support rather than a detection-only stub', () => {
+    for (const adapter of ATS_ADAPTERS) {
+      const detection = adapter.detect({
+        url: 'https://example.test/apply',
+        hostname: 'example.test',
+        title: '',
+        bodyText: '',
+        document,
+      });
+      expect(detection.supported).toBe(true);
+    }
+  });
+
+  it('refuses a final-submit control on every adapter, including an unknown form', () => {
+    for (const adapter of ATS_ADAPTERS) {
+      expect(isFinalSubmitControl(adapter.id, 'Submit application')).toBe(true);
+      expect(isFinalSubmitControl(adapter.id, 'Submit Your Application')).toBe(true);
+      expect(isFinalSubmitControl(adapter.id, 'Complete application')).toBe(true);
+      expect(isFinalSubmitControl(adapter.id, 'Review and submit')).toBe(true);
+    }
+  });
+
+  it('does not mistake a Next control for a final submission', () => {
+    for (const adapter of ATS_ADAPTERS) {
+      expect(isFinalSubmitControl(adapter.id, 'Next')).toBe(false);
+      expect(isFinalSubmitControl(adapter.id, 'Continue')).toBe(false);
+    }
+  });
+
+  it('reads a hyphenated control as the words it spells', () => {
+    expect(isFinalSubmitControl('greenhouse', 'submit-application')).toBe(true);
+    expect(isFinalSubmitControl('generic', 'review_and_submit')).toBe(true);
   });
 });
 

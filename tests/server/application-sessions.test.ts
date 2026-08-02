@@ -48,7 +48,7 @@ describe('POST /application-sessions', () => {
     expect(body.data.sessionId).toBe(body.data.id);
   });
 
-  it('sends the request with the correct x-agent-token header', async () => {
+  it('sends the request with the correct x-agent-token header', () => {
     expect(AUTH_HEADER).toBe('x-agent-token');
   });
 

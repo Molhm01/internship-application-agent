@@ -37,7 +37,7 @@ const GENERIC_WORDS = /\b(attach|upload|choose|select)\b.*\b(file|document|attac
 
 /** Everything on the page that says what this upload field is for. */
 export function uploadFieldText(field: DetectedField): string {
-  const metadata = field.metadata as Record<string, unknown>;
+  const metadata = field.metadata;
   return [
     field.label,
     field.question,

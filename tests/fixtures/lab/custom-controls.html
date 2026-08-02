@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Custom controls</title>
+  </head>
+  <body>
+    <!--
+      Controls that are not <input>. Each is how a real ATS builds a dropdown:
+      an ARIA combobox, a React Select root, a button that owns a popover, and a
+      phone country-code menu. A scanner that only looks for form elements sees
+      none of these.
+    -->
+    <main>
+      <h1>Additional details</h1>
+      <form>
+        <!-- ARIA combobox whose list exists but is collapsed. -->
+        <div class="field">
+          <span id="country-label">Country of residence</span>
+          <div
+            id="country-combobox"
+            role="combobox"
+            aria-labelledby="country-label"
+            aria-expanded="false"
+            aria-controls="country-listbox"
+            tabindex="0"
+          >
+            Select a country
+          </div>
+          <ul id="country-listbox" role="listbox" hidden>
+            <li role="option" data-value="us">United States of America</li>
+            <li role="option" data-value="ca">Canada</li>
+            <li role="option" data-value="uk">United Kingdom</li>
+          </ul>
+        </div>
+
+        <!-- A button that opens a menu. No role="combobox" anywhere. -->
+        <div class="field">
+          <span id="degree-label">Highest level of study completed</span>
+          <button
+            type="button"
+            id="degree-trigger"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="degree-menu"
+            aria-labelledby="degree-label"
+          >
+            Choose one
+          </button>
+          <div id="degree-menu" role="listbox" hidden>
+            <div role="option" data-value="hs">High School</div>
+            <div role="option" data-value="ba">Bachelor's Degree</div>
+            <div role="option" data-value="ma">Master's Degree</div>
+          </div>
+        </div>
+
+        <!-- React Select. The root carries the name; the inner input is search. -->
+        <div class="field">
+          <label id="source-label" for="source-input">How did you come across this opening?</label>
+          <div class="select__container">
+            <div
+              class="select__control css-1abcde-control"
+              aria-labelledby="source-label"
+              tabindex="0"
+            >
+              <div class="select__value-container">
+                <div class="select__placeholder">Select…</div>
+                <input id="source-input" class="select__input" autocomplete="off" />
+              </div>
+            </div>
+            <div class="select__menu" hidden>
+              <div role="option" data-value="linkedin">LinkedIn</div>
+              <div role="option" data-value="referral">Employee referral</div>
+              <div role="option" data-value="careers">Company careers page</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Phone split into a country-code menu and a local number. -->
+        <div class="field">
+          <span id="dial-label">Phone country code</span>
+          <div
+            id="dial-combobox"
+            role="combobox"
+            aria-labelledby="dial-label"
+            aria-controls="dial-listbox"
+            aria-expanded="false"
+            tabindex="0"
+          >
+            +1
+          </div>
+          <ul id="dial-listbox" role="listbox" hidden>
+            <li role="option" data-value="+1">United States (+1)</li>
+            <li role="option" data-value="+44">United Kingdom (+44)</li>
+          </ul>
+          <label for="local-number">Phone number</label>
+          <input id="local-number" name="local_phone" type="tel" />
+        </div>
+
+        <!-- A custom date picker whose visible control is a button. -->
+        <div class="field">
+          <span id="avail-label">When are you available to start?</span>
+          <button
+            type="button"
+            id="avail-trigger"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-labelledby="avail-label"
+          >
+            Pick a date
+          </button>
+        </div>
+
+        <!-- A contenteditable answer box. -->
+        <div class="field">
+          <label id="pitch-label">In a few sentences, why does this role interest you?</label>
+          <div
+            id="pitch"
+            contenteditable="true"
+            role="textbox"
+            aria-labelledby="pitch-label"
+            aria-multiline="true"
+          ></div>
+        </div>
+
+        <button type="button">Continue</button>
+      </form>
+    </main>
+  </body>
+</html>

@@ -17,6 +17,7 @@ import {
   type ReviewReason,
 } from '@internship-agent/shared';
 import { decideApproval, type ApprovalDecision } from './approvalPolicy.js';
+import { isFinalSubmitControl } from '../scanner/adapters.js';
 
 /**
  * One-button autofill.
@@ -99,12 +100,21 @@ function blockingCondition(scan: ApplicationScanResult): AgentError | null {
   return null;
 }
 
-/** True when this scan looks like the final confirm-and-submit step. */
+/**
+ * True when this scan looks like the final confirm-and-submit step.
+ *
+ * A step with nothing left to answer, on a URL that names submission, is the
+ * review page. The adapter's own wording is consulted as well, so a vendor that
+ * calls it something else is still recognized — and a vendor-neutral list backs
+ * both up, because an unrecognized employer form must refuse it too.
+ */
 export function isFinalSubmissionStage(scan: ApplicationScanResult): boolean {
   const answerable = scan.fields.filter(
     (field) => field.visible && !field.disabled && field.fieldType !== 'unknown',
   );
-  return answerable.length === 0 && FINAL_STAGE.test(flattenSeparators(scan.url));
+  if (answerable.length > 0) return false;
+  const url = flattenSeparators(scan.url);
+  return FINAL_STAGE.test(url) || isFinalSubmitControl(scan.ats.id, url);
 }
 
 function reviewReasonFor(

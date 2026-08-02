@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Northwind Robotics — Software Engineering Intern</title>
+  </head>
+  <body>
+    <!--
+      A plain HTML application. Every question is worded the way a real employer
+      words it, not the way the profile schema names it, so a scanner that only
+      matches schema labels fails this page.
+    -->
+    <main>
+      <h1>Apply: Software Engineering Intern</h1>
+      <form id="application">
+        <fieldset>
+          <legend>About you</legend>
+          <label for="given">Given name</label>
+          <input id="given" name="given_name" type="text" autocomplete="given-name" required />
+
+          <label for="family">Family name</label>
+          <input id="family" name="family_name" type="text" autocomplete="family-name" required />
+
+          <label for="goes-by">What should we call you?</label>
+          <input id="goes-by" name="preferred" type="text" placeholder="e.g. Jo" />
+
+          <label for="contact-email">Email address</label>
+          <input id="contact-email" name="email" type="email" autocomplete="email" required />
+
+          <label for="mobile">Mobile number</label>
+          <input id="mobile" name="phone" type="tel" autocomplete="tel" />
+        </fieldset>
+
+        <fieldset>
+          <legend>Where you live</legend>
+          <label for="street">Street address</label>
+          <input id="street" name="address1" type="text" autocomplete="address-line1" />
+
+          <label for="town">Town or city</label>
+          <input id="town" name="city" type="text" />
+
+          <label for="region">State / Province</label>
+          <input id="region" name="state" type="text" />
+
+          <label for="postcode">Postcode</label>
+          <input id="postcode" name="zip" type="text" />
+        </fieldset>
+
+        <fieldset>
+          <legend>Education</legend>
+          <label for="institution">Which institution do you attend?</label>
+          <input id="institution" name="school" type="text" />
+
+          <label for="study">Field of study</label>
+          <input id="study" name="major" type="text" />
+
+          <label for="grade">Grade point average</label>
+          <input id="grade" name="gpa" type="text" />
+
+          <label for="grad-month">Graduation month</label>
+          <input id="grad-month" name="grad_month" type="month" />
+        </fieldset>
+
+        <fieldset>
+          <legend>Links</legend>
+          <label for="linked">LinkedIn profile</label>
+          <input id="linked" name="linkedin" type="url" />
+
+          <label for="code">GitHub profile</label>
+          <input id="code" name="github" type="url" />
+
+          <label for="site">Personal website</label>
+          <input id="site" name="website" type="url" placeholder="https://" />
+        </fieldset>
+
+        <fieldset>
+          <legend>Right to work</legend>
+          <p id="auth-help">We ask this of every applicant.</p>
+          <label for="permitted">
+            Do you currently have permission to work in the country of employment?
+          </label>
+          <select id="permitted" name="work_auth" aria-describedby="auth-help">
+            <option value="">Please choose</option>
+            <option value="yes">Yes, I am permitted to work</option>
+            <option value="no">No, I am not</option>
+          </select>
+
+          <label for="sponsor">
+            Would the company need to sponsor your employment authorization, now or in the future?
+          </label>
+          <select id="sponsor" name="sponsorship">
+            <option value="">Please choose</option>
+            <option value="yes">Yes, sponsorship would be required</option>
+            <option value="no">No, sponsorship would not be required</option>
+          </select>
+        </fieldset>
+
+        <fieldset>
+          <legend>Availability</legend>
+          <label for="begin">Roughly how soon could you begin?</label>
+          <input id="begin" name="start_date" type="date" />
+
+          <label for="move">Would you consider moving to the job location?</label>
+          <select id="move" name="relocate">
+            <option value="">Please choose</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </fieldset>
+
+        <fieldset>
+          <legend>Documents</legend>
+          <label for="cv-upload">Resume / CV</label>
+          <input id="cv-upload" name="resume" type="file" accept=".pdf,.doc,.docx" />
+
+          <label for="letter-upload">Covering letter</label>
+          <input id="letter-upload" name="cover_letter" type="file" accept=".pdf" />
+
+          <label for="transcript-upload">Academic transcript</label>
+          <input id="transcript-upload" name="transcript" type="file" accept=".pdf" />
+        </fieldset>
+
+        <!-- A honeypot. Never filled; it exists to catch bots. -->
+        <div style="position:absolute;left:-9999px">
+          <label for="bot-field">Leave this blank</label>
+          <input id="bot-field" name="bot-field" type="text" />
+        </div>
+
+        <!-- Disabled by the employer until an earlier answer is given. -->
+        <label for="locked">Employee referral code</label>
+        <input id="locked" name="referral_code" type="text" disabled />
+
+        <button type="button" id="save">Save draft</button>
+        <button type="submit" id="final-submit">Submit application</button>
+      </form>
+    </main>
+  </body>
+</html>

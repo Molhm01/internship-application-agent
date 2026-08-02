@@ -55,7 +55,10 @@ const RULES: readonly Rule[] = [
 
   // Documents — before the generic name rules ("resume name").
   { question: 'resume', patterns: [/\bresume\b/, /\bcv\b/, /\bcurriculum vitae\b/] },
-  { question: 'cover_letter', patterns: [/\bcover ?letter\b/] },
+  {
+    question: 'cover_letter',
+    patterns: [/\bcover(ing)? ?letter\b/, /\bmotivation letter\b/],
+  },
   { question: 'transcript', patterns: [/\btranscript\b/] },
   {
     question: 'portfolio_document',
@@ -72,7 +75,14 @@ const RULES: readonly Rule[] = [
     question: 'last_name',
     patterns: [/\b(last|family|sur)\s?name\b/, /\bsurname\b/, /\bname last\b/],
   },
-  { question: 'preferred_name', patterns: [/\b(preferred|nick|chosen|goes by)\s?name\b/] },
+  {
+    question: 'preferred_name',
+    patterns: [
+      /\b(preferred|nick|chosen|goes by)\s?name\b/,
+      /\bwhat (should|do) we call you\b/,
+      /\bwhat name do you go by\b/,
+    ],
+  },
   { question: 'pronouns', patterns: [/\bpronouns?\b/] },
   { question: 'full_name', patterns: [/\b(full|legal|your) name\b/, /^name$/] },
 
@@ -84,6 +94,7 @@ const RULES: readonly Rule[] = [
       /\b(legally )?authoriz(ed|ation) to work\b/,
       /\bwork authoriz(ed|ation)\b/,
       /\beligible to work\b/,
+      /\bwork eligibility\b/,
       /\bright to work\b/,
       // Equivalent wordings employers actually use. Each asks the same thing as
       // "Are you legally authorized to work?" and must reach the same saved
@@ -259,7 +270,9 @@ const RULES: readonly Rule[] = [
   {
     question: 'salary_expectation',
     patterns: [
-      /\b(salary|compensation|pay)\b.*\b(expect|requirement|desired|range)\b/,
+      // `expect\w*` so "salary expectations" matches as readily as "expected
+      // salary"; a trailing word boundary after "expect" caught neither.
+      /\b(salary|compensation|pay)\b.*\b(expect\w*|requirement\w*|desired|range)\b/,
       /\bdesired salary\b/,
       /\bexpected (salary|compensation)\b/,
     ],

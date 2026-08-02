@@ -7,6 +7,7 @@ import {
   type DetectedField,
   type ReviewReason,
 } from '@internship-agent/shared';
+import { isLegalAttestation } from '../matcher/deterministicMatcher.js';
 
 /**
  * Decides what one-button autofill may apply without a person looking first.
@@ -76,6 +77,22 @@ export function decideApproval(
     return { approved: false, reviewReason: 'missing_information', reason: 'Autofill is off.' };
   }
 
+  // ---- Legally weighty answers, before anything else ---------------------
+  // An attestation or a signature is a statement the user makes. It is not
+  // "information we are missing"; it is a response only a person can give, and
+  // no setting and no action kind changes that.
+  const legalAttestation =
+    canonicalQuestion === 'terms_attestation' ||
+    canonicalQuestion === 'signature' ||
+    (field !== undefined && isLegalAttestation(field));
+  if (legalAttestation) {
+    return {
+      approved: false,
+      reviewReason: 'manual_required',
+      reason: 'Terms, consent, and attestations are never accepted on your behalf.',
+    };
+  }
+
   // ---- Fields that are not answers at all ------------------------------
   switch (action.action) {
     case 'unsupported':
@@ -100,17 +117,6 @@ export function decideApproval(
       return { approved: false, reason: 'Skipped.' };
     default:
       break;
-  }
-
-  // ---- Legally weighty answers ------------------------------------------
-  // An attestation or signature is a statement the user makes, not a field the
-  // agent completes. No setting turns this on.
-  if (canonicalQuestion === 'terms_attestation' || canonicalQuestion === 'signature') {
-    return {
-      approved: false,
-      reviewReason: 'manual_required',
-      reason: 'Terms and signatures are never accepted on your behalf.',
-    };
   }
 
   // ---- Protected and eligibility questions -------------------------------

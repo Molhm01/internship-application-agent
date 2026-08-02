@@ -34,7 +34,7 @@ function rowToSession(row: ApplicationSessionRow): ApplicationSession {
     url: row.url,
     domain: row.domain,
     ats: row.ats,
-    jobContext: row.job_context ? JSON.parse(row.job_context) : undefined,
+    jobContext: row.job_context ? (JSON.parse(row.job_context) as unknown) : undefined,
     company: row.company ?? undefined,
     jobTitle: row.job_title ?? undefined,
     officialApplyUrl: row.official_apply_url ?? undefined,

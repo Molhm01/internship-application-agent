@@ -15,8 +15,9 @@ afterEach(async () => {
  */
 function ollamaReturning(content: string | (() => string)) {
   const calls: Array<{ body: unknown }> = [];
+  // eslint-disable-next-line @typescript-eslint/require-await -- fetch returns a promise.
   const fetchImpl = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
-    const url = String(input);
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.endsWith('/api/version')) {
       return new Response(JSON.stringify({ version: '0.5.0' }), { status: 200 });
     }
@@ -24,7 +25,8 @@ function ollamaReturning(content: string | (() => string)) {
       return new Response(JSON.stringify({ models: [{ name: 'llama3.1:8b' }] }), { status: 200 });
     }
     if (url.endsWith('/api/chat')) {
-      calls.push({ body: JSON.parse(String(init?.body ?? '{}')) as unknown });
+      const body = typeof init?.body === 'string' ? init.body : '{}';
+      calls.push({ body: JSON.parse(body) as unknown });
       return new Response(
         JSON.stringify({
           model: 'llama3.1:8b',
@@ -125,7 +127,7 @@ describe('POST /ai/analyze-form', () => {
 
     expect(response.statusCode).toBe(200);
     const parsed = formAnalysisResponseSchema.parse(
-      (response.json() as { data: unknown }).data,
+      (response.json()).data,
     );
     expect(parsed.plan.answers).toHaveLength(2);
     // Two questions, one request. This is the property the whole design exists for.
@@ -167,7 +169,7 @@ describe('POST /ai/analyze-form', () => {
     );
     server = await createTestServer({ fetchImpl: ollama.fetchImpl });
     const parsed = formAnalysisResponseSchema.parse(
-      ((await analyze(analyzeBody())).json() as { data: unknown }).data,
+      ((await analyze(analyzeBody())).json()).data,
     );
     expect(parsed.plan.answers).toEqual([]);
     expect(parsed.rejected[0]).toContain('question-invented');
@@ -177,7 +179,7 @@ describe('POST /ai/analyze-form', () => {
     const ollama = ollamaReturning('I think the answer is probably yes!');
     server = await createTestServer({ fetchImpl: ollama.fetchImpl });
     const parsed = formAnalysisResponseSchema.parse(
-      ((await analyze(analyzeBody())).json() as { data: unknown }).data,
+      ((await analyze(analyzeBody())).json()).data,
     );
     expect(parsed.plan.answers).toEqual([]);
     expect(parsed.error?.code).toBe('ANALYSIS_REJECTED');
@@ -204,7 +206,7 @@ describe('POST /ai/analyze-form', () => {
     );
     server = await createTestServer({ fetchImpl: ollama.fetchImpl });
     const parsed = formAnalysisResponseSchema.parse(
-      ((await analyze(analyzeBody())).json() as { data: unknown }).data,
+      ((await analyze(analyzeBody())).json()).data,
     );
     expect(parsed.plan.answers).toEqual([]);
     expect(parsed.rejected.some((entry) => entry.includes('some-other-page'))).toBe(true);
@@ -231,7 +233,7 @@ describe('POST /ai/analyze-form', () => {
     );
     server = await createTestServer({ fetchImpl: ollama.fetchImpl });
     const parsed = formAnalysisResponseSchema.parse(
-      ((await analyze(analyzeBody())).json() as { data: unknown }).data,
+      ((await analyze(analyzeBody())).json()).data,
     );
     expect(parsed.plan.answers).toHaveLength(1);
     expect(JSON.stringify(parsed.plan.answers[0])).not.toContain('submit');

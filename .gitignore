@@ -34,3 +34,4 @@ Thumbs.db
 
 # Graphify knowledge graph: regenerable build output.
 graphify-out/
+tmp-graph.js

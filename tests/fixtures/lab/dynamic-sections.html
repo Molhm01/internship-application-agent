@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Education and experience</title>
+  </head>
+  <body>
+    <!--
+      Sections that do not exist until the applicant asks for them. "Add
+      education" appends a whole new group of controls; selecting a country
+      reveals a state control that was not there a moment ago.
+
+      A scanner with no mutation handling sees the page as it loaded and never
+      finds any of it.
+    -->
+    <main>
+      <form>
+        <h2>Education</h2>
+        <div id="education-list">
+          <fieldset class="education-entry">
+            <legend>Education 1</legend>
+            <label>School <input name="school_1" type="text" /></label>
+            <label>Degree <input name="degree_1" type="text" /></label>
+          </fieldset>
+        </div>
+        <button type="button" id="add-education">Add another education</button>
+
+        <h2>Work experience</h2>
+        <div id="experience-list"></div>
+        <button type="button" id="add-experience">Add experience</button>
+
+        <h2>Location</h2>
+        <label for="country">Country</label>
+        <select id="country" name="country">
+          <option value="">Select</option>
+          <option value="us">United States</option>
+          <option value="ca">Canada</option>
+        </select>
+        <div id="region-holder"></div>
+
+        <button type="submit">Submit application</button>
+      </form>
+    </main>
+
+    <script>
+      let educationCount = 1;
+      document.getElementById('add-education').addEventListener('click', () => {
+        educationCount += 1;
+        const entry = document.createElement('fieldset');
+        entry.className = 'education-entry';
+        entry.innerHTML =
+          '<legend>Education ' +
+          educationCount +
+          '</legend>' +
+          '<label>School <input name="school_' +
+          educationCount +
+          '" type="text" /></label>' +
+          '<label>Degree <input name="degree_' +
+          educationCount +
+          '" type="text" /></label>';
+        document.getElementById('education-list').append(entry);
+      });
+
+      let experienceCount = 0;
+      document.getElementById('add-experience').addEventListener('click', () => {
+        experienceCount += 1;
+        const entry = document.createElement('fieldset');
+        entry.innerHTML =
+          '<legend>Experience ' +
+          experienceCount +
+          '</legend>' +
+          '<label>Employer <input name="employer_' +
+          experienceCount +
+          '" type="text" /></label>' +
+          '<label>Job title <input name="title_' +
+          experienceCount +
+          '" type="text" /></label>';
+        document.getElementById('experience-list').append(entry);
+      });
+
+      // A dependent control: the state list only exists once a country is chosen.
+      document.getElementById('country').addEventListener('change', (event) => {
+        const holder = document.getElementById('region-holder');
+        holder.textContent = '';
+        if (!event.target.value) return;
+        const label = document.createElement('label');
+        label.setAttribute('for', 'region');
+        label.textContent = event.target.value === 'us' ? 'State' : 'Province';
+        const select = document.createElement('select');
+        select.id = 'region';
+        select.name = 'region';
+        const options =
+          event.target.value === 'us' ? ['New Jersey', 'New York'] : ['Ontario', 'Quebec'];
+        for (const name of ['', ...options]) {
+          const option = document.createElement('option');
+          option.value = name;
+          option.textContent = name || 'Select';
+          select.append(option);
+        }
+        holder.append(label, select);
+      });
+    </script>
+  </body>
+</html>

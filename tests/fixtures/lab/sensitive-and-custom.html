@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Voluntary self-identification and additional questions</title>
+  </head>
+  <body>
+    <!--
+      The two hardest categories in one page: protected-characteristic questions,
+      which must never be answered without an explicit saved preference, and
+      open-ended questions, which must be grounded rather than invented.
+
+      Every decline option is worded differently on purpose.
+    -->
+    <main>
+      <form>
+        <h2>Voluntary self-identification</h2>
+
+        <fieldset>
+          <legend>Gender</legend>
+          <label><input type="radio" name="gender" value="m" /> Male</label>
+          <label><input type="radio" name="gender" value="f" /> Female</label>
+          <label><input type="radio" name="gender" value="x" /> Non-binary</label>
+          <label><input type="radio" name="gender" value="dec" /> I do not wish to answer</label>
+        </fieldset>
+
+        <label for="ethnicity">Race / Ethnicity</label>
+        <select id="ethnicity" name="ethnicity">
+          <option value="">Please select</option>
+          <option value="asian">Asian</option>
+          <option value="black">Black or African American</option>
+          <option value="white">White</option>
+          <option value="decline">Decline to self-identify</option>
+        </select>
+
+        <label for="hispanic">Are you Hispanic or Latino?</label>
+        <select id="hispanic" name="hispanic">
+          <option value="">Please select</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+          <option value="decline">Prefer not to disclose</option>
+        </select>
+
+        <fieldset>
+          <legend>Veteran status</legend>
+          <label><input type="radio" name="veteran" value="y" /> I identify as a protected veteran</label>
+          <label><input type="radio" name="veteran" value="n" /> I am not a protected veteran</label>
+          <label><input type="radio" name="veteran" value="d" /> I choose not to answer</label>
+        </fieldset>
+
+        <label for="disability">Disability status</label>
+        <select id="disability" name="disability">
+          <option value="">Please select</option>
+          <option value="yes">Yes, I have a disability</option>
+          <option value="no">No, I do not have a disability</option>
+          <option value="decline">I don't wish to answer</option>
+        </select>
+
+        <label for="orientation">Sexual orientation</label>
+        <select id="orientation" name="orientation">
+          <option value="">Please select</option>
+          <option value="straight">Heterosexual</option>
+          <option value="lgb">Lesbian, gay or bisexual</option>
+          <option value="decline">Prefer not to say</option>
+        </select>
+
+        <h2>Additional questions</h2>
+
+        <label for="why-us">Tell us why you want to work here.</label>
+        <textarea id="why-us" name="why_us" rows="6" maxlength="1500"></textarea>
+
+        <label for="challenge">
+          Describe a difficult technical problem you faced and how you approached it.
+        </label>
+        <textarea id="challenge" name="challenge" rows="8" maxlength="2000"></textarea>
+
+        <label for="languages">Which programming languages are you proficient in?</label>
+        <textarea id="languages" name="languages" rows="3"></textarea>
+
+        <label for="salary">What are your salary expectations?</label>
+        <input id="salary" name="salary" type="text" />
+
+        <label for="clearance">Do you currently hold an active security clearance?</label>
+        <select id="clearance" name="clearance">
+          <option value="">Please select</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+
+        <label for="sandwich">What is your favourite type of sandwich?</label>
+        <input id="sandwich" name="sandwich" type="text" />
+
+        <label>
+          <input type="checkbox" id="attest" name="attest" />
+          I certify that the information I have provided is accurate and truthful.
+        </label>
+
+        <label>
+          <input type="checkbox" id="terms" name="terms" />
+          I agree to the terms and conditions.
+        </label>
+
+        <button type="submit" id="send">Send application</button>
+      </form>
+    </main>
+  </body>
+</html>

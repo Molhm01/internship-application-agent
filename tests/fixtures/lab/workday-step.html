@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>My Information — Workday</title>
+  </head>
+  <body>
+    <!--
+      One rendered step of a Workday application. Workday shows a single step at
+      a time and identifies everything by data-automation-id rather than by
+      label association, so the label has to come from the container.
+
+      The next control says "Save and Continue", which advances; the review step
+      says "Submit", which must never be clicked.
+    -->
+    <div data-automation-id="applicationPage">
+      <h2 data-automation-id="sectionTitle">My Information</h2>
+
+      <div data-automation-id="formField-legalNameSection_firstName">
+        <label>First Name</label>
+        <input data-automation-id="legalNameSection_firstName" type="text" />
+      </div>
+
+      <div data-automation-id="formField-legalNameSection_lastName">
+        <label>Last Name</label>
+        <input data-automation-id="legalNameSection_lastName" type="text" />
+      </div>
+
+      <div data-automation-id="formField-addressSection_countryRegion">
+        <label>Country</label>
+        <button
+          data-automation-id="countryDropdown"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-controls="country-options"
+        >
+          Select One
+        </button>
+        <div id="country-options" role="listbox" hidden>
+          <div role="option">United States of America</div>
+          <div role="option">Canada</div>
+        </div>
+      </div>
+
+      <div data-automation-id="formField-addressSection_city">
+        <label>City</label>
+        <input data-automation-id="addressSection_city" type="text" />
+      </div>
+
+      <div data-automation-id="formField-phone-number">
+        <label>Phone Number</label>
+        <input data-automation-id="phone-number" type="tel" />
+        <div data-automation-id="errorMessage" role="alert">Phone Number is required</div>
+      </div>
+
+      <h2 data-automation-id="sectionTitle">Application Questions</h2>
+
+      <div data-automation-id="formField-workAuth">
+        <label>Are you legally eligible to work in the country where this job is located?</label>
+        <div role="radiogroup" aria-label="Work eligibility">
+          <label><input type="radio" name="workAuth" value="yes" /> Yes</label>
+          <label><input type="radio" name="workAuth" value="no" /> No</label>
+        </div>
+      </div>
+
+      <div data-automation-id="formField-visa">
+        <label>Will you require immigration support to continue working for us?</label>
+        <div role="radiogroup" aria-label="Immigration support">
+          <label><input type="radio" name="visa" value="yes" /> Yes</label>
+          <label><input type="radio" name="visa" value="no" /> No</label>
+        </div>
+      </div>
+
+      <div data-automation-id="formField-resume">
+        <label>Resume/CV</label>
+        <p>Upload one file. Accepted formats: PDF, DOC, DOCX.</p>
+        <input data-automation-id="file-upload-input-ref" type="file" accept=".pdf,.doc,.docx" />
+      </div>
+
+      <button data-automation-id="bottom-navigation-back-button">Back</button>
+      <button data-automation-id="bottom-navigation-next-button">Save and Continue</button>
+    </div>
+  </body>
+</html>
