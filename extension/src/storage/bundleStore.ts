@@ -1,6 +1,7 @@
 import {
   applicationBundleSchema,
   bundleMatchesUrl,
+  bundleVersionProblem,
   type ApplicationBundle,
   type ApplicationBundleTransfer,
   type BundleDocumentKind,
@@ -107,6 +108,12 @@ function bundleIdFor(transfer: ApplicationBundleTransfer): string {
  * first is a broken upload at fill time.
  */
 export async function saveBundle(transfer: ApplicationBundleTransfer): Promise<ApplicationBundle> {
+  // Checked before a single byte is written. Storing a bundle this build cannot
+  // fully read would turn fields it does not understand into silently
+  // unanswered questions, which is indistinguishable from an empty profile.
+  const versionProblem = bundleVersionProblem(transfer);
+  if (versionProblem) throw new Error(versionProblem);
+
   const id = bundleIdFor(transfer);
   const stored: Partial<Record<BundleDocumentKind, StoredBundleDocument>> = {};
 
@@ -133,6 +140,7 @@ export async function saveBundle(transfer: ApplicationBundleTransfer): Promise<A
 
   const bundle = applicationBundleSchema.parse({
     id,
+    bundleVersion: transfer.bundleVersion,
     websiteJobId: transfer.websiteJobId,
     company: transfer.company,
     jobTitle: transfer.jobTitle,
@@ -144,6 +152,11 @@ export async function saveBundle(transfer: ApplicationBundleTransfer): Promise<A
     ...(transfer.profile ? { profile: transfer.profile } : {}),
     approvedAnswers: transfer.approvedAnswers,
     ...(transfer.accountPreferences ? { accountPreferences: transfer.accountPreferences } : {}),
+    // Absent when the user has told us nothing about this employer, which the
+    // resolver must be able to see: unknown becomes a question, never a "no".
+    ...(transfer.companyRelationship
+      ? { companyRelationship: transfer.companyRelationship }
+      : {}),
     ...(stored.resume ? { resume: stored.resume } : {}),
     ...(stored.cover_letter ? { coverLetter: stored.cover_letter } : {}),
     createdAt: transfer.createdAt,

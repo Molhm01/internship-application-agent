@@ -52,12 +52,56 @@ export const accountPreferencesSchema = z.object({
   applicationEmail: z.string().email().max(320).optional(),
   preferredUsername: z.string().max(200).optional(),
   wantsAccountCreationHelp: z.boolean().default(false),
+  /**
+   * How the applicant wants an employer portal handled. Absent means they have
+   * not chosen, and the extension asks rather than picking a route on their
+   * behalf — creating an account and applying as a guest have permanently
+   * different consequences for them.
+   */
+  portalStrategy: z.enum(['prefer_guest', 'create_when_required', 'always_ask']).optional(),
 });
 
 export type AccountPreferences = z.infer<typeof accountPreferencesSchema>;
 
+/**
+ * What the applicant has told Internship Pilot about this specific employer.
+ *
+ * Every field is optional and every absence means "unknown", never "no". A
+ * required question whose fact is absent becomes a question for the user; it is
+ * never answered from a profile-wide default, because there is no honest
+ * default for "have you worked here before".
+ */
+export const companyRelationshipSchema = z.object({
+  companyKey: z.string().min(1).max(300),
+  companyName: z.string().min(1).max(300),
+  previouslyEmployed: z.boolean().optional(),
+  previouslyInterviewed: z.boolean().optional(),
+  previouslyApplied: z.boolean().optional(),
+  familyMemberEmployed: z.boolean().optional(),
+  hasReferral: z.boolean().optional(),
+  referralName: z.string().max(200).optional(),
+  referralEmail: z.string().email().max(320).optional(),
+  referralRelationship: z.string().max(200).optional(),
+  /** Company-specific answer overrides, keyed by question text. */
+  overrides: z.record(z.string().max(400), z.string().max(4000)).optional(),
+});
+
+export type CompanyRelationship = z.infer<typeof companyRelationshipSchema>;
+
+/**
+ * The bundle contract version this extension implements.
+ *
+ * A bundle stamped higher than this was produced by a newer website that may
+ * express facts this build cannot read. Refusing it is safer than storing it:
+ * an unread field is indistinguishable from an unanswered question, which would
+ * silently produce a half-filled application rather than a visible error.
+ */
+export const CURRENT_BUNDLE_VERSION = 2;
+
 /** What the page posts. Validated before a single byte is written. */
 export const applicationBundleTransferSchema = z.object({
+  /** Defaulted so a bundle from a website that predates versioning still loads. */
+  bundleVersion: z.number().int().positive().default(1),
   websiteJobId: z.string().min(1).max(200),
   company: z.string().min(1).max(300),
   jobTitle: z.string().min(1).max(300),
@@ -72,10 +116,23 @@ export const applicationBundleTransferSchema = z.object({
   profile: profileSchema.optional(),
   approvedAnswers: z.array(approvedAnswerSchema).max(500).default([]),
   accountPreferences: accountPreferencesSchema.optional(),
+  companyRelationship: companyRelationshipSchema.optional(),
   createdAt: isoDateTimeSchema,
 });
 
 export type ApplicationBundleTransfer = z.infer<typeof applicationBundleTransferSchema>;
+
+/**
+ * Why a bundle cannot be stored, or null when it can.
+ *
+ * Separate from Zod validation because "this is a valid bundle from a future
+ * version" is a different failure from "this is malformed", and the user needs
+ * to be told to update the extension rather than that their data is broken.
+ */
+export function bundleVersionProblem(bundle: { bundleVersion: number }): string | null {
+  if (bundle.bundleVersion <= CURRENT_BUNDLE_VERSION) return null;
+  return `Internship Pilot sent an application bundle in format v${bundle.bundleVersion}, but this extension reads up to v${CURRENT_BUNDLE_VERSION}. Update the extension and try again.`;
+}
 
 /**
  * A document once stored. `bytesReference` is the IndexedDB key of the blob —
@@ -95,6 +152,7 @@ export type StoredBundleDocument = z.infer<typeof storedBundleDocumentSchema>;
 
 export const applicationBundleSchema = z.object({
   id: idSchema,
+  bundleVersion: z.number().int().positive().default(1),
   websiteJobId: z.string().min(1).max(200),
   company: z.string().min(1).max(300),
   jobTitle: z.string().min(1).max(300),
@@ -106,6 +164,7 @@ export const applicationBundleSchema = z.object({
   profile: profileSchema.optional(),
   approvedAnswers: z.array(approvedAnswerSchema).max(500).default([]),
   accountPreferences: accountPreferencesSchema.optional(),
+  companyRelationship: companyRelationshipSchema.optional(),
   createdAt: isoDateTimeSchema,
   /** Set the first time an application page for this bundle is recognized. */
   lastMatchedUrl: z.string().url().max(4000).optional(),

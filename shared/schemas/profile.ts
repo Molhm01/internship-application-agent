@@ -16,27 +16,46 @@ import { SENSITIVE_CATEGORIES, SENSITIVE_POLICIES } from '../constants/ats.js';
 
 export const addressSchema = z.object({
   line1: z.string().max(200).optional(),
+  /**
+   * A genuine second line. When the applicant has none this key is absent, and
+   * the executor must leave the employer's "Address Line 2" empty rather than
+   * repeating line 1 into it.
+   */
   line2: z.string().max(200).optional(),
   city: z.string().max(120).optional(),
   state: z.string().max(120).optional(),
   postalCode: z.string().max(30).optional(),
   country: z.string().max(120).optional(),
+  /** Nearest metropolitan area, which ATSs ask for and which is not the city. */
+  metroRegion: z.string().max(200).optional(),
 });
+
+/** Which stored link answers a form offering exactly one "Website" box. */
+export const websiteFieldSchema = z.enum(['linkedin', 'github', 'portfolio', 'website']);
 
 export const personalInfoSchema = z.object({
   legalFirstName: z.string().max(120).optional(),
   legalMiddleName: z.string().max(120).optional(),
+  /**
+   * Present and true only when the applicant said they have no middle name.
+   * Absent means unanswered, so a form asking them to confirm it stays a
+   * question for the user rather than being answered from a blank field.
+   */
+  noMiddleName: z.literal(true).optional(),
   legalLastName: z.string().max(120).optional(),
+  suffix: z.string().max(40).optional(),
   preferredName: z.string().max(120).optional(),
   pronouns: z.string().max(60).optional(),
   email: z.string().email().optional(),
   alternateEmail: z.string().email().optional(),
   phone: z.string().max(40).optional(),
+  phoneCountryCode: z.string().max(10).optional(),
   address: addressSchema.default({}),
   linkedin: urlSchema.optional(),
   github: urlSchema.optional(),
   portfolio: urlSchema.optional(),
   personalWebsite: urlSchema.optional(),
+  preferredWebsiteField: websiteFieldSchema.optional(),
 });
 
 export const educationEntrySchema = z.object({
@@ -112,7 +131,10 @@ export const skillsSchema = z.object({
 
 export const eligibilitySchema = z.object({
   workAuthorization: z.string().max(300).optional(),
+  /** "Do you require sponsorship now?" — a separate question from the next one. */
+  requiresSponsorshipNow: z.boolean().optional(),
   requiresFutureSponsorship: z.boolean().optional(),
+  securityClearanceStatus: z.string().max(300).optional(),
   citizenshipResponse: z.string().max(300).optional(),
   willingToRelocate: z.boolean().optional(),
   willingToTravelPercent: z.number().int().min(0).max(100).optional(),
@@ -130,6 +152,14 @@ export const preferencesSchema = z.object({
   discoverySource: z.string().max(300).optional(),
   remotePreference: z.enum(['remote', 'hybrid', 'onsite', 'no_preference']).optional(),
   salaryPreference: z.string().max(200).optional(),
+  salaryStrategy: z.enum(['negotiable', 'specific', 'decline']).optional(),
+  salaryMinimum: z.string().max(120).optional(),
+  /**
+   * Opt-in only. Absence is not consent, and there is deliberately no way to
+   * express "the user refused" — a marketing box left unchecked is correct for
+   * both the unanswered and the refused case.
+   */
+  marketingTextConsent: z.literal(true).optional(),
   /** Ordered rules consulted before falling back to the default resume. */
   resumeSelectionRules: z
     .array(
@@ -150,7 +180,17 @@ export const sensitiveAnswerPolicySchema = z.object({
   value: z.string().max(500).optional(),
 });
 
+/**
+ * The profile contract version Internship Pilot stamped this snapshot with.
+ *
+ * Defaulted rather than required so a bundle from an older website still loads;
+ * `CURRENT_PROFILE_VERSION` is what this extension understands, and the two are
+ * compared explicitly at the bridge rather than assumed equal.
+ */
+export const CURRENT_PROFILE_VERSION = 2;
+
 export const profileSchema = z.object({
+  version: z.number().int().positive().default(1),
   id: idSchema.default('primary'),
   personal: personalInfoSchema.default({}),
   education: z.array(educationEntrySchema).default([]),

@@ -88,6 +88,7 @@ const PROFILE: Profile = profileFixture();
 
 const BUNDLE: ApplicationBundle = {
   id: 'bundle-abc-job-42',
+  bundleVersion: 2,
   websiteJobId: 'job-42',
   company: 'Northwind Robotics',
   jobTitle: 'SWE Intern',

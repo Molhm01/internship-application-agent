@@ -34,6 +34,7 @@ const NOW = '2026-08-02T09:00:00.000Z';
 
 const BUNDLE: ApplicationBundle = {
   id: 'bundle-lab-job',
+  bundleVersion: 2,
   websiteJobId: 'job-lab',
   company: 'Northwind Robotics',
   jobTitle: 'Software Engineering Intern',
