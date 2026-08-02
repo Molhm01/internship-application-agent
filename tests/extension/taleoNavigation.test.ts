@@ -201,7 +201,9 @@ describe('reading a control as navigation', () => {
         { label: 'Submit Application', selector: '#submit' },
       ],
     });
-    const byIntent = new Map(state.actions.map((action) => [action.intent, action.endsApplication]));
+    const byIntent = new Map(
+      state.actions.map((action) => [action.intent, action.endsApplication]),
+    );
     expect(byIntent.get('continue')).toBe(false);
     expect(byIntent.get('final_submit')).toBe(true);
   });

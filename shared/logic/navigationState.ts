@@ -79,8 +79,14 @@ function normalize(value: string): string {
  * "submit application" must beat "submit", so the order carries meaning.
  */
 const INTENT_RULES: ReadonlyArray<{ intent: NavigationIntent; pattern: RegExp }> = [
-  { intent: 'forgot_username', pattern: /\bforgot(ten)?\b.*\buser ?name\b|\buser ?name\b.*\bforgot/ },
-  { intent: 'forgot_password', pattern: /\bforgot(ten)?\b.*\bpassword\b|\breset (your )?password\b/ },
+  {
+    intent: 'forgot_username',
+    pattern: /\bforgot(ten)?\b.*\buser ?name\b|\buser ?name\b.*\bforgot/,
+  },
+  {
+    intent: 'forgot_password',
+    pattern: /\bforgot(ten)?\b.*\bpassword\b|\breset (your )?password\b/,
+  },
   {
     intent: 'final_submit',
     pattern:
@@ -93,11 +99,13 @@ const INTENT_RULES: ReadonlyArray<{ intent: NavigationIntent; pattern: RegExp }>
   },
   {
     intent: 'apply_as_guest',
-    pattern: /\b(apply|continue|proceed) as (a )?guest\b|\bguest (application|apply|access)\b|\bwithout (an )?account\b/,
+    pattern:
+      /\b(apply|continue|proceed) as (a )?guest\b|\bguest (application|apply|access)\b|\bwithout (an )?account\b/,
   },
   {
     intent: 'login',
-    pattern: /\b(log ?in|sign ?in|login)\b|\breturning (user|applicant)\b|\bexisting (user|account)\b/,
+    pattern:
+      /\b(log ?in|sign ?in|login)\b|\breturning (user|applicant)\b|\bexisting (user|account)\b/,
   },
   { intent: 'back', pattern: /\b(back|previous|go back)\b/ },
   { intent: 'save_draft', pattern: /\bsave( as)? draft\b|\bsave (and )?(exit|for later)\b/ },
@@ -202,7 +210,8 @@ export function classifyPage(signals: PageSignals): NavigationState {
   const hasUsername = signals.fields.some(isUsernameField);
   const confirming = passwordFields.some(isPasswordConfirmationField);
   const answerable = signals.fields.filter(
-    (field) => field.visible && !field.disabled && !isPasswordField(field) && !isUsernameField(field),
+    (field) =>
+      field.visible && !field.disabled && !isPasswordField(field) && !isUsernameField(field),
   );
 
   if (blocked) {

@@ -74,9 +74,9 @@ describe('reading the agent status honestly', () => {
 
   it('separates an unreachable server from a rejected token', () => {
     expect(interpretHealth({ error: UNREACHABLE }).state).toBe('unreachable');
-    expect(
-      interpretHealth({ error: { ...UNREACHABLE, code: 'SERVER_AUTH_FAILED' } }).state,
-    ).toBe('unauthorized');
+    expect(interpretHealth({ error: { ...UNREACHABLE, code: 'SERVER_AUTH_FAILED' } }).state).toBe(
+      'unauthorized',
+    );
   });
 
   it('says what still works rather than surfacing a bare error code', () => {

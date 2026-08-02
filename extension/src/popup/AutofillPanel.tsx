@@ -1,4 +1,9 @@
-import { REVIEW_BADGES, type ApplicationAutofillReport } from '@internship-agent/shared';
+import {
+  PAGE_KIND_LABELS,
+  REVIEW_BADGES,
+  type ApplicationAutofillReport,
+  type NavigationState,
+} from '@internship-agent/shared';
 import type { AutofillState } from './useAutofillState.js';
 
 /**
@@ -15,6 +20,41 @@ interface AutofillPanelProps {
   /** False when the tab is not an application page we can act on. */
   eligible: boolean;
   fieldsDetected: number | null;
+  /** What kind of page this is and where it leads, when the scan knew. */
+  navigation?: NavigationState;
+  /** One sentence about the AI agent, or null while it is still unknown. */
+  agentStatus: string | null;
+}
+
+/**
+ * The routes off a sign-in or choose-how-to-apply page.
+ *
+ * These are shown, never taken. Creating an employer account and applying as a
+ * guest have permanently different consequences for the user, so the agent
+ * offers both and picks neither.
+ */
+function RouteChoices({ navigation }: { navigation: NavigationState }): JSX.Element | null {
+  const routes = navigation.actions.filter(
+    (action) =>
+      action.intent === 'login' ||
+      action.intent === 'create_account' ||
+      action.intent === 'apply_as_guest',
+  );
+  if (routes.length === 0) return null;
+  return (
+    <div className="autofill__routes">
+      <p className="autofill__analysis">This page is asking how you want to apply:</p>
+      <ul className="autofill__documents">
+        {routes.map((route) => (
+          <li key={`${route.intent}-${route.selector}`}>{route.label}</li>
+        ))}
+      </ul>
+      <p className="autofill__never-submits">
+        Choose one yourself. The agent does not pick between creating an account and applying as a
+        guest.
+      </p>
+    </div>
+  );
 }
 
 function ReviewList({
@@ -45,8 +85,18 @@ export function AutofillPanel({
   state,
   eligible,
   fieldsDetected,
+  navigation,
+  agentStatus,
 }: AutofillPanelProps): JSX.Element {
   const { bundle, loadingBundle, running, progress, phaseLabel, report, error } = state;
+  // A page that is asking for credentials or that has ended the application is
+  // not one to fill: the button would do nothing useful and implying otherwise
+  // is worse than saying so.
+  const fillable =
+    !navigation ||
+    navigation.kind === 'application_form' ||
+    navigation.kind === 'account_creation' ||
+    navigation.kind === 'unknown';
 
   return (
     <section aria-label="Application" className="panel">
@@ -66,6 +116,9 @@ export function AutofillPanel({
               {bundle.coverLetter ? '✓' : '—'} Cover letter
               {bundle.coverLetter ? ` (${bundle.coverLetter.filename})` : ' not loaded'}
             </li>
+            <li>
+              {bundle.profile ? '✓ Profile synchronized' : '— Profile not included in this bundle'}
+            </li>
           </ul>
         </div>
       ) : (
@@ -75,9 +128,36 @@ export function AutofillPanel({
         </p>
       )}
 
+      {navigation ? (
+        <p className="autofill__analysis">Page: {PAGE_KIND_LABELS[navigation.kind]}</p>
+      ) : null}
+
+      {navigation?.blockedReason ? (
+        <section className="result result--bad" role="alert">
+          {navigation.blockedReason}
+        </section>
+      ) : null}
+
+      {navigation ? <RouteChoices navigation={navigation} /> : null}
+
+      {navigation?.kind === 'final_submit' ? (
+        <p className="autofill__never-submits">
+          This is the final submission page. Review every answer and submit it yourself — the agent
+          stops here.
+        </p>
+      ) : null}
+
+      {agentStatus ? <p className="autofill__analysis">{agentStatus}</p> : null}
+
       {fieldsDetected !== null ? (
         <p className="autofill__analysis">
-          Page analysis: {fieldsDetected} {fieldsDetected === 1 ? 'question' : 'questions'} found.
+          Page analysis: {fieldsDetected} {fieldsDetected === 1 ? 'question' : 'questions'} found
+          {navigation?.actions.length
+            ? `, ${navigation.actions.length} navigation ${
+                navigation.actions.length === 1 ? 'control' : 'controls'
+              }`
+            : ''}
+          .
         </p>
       ) : null}
 
@@ -125,10 +205,14 @@ export function AutofillPanel({
       <button
         type="button"
         className="primary"
-        disabled={!eligible || running}
+        disabled={!eligible || running || !fillable}
         onClick={() => void state.run()}
       >
-        {running ? 'Autofilling…' : 'Autofill Application'}
+        {running
+          ? 'Autofilling…'
+          : fillable
+            ? 'Autofill Application'
+            : 'Nothing to autofill on this page'}
       </button>
 
       {/* The full field-by-field view. The popup shows what needs attention;

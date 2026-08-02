@@ -49,7 +49,10 @@ function transfer(overrides: Partial<ApplicationBundleTransfer> = {}): Applicati
       updatedAt: '2026-08-02T08:00:00.000Z',
     },
     approvedAnswers: [],
-    accountPreferences: { applicationEmail: 'jordan.applies@example.com', wantsAccountCreationHelp: true },
+    accountPreferences: {
+      applicationEmail: 'jordan.applies@example.com',
+      wantsAccountCreationHelp: true,
+    },
     documents: [
       {
         kind: 'resume',

@@ -29,6 +29,15 @@ export function App(): JSX.Element {
   const { status, tab, loading, refresh, scanState, scan, progress, scanError, cancel } =
     usePopupState();
   const autofill = useAutofillState(tab.url);
+  // What the AI can actually do right now, said plainly. An unreachable agent
+  // is reported as such rather than as a bare error code.
+  const agentStatus = loading
+    ? null
+    : !status?.health
+      ? 'AI agent unavailable. Deterministic autofill still works from your saved profile.'
+      : status.health.ollama.state === 'connected'
+        ? 'AI agent connected.'
+        : 'AI agent unavailable: the local model is not answering. Deterministic autofill still works.';
   const serverConnected = Boolean(status?.health);
   const health = status?.health;
   const ollama = health?.ollama;
@@ -222,6 +231,8 @@ export function App(): JSX.Element {
           state={autofill}
           eligible={eligible}
           fieldsDetected={currentScan?.statistics.total ?? null}
+          {...(currentScan?.navigation ? { navigation: currentScan.navigation } : {})}
+          agentStatus={agentStatus}
         />
       ) : scanState === 'scanning' || loading ? (
         <section aria-label="Application" className="panel">

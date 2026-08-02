@@ -182,6 +182,70 @@ describe('standalone popup autofill', () => {
     expect(autofillReport.submissionPrevented).toBe(true);
   });
 
+  it('reads a sign-in page as a sign-in page and offers the routes without taking one', async () => {
+    const chromeMock = installChromeMock();
+    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: URL }]);
+    chromeMock.tabs.sendMessage.mockResolvedValue({ present: true, url: URL });
+    const loginScan = applicationScanResultSchema.parse({
+      ...scan,
+      id: 'scan-login',
+      navigation: {
+        kind: 'login',
+        requiresCredentials: true,
+        actions: [
+          { intent: 'login', label: 'Login', selector: '#loginButton', endsApplication: false },
+          {
+            intent: 'create_account',
+            label: 'New User',
+            selector: '#newUserLink',
+            endsApplication: false,
+          },
+          {
+            intent: 'apply_as_guest',
+            label: 'Apply as Guest',
+            selector: '#guestLink',
+            endsApplication: false,
+          },
+        ],
+      },
+    });
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      switch (message.type) {
+        case 'AGENT_STATUS_REQUEST':
+          return Promise.resolve({
+            health: health(),
+            latencyMs: 1,
+            serverUrl: 'http://127.0.0.1:4317',
+            tokenConfigured: true,
+          });
+        case 'GET_LAST_SCAN':
+          return Promise.resolve({ scan: null });
+        case 'GET_FILL_PLAN':
+          return Promise.resolve({ plan: null, report: null });
+        case 'GET_ACTIVE_BUNDLE':
+          return Promise.resolve({ data: null });
+        case 'GET_AUTOFILL_REPORT':
+          return Promise.resolve({ report: null });
+        case 'SCAN_APPLICATION':
+          return Promise.resolve({ type: 'SCAN_COMPLETE', result: loginScan });
+        default:
+          throw new Error(`Unexpected message: ${message.type}`);
+      }
+    });
+
+    render(<App />);
+    expect(await screen.findByText('Page: Sign-in page')).toBeDefined();
+    expect(screen.getByText(/This page is asking how you want to apply/)).toBeDefined();
+    expect(screen.getByText('New User')).toBeDefined();
+    expect(screen.getByText('Apply as Guest')).toBeDefined();
+    expect(
+      screen.getByText(/does not pick between creating an account and applying as a guest/),
+    ).toBeDefined();
+    // Nothing on a sign-in page is fillable, and the button says so.
+    expect(screen.getByRole('button', { name: 'Nothing to autofill on this page' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Autofill Application' })).toBeNull();
+  });
+
   it('names the loaded application and its tailored documents', async () => {
     const chromeMock = installChromeMock();
     chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: URL }]);
