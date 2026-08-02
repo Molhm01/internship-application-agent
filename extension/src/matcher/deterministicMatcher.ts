@@ -245,6 +245,24 @@ function profileValue(
       reference: 'profile.education[0].graduationDate',
       value: education?.graduationDate,
     },
+    // Forms that split graduation into two controls. Both read the one saved
+    // date rather than asking the user to store it twice; a date with no month
+    // yields no month, rather than a guessed one.
+    graduation_month: {
+      reference: 'profile.education[0].graduationDate',
+      value: education?.graduationDate?.split('-')[1],
+    },
+    graduation_year: {
+      reference: 'profile.education[0].graduationDate',
+      value: education?.graduationDate?.split('-')[0],
+    },
+    // Explicitly saved on the profile. This is not a guess — it is the answer
+    // the user wrote down — but it is still never *inferred* from anything
+    // else, and a profile that does not state it leaves the field blank.
+    work_authorization: {
+      reference: 'profile.eligibility.workAuthorization',
+      value: profile.eligibility.workAuthorization,
+    },
     willing_to_relocate: {
       reference: 'profile.eligibility.willingToRelocate',
       value: profile.eligibility.willingToRelocate,
@@ -447,7 +465,11 @@ export function matchField(
   }
 
   const approvedOnly =
-    resolved.canonical === 'work_authorization' ||
+    // Work authorization is answered only from something the user explicitly
+    // wrote: an approved answer, or the profile's own eligibility field. With
+    // neither, it stays unanswered — it is never derived from citizenship,
+    // location, school, or anything else that merely correlates with it.
+    (resolved.canonical === 'work_authorization' && !profile.eligibility.workAuthorization) ||
     resolved.canonical === 'why_this_company' ||
     resolved.canonical === 'why_this_role' ||
     resolved.canonical === 'additional_information' ||

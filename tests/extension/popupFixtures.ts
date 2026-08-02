@@ -17,6 +17,7 @@ export function profileFixture(overrides: Record<string, unknown> = {}): Profile
     updatedAt: NOW,
     personal: {
       legalFirstName: 'Jordan',
+      preferredName: 'Jo',
       legalLastName: 'Ellis',
       email: 'jordan.ellis@example.com',
       phone: '+1 201 555 0134',
@@ -41,6 +42,7 @@ export function profileFixture(overrides: Record<string, unknown> = {}): Profile
       },
     ],
     eligibility: {
+      workAuthorization: 'U.S. Citizen',
       willingToRelocate: true,
       hasDriversLicense: true,
       meetsMinimumAge: true,
