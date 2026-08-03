@@ -31,6 +31,18 @@ const fillControllers = new Map<string, AbortController>();
 // user never has to have the popup open for the handoff to land.
 startBundleBridge();
 
+/**
+ * Tells the worker this page exists, so a run armed by "Apply with Agent" can
+ * begin without the user opening the popup and clicking a second button.
+ *
+ * Fired once per content-script load, and the worker decides whether anything
+ * should happen — the page never gets to request its own automation, which
+ * matters because a page can host a script that sends messages.
+ */
+void chrome.runtime.sendMessage({ type: 'PAGE_READY', url: window.location.href }).catch(() => {
+  // No worker listening yet. The popup opening will reach the same code.
+});
+
 function scanError(
   code: AgentError['code'],
   message: string,

@@ -28,6 +28,18 @@ export const extensionSettingsSchema = z.object({
    * silently grants a permission the user was never asked for.
    */
   employerAccounts: employerAccountSettingsSchema.default({}),
+  /**
+   * Shows the diagnostic surfaces: the read-only analysis page, the fill-plan
+   * builder, the JSON copy/export controls, raw confidence numbers, and raw
+   * validation output.
+   *
+   * Off by default. Those tools were built for developing the agent and ended
+   * up as the product: a normal user opening the popup on a 26-field form was
+   * offered "Build Fill Plan", "Rescan", "Copy JSON" and a per-field review
+   * list, none of which is a thing they want to do. Someone applying for a job
+   * wants one button.
+   */
+  developerMode: z.boolean().default(false),
   settingsVersion: z.number().int().nonnegative(),
   settingsUpdatedAt: isoDateTimeSchema,
 });

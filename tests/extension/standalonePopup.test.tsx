@@ -186,8 +186,9 @@ describe('standalone popup autofill', () => {
     // Only the unresolved question is listed. The verified one is not, and
     // neither is a field-by-field walk of everything detected.
     expect(screen.queryByRole('button', { name: 'First name' })).toBeNull();
-    // Reviewing every field is a secondary link, not a step before autofill.
-    expect(screen.getByRole('button', { name: 'Preview detected fields' })).toBeDefined();
+    // The field-by-field view is a developer tool now, and Developer Mode is
+    // off by default. Someone applying for a job never sees it.
+    expect(screen.queryByRole('button', { name: 'Preview detected fields' })).toBeNull();
     expect(screen.queryByText('Review every detected field')).toBeNull();
 
     expect(messageTypes).toContain('RUN_APPLICATION_AUTOFILL');

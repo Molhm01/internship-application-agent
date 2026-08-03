@@ -90,10 +90,11 @@ test('the popup detects a generic fixture, preserves the form, and opens review'
     await application.evaluate(() => (window as unknown as { submitted: boolean }).submitted),
   ).toBe(false);
 
-  const reviewPromise = context.waitForEvent('page');
-  // A secondary link now, not a step before autofill.
-  await popup.getByRole('button', { name: 'Preview detected fields' }).click();
-  const review = await reviewPromise;
+  // The analysis page is a developer tool now and the popup no longer links to
+  // it in normal mode, so this opens it directly. The page itself is unchanged
+  // and still has to render the scan correctly.
+  const review = await context.newPage();
+  await review.goto(`chrome-extension://${extensionId}/review.html`);
   await review.waitForLoadState();
   await expect(review.getByRole('heading', { name: 'Software Intern' })).toBeVisible();
   await expect(review.getByText('3 of 3 fields shown.')).toBeVisible();

@@ -79,6 +79,7 @@ import {
 import { loadSettings } from '../storage/settings.js';
 import { ensureContentScript } from './contentScript.js';
 import { fillAccountForm } from './accountForm.js';
+import { armAutoStart, shouldAutoStart } from './autoStart.js';
 import {
   bundleForUrl,
   encodeBase64,
@@ -495,6 +496,9 @@ async function storeApplicationBundle(transfer: unknown): Promise<unknown> {
   }
   try {
     const bundle = await saveBundle(parsed.data);
+    // Arms this one origin. The employer tab the website is about to open will
+    // start filling by itself, so "Apply with Agent" stays a single action.
+    await armAutoStart(bundle);
     console.info('[agent] application bundle saved', {
       bundleId: bundle.id,
       company: bundle.company,
@@ -1342,6 +1346,25 @@ async function runAutofill(targetUrl?: string): Promise<unknown> {
   }
 }
 
+/**
+ * Starts a run on a page the user reached through "Apply with Agent".
+ *
+ * Always resolves with an acknowledgement, never an error: a page announcing
+ * itself is not making a request that can fail, and the content script does not
+ * wait on the answer.
+ */
+async function maybeAutoStart(url: string): Promise<unknown> {
+  const bundle = await bundleForUrl(url).catch(() => null);
+  if (!(await shouldAutoStart(url, bundle))) return { started: false };
+  console.info('[agent] auto-starting the run armed by Apply with Agent', {
+    company: bundle?.company,
+  });
+  // Not awaited: the content script gets its acknowledgement immediately, and
+  // the run reports through AUTOFILL_PROGRESS like any other.
+  void runAutofill(url);
+  return { started: true };
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
   console.info('[agent] installed', { reason: details.reason });
 });
@@ -1374,6 +1397,8 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return portalRoute(false, message.targetUrl);
     case 'FOLLOW_PORTAL_ROUTE':
       return portalRoute(true, message.targetUrl);
+    case 'PAGE_READY':
+      return maybeAutoStart(message.url);
     case 'RUN_APPLICATION_AUTOFILL':
       return runAutofill(message.targetUrl);
     case 'CANCEL_APPLICATION_AUTOFILL':

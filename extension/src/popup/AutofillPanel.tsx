@@ -32,6 +32,8 @@ interface AutofillPanelProps {
   onFollowRoute?: () => void;
   /** One sentence about the AI agent, or null while it is still unknown. */
   agentStatus: string | null;
+  /** Shows the diagnostic surfaces. Off for anyone applying for a job. */
+  developerMode?: boolean;
 }
 
 /**
@@ -186,6 +188,7 @@ export function AutofillPanel({
   followingRoute = false,
   onFollowRoute,
   agentStatus,
+  developerMode = false,
 }: AutofillPanelProps): JSX.Element {
   const { bundle, loadingBundle, running, progress, phaseLabel, report, error } = state;
   // A page that is asking for credentials or that has ended the application is
@@ -352,13 +355,15 @@ export function AutofillPanel({
         The popup surfaces what needs attention; this is for someone who wants
         to see every question and where its answer came from.
       */}
-      <button
-        type="button"
-        className="link-button"
-        onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('review.html') })}
-      >
-        Preview detected fields
-      </button>
+      {developerMode ? (
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('review.html') })}
+        >
+          Preview detected fields
+        </button>
+      ) : null}
     </section>
   );
 }

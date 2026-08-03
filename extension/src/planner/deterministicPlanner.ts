@@ -1,4 +1,5 @@
 import {
+  resolveStructuralField,
   allowsRegionSuffix,
   deterministicFillPlanSchema,
   isDeclinePhrasing,
@@ -162,6 +163,34 @@ function actionFor(
       action: 'unsupported',
       reason: `${field.fieldType} has no deterministic executor strategy.`,
     };
+  }
+  // A field about the form rather than about the applicant — "Phone Type",
+  // "Address Type". These have one correct answer derivable from the form's own
+  // vocabulary, and asking the user for them is noise: it is how a page of 26
+  // fields produced a stack of "Information needed" cards for questions nobody
+  // wants to be asked.
+  //
+  // Checked ahead of the canonical match, and only for option controls, because
+  // the canonical key here is actively wrong: "Phone Type" classifies as
+  // `phone`, so the matcher offers the phone *number* to a dropdown of Mobile /
+  // Home / Work, fails to find it, and defers the field. A label this specific
+  // is better evidence than a canonical key inferred from the word "phone". A
+  // fact about the *person* is never a structural field and never reaches here.
+  if (isOptionControl(field)) {
+    const structural = resolveStructuralField(field);
+    if (structural) {
+      return {
+        ...base,
+        action: field.fieldType === 'radio' ? 'choose_radio' : 'select_option',
+        proposedValue: structural.option.value,
+        matchedOption: { label: structural.option.label, value: structural.option.value },
+        source: 'profile',
+        sourceReference: 'form.structural',
+        confidence: structural.confidence,
+        requiresReview: false,
+        reason: structural.reason,
+      };
+    }
   }
   if (!match.matched || match.formattedValue === undefined) {
     // Nothing grounded this field. If an executor exists for the control, say so
