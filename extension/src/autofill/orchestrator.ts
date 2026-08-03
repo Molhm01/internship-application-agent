@@ -2,6 +2,7 @@ import {
   DEFAULT_ERROR_GUIDANCE,
   REVIEW_BADGES,
   applicationAutofillReportSchema,
+  auditRequiredFields,
   autofillFieldResultSchema,
   type AgentError,
   type ApplicationAutofillReport,
@@ -53,6 +54,15 @@ export interface AutofillDependencies {
   plan(scanId: string): Promise<{ plan?: DeterministicFillPlan; error?: AgentError }>;
   /** Generates written answers for eligible fields. Optional. */
   generate?(plan: DeterministicFillPlan): Promise<{ error?: AgentError }>;
+  /**
+   * Fills the username and password on an account-creation page, when the user
+   * enabled that. Optional, and a no-op on every other kind of page.
+   *
+   * Kept out of the ordinary plan on purpose: an employer-site password must
+   * never enter a `DeterministicFillPlan`, which is stored, sent to the popup,
+   * and shown on a review screen.
+   */
+  fillAccountForm?(scan: ApplicationScanResult): Promise<{ filled: boolean; reason?: string }>;
   /** Records the approval decisions the policy reached. */
   approve(decisions: ReadonlyMap<string, boolean>): Promise<{ error?: AgentError }>;
   /** Runs the existing executor over the approved actions. */
@@ -159,6 +169,13 @@ export async function runApplicationAutofill(
   let url = '';
   let ats: ApplicationAutofillReport['ats'] = 'unknown';
   let terminal: AgentError | null = null;
+  /**
+   * The fields as the last scan saw them, for the closing required-field audit.
+   * The *last* scan specifically: a field revealed by an earlier answer only
+   * exists in the later one, and auditing the first scan would report a
+   * required field as absent rather than as unanswered.
+   */
+  let lastFields: readonly DetectedField[] = [];
 
   const report = (
     status: ApplicationAutofillReport['status'],
@@ -166,7 +183,23 @@ export async function runApplicationAutofill(
   ): ApplicationAutofillReport => {
     const results = [...resultsByField.values()];
     const reviewing = results.filter((result) => result.reviewReason && !result.reviewed);
+    // Every required field ends in exactly one of three states. A field the run
+    // never reached is not omitted — it is reported as needing the user, which
+    // is what makes the gap visible instead of invisible.
+    const audit = auditRequiredFields({
+      fields: lastFields,
+      results: results.map((result) => ({
+        fieldId: result.fieldId,
+        status: result.verification === 'verified' ? 'verified' : 'needs_review',
+        reason: result.reason,
+        ...(result.reviewReason ? { reviewReason: result.reviewReason } : {}),
+      })),
+      ...(error?.code === 'CAPTCHA_DETECTED' || error?.code === 'MFA_DETECTED'
+        ? { blockedReason: error.message }
+        : {}),
+    });
     return applicationAutofillReportSchema.parse({
+      requiredFields: audit.verdicts,
       id: runId,
       scanIds,
       startedAt,
@@ -255,9 +288,18 @@ export async function runApplicationAutofill(
       break;
     }
 
+    lastFields = scan.fields;
     const fieldsById = new Map<string, DetectedField>(
       scan.fields.map((field) => [field.id, field]),
     );
+
+    // Credentials first, and outside the plan. On a registration page the
+    // username and password are what the rest of the form is gated behind, and
+    // they are the one thing the ordinary plan must never carry.
+    if (dependencies.fillAccountForm && scan.navigation?.kind === 'account_creation') {
+      const account = await dependencies.fillAccountForm(scan);
+      if (!account.filled && account.reason) warnings.push(account.reason);
+    }
 
     emit('discovering_options', 'Inspecting answer choices');
     emit('resolving', 'Matching profile information');

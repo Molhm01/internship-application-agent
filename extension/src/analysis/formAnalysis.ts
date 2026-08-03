@@ -406,6 +406,32 @@ function uploadActionFor(
 }
 
 /**
+ * Actions that assert something about the applicant, as opposed to selecting a
+ * document, deferring, or leaving a field alone. These are the ones that need a
+ * saved fact behind them.
+ */
+const STATES_A_FACT = new Set<PlannedAnswer['action']>([
+  'SET_TEXT',
+  'SET_DATE',
+  'SELECT_OPTION',
+  'SELECT_RADIO',
+  'SET_CHECKBOX',
+]);
+
+/**
+ * Questions answered by drafting rather than by lookup. A grounded draft cites
+ * evidence through the generation pipeline, not through `sourceFactIds`.
+ */
+const SUBJECTIVE_INTENTS = new Set<string>([
+  'why_this_company',
+  'why_this_role',
+  'additional_information',
+  'cover_letter',
+  'custom_question',
+  'unknown',
+]);
+
+/**
  * Turns one validated model answer into a deterministic action, or explains why
  * it could not become one. Every option is matched against the choices the page
  * really offers; a label the model invented is discarded, not typed.
@@ -416,11 +442,16 @@ function actionFromAnswer(
   question: NormalizedQuestion,
   answer: PlannedAnswer,
   bundle: ApplicationBundle | null | undefined,
+  /** Every fact id the model was given, or undefined when the caller did not say. */
+  knownFactIds: ReadonlySet<string> | undefined,
 ): DeterministicFillAction | { discarded: string } {
   const base: DeterministicFillAction = {
     ...existing,
     source: 'ai_suggestion',
     sourceReference: `analysis.${question.questionId}`,
+    // Carried onto the action so the approval policy can check grounding at
+    // execution time, not merely here.
+    sourceFactIds: answer.sourceFactIds,
     confidence: answer.confidence,
     requiresReview: answer.requiresReview,
     approved: false,
@@ -434,6 +465,29 @@ function actionFromAnswer(
   if (question.sensitiveCategory && answer.action !== 'REQUIRE_USER_REVIEW') {
     return {
       discarded: `"${question.questionText}" is a ${question.sensitiveCategory} question and is only ever answered from an explicit saved preference.`,
+    };
+  }
+
+  // A model may reason about a question; it may not state a fact about this
+  // person that no saved fact supports. An open-ended question is exempt —
+  // "why do you want to work here" is drafted from evidence rather than looked
+  // up, and demanding a fact id there would reject every legitimate answer.
+  const ungroundedFactualClaim =
+    STATES_A_FACT.has(answer.action) &&
+    !SUBJECTIVE_INTENTS.has(question.likelyIntent) &&
+    answer.sourceFactIds.length === 0;
+  if (ungroundedFactualClaim) {
+    return {
+      discarded: `"${question.questionText}" was answered without naming any saved fact to support it.`,
+    };
+  }
+  // Only adjudicated when the caller said which facts were sent. An empty set
+  // means "not supplied", not "no facts exist" — failing closed there would
+  // reject every correctly-cited answer from any caller that omitted the list.
+  const invented = knownFactIds ? answer.sourceFactIds.filter((id) => !knownFactIds.has(id)) : [];
+  if (invented.length > 0) {
+    return {
+      discarded: `"${question.questionText}" cites ${invented.length === 1 ? 'a saved fact' : 'saved facts'} that ${invented.length === 1 ? 'does' : 'do'} not exist.`,
     };
   }
 
@@ -557,7 +611,14 @@ export function applyAnalysisToPlan(
   fieldsByQuestionId: ReadonlyMap<string, DetectedField[]>,
   questions: readonly NormalizedQuestion[],
   bundle?: ApplicationBundle | null,
+  /**
+   * The facts the request carried. An answer citing anything outside this set
+   * is referencing a profile fact that does not exist, which is the signature
+   * of an invented justification.
+   */
+  facts?: readonly { id: string }[],
 ): AppliedAnalysis {
+  const knownFactIds = facts ? new Set(facts.map((fact) => fact.id)) : undefined;
   const questionsById = new Map(questions.map((question) => [question.questionId, question]));
   const fieldsById = new Map(scan.fields.map((field) => [field.id, field]));
   const discarded: DiscardedAnswer[] = [];
@@ -580,7 +641,7 @@ export function applyAnalysisToPlan(
         });
         continue;
       }
-      const produced = actionFromAnswer(existing, field, question, answer, bundle);
+      const produced = actionFromAnswer(existing, field, question, answer, bundle, knownFactIds);
       if ('discarded' in produced) {
         discarded.push({ questionId: answer.questionId, reason: produced.discarded });
         continue;

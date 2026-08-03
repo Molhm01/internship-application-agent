@@ -1,6 +1,11 @@
 import {
+  ALWAYS_CONFIRM_QUESTIONS,
+  SAVED_ANSWER_REQUIRED_QUESTIONS,
   SENSITIVE_CANONICAL_QUESTIONS,
+  alwaysNeedsConfirmation,
+  confidenceBand,
   isDeclinePhrasing,
+  needsExplicitlySavedAnswer,
   type AutofillSettings,
   type CanonicalQuestion,
   type DeterministicFillAction,
@@ -26,22 +31,51 @@ import { isLegalAttestation } from '../matcher/deterministicMatcher.js';
  * Questions no automatic policy may ever answer from inference. A saved value or
  * an explicit disclosure preset can fill them; a guess, a model, or a
  * "high-confidence" heuristic never can.
+ *
+ * The two halves come from `confidencePolicy`, and the split between them is
+ * the substantive change: eligibility facts the user explicitly saved —
+ * work authorization, sponsorship, citizenship, relocation, a salary strategy —
+ * used to be lumped in with protected characteristics and shown for
+ * confirmation every single time. Repeating a statement the applicant already
+ * made about themselves is clerical work, and treating it as a disclosure
+ * decision meant 26 fields went to review on every form.
  */
 const NEVER_GUESSED: readonly CanonicalQuestion[] = [
   ...SENSITIVE_CANONICAL_QUESTIONS,
-  'transgender',
-  'work_authorization',
-  'sponsorship_required',
-  'citizenship',
-  'security_clearance',
-  'criminal_history',
-  'salary_expectation',
-  'terms_attestation',
-  'signature',
+  ...ALWAYS_CONFIRM_QUESTIONS,
+  ...SAVED_ANSWER_REQUIRED_QUESTIONS,
 ];
 
 export function isNeverGuessed(canonicalQuestion: CanonicalQuestion | undefined): boolean {
   return canonicalQuestion !== undefined && NEVER_GUESSED.includes(canonicalQuestion);
+}
+
+/**
+ * True when this action carries something the user actually wrote down, rather
+ * than something derived for them.
+ *
+ * `profile` counts: a profile value is a fact the applicant entered. What does
+ * not count is `ai_suggestion` — a model's reading of a saved fact is evidence,
+ * but it is not the applicant's own statement, and the questions that consult
+ * this function are exactly the ones where that distinction matters.
+ */
+function fromExplicitlySavedAnswer(action: DeterministicFillAction): boolean {
+  return (
+    action.source === 'approved_answer' ||
+    action.source === 'user_override' ||
+    action.source === 'profile'
+  );
+}
+
+/**
+ * True when an AI-proposed answer names the saved facts it rests on.
+ *
+ * An ungrounded model answer to a factual question is an invention with a
+ * confidence score attached, and the score is the least trustworthy part of it.
+ */
+function isGrounded(action: DeterministicFillAction): boolean {
+  if (fromExplicitlySavedAnswer(action)) return true;
+  return (action.sourceFactIds?.length ?? 0) > 0;
 }
 
 export interface ApprovalDecision {
@@ -119,7 +153,30 @@ export function decideApproval(
       break;
   }
 
-  // ---- Protected and eligibility questions -------------------------------
+  // ---- Eligibility facts the user explicitly saved ------------------------
+  // Work authorization, sponsorship, citizenship, relocation, a salary
+  // strategy. Checked before the protected-characteristic branch below,
+  // because several of these are marked sensitive and would otherwise be
+  // caught by it — which is precisely the behaviour being fixed. With nothing
+  // saved they fall through and are confirmed, never guessed.
+  if (
+    needsExplicitlySavedAnswer(canonicalQuestion) &&
+    !alwaysNeedsConfirmation(canonicalQuestion)
+  ) {
+    if (fromExplicitlySavedAnswer(action) && !action.requiresReview) {
+      return {
+        approved: true,
+        reason: 'You saved this answer yourself; it is being repeated onto this form.',
+      };
+    }
+    return {
+      approved: false,
+      reviewReason: 'manual_required',
+      reason: 'Nothing saved answers this, and it is not a fact the agent will infer for you.',
+    };
+  }
+
+  // ---- Protected characteristics and employer-relationship facts ----------
   if (action.sensitive || isNeverGuessed(canonicalQuestion)) {
     const declining =
       typeof action.proposedValue === 'string' && isDeclinePhrasing(action.proposedValue);
@@ -175,11 +232,31 @@ export function decideApproval(
         reason: 'Uncertain answers are left for you unless guessing is enabled.',
       };
     }
-    return {
-      approved: true,
-      reviewReason: 'ai_suggestion',
-      reason: 'Best grounded answer; highlighted for review.',
-    };
+    switch (confidenceBand(action.confidence)) {
+      case 'automatic':
+        return { approved: true, reason: 'Confident answer from your saved data.' };
+      case 'grounded':
+        // The middle band is the one that needs a condition. An answer this
+        // sure fills only when it names the saved facts it rests on, and it is
+        // reported afterwards rather than blending in with the certain ones.
+        return isGrounded(action)
+          ? {
+              approved: true,
+              reviewReason: 'ai_suggestion',
+              reason: 'Grounded in your saved facts; listed in the summary so you can check it.',
+            }
+          : {
+              approved: false,
+              reviewReason: 'ai_suggestion',
+              reason: 'This answer is not certain enough and names no saved fact to rest on.',
+            };
+      default:
+        return {
+          approved: false,
+          reviewReason: 'ai_suggestion',
+          reason: 'This answer is not certain enough to apply without you seeing it.',
+        };
+    }
   }
 
   // ---- Documents ---------------------------------------------------------
@@ -242,14 +319,24 @@ export function decideApproval(
           reason: 'Matched values are not filled automatically.',
         };
       }
-      if (action.confidence < 0.8) {
-        return {
-          approved: false,
-          reviewReason: 'ai_suggestion',
-          reason: 'This match is not certain enough to apply on its own.',
-        };
+      switch (confidenceBand(action.confidence)) {
+        case 'automatic':
+          return { approved: true, reason: 'Your saved value in this form’s wording.' };
+        case 'grounded':
+          // Grounded by construction: the value came from the profile. It fills
+          // and is named in the summary.
+          return {
+            approved: true,
+            reviewReason: 'ai_suggestion',
+            reason: 'Your saved value, matched to this form’s wording; listed so you can check it.',
+          };
+        default:
+          return {
+            approved: false,
+            reviewReason: 'ai_suggestion',
+            reason: 'This match is not certain enough to apply on its own.',
+          };
       }
-      return { approved: true, reason: 'Your saved value in this form’s wording.' };
     }
   }
 

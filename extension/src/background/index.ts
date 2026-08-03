@@ -78,6 +78,7 @@ import {
 } from '../storage/generatedAnswers.js';
 import { loadSettings } from '../storage/settings.js';
 import { ensureContentScript } from './contentScript.js';
+import { fillAccountForm } from './accountForm.js';
 import {
   bundleForUrl,
   encodeBase64,
@@ -451,6 +452,9 @@ async function analyzePage(
     built.fieldsByQuestionId,
     built.questions,
     bundle,
+    // The facts the model was actually given. An answer citing anything else is
+    // referencing a profile fact that does not exist.
+    built.request.facts,
   );
   console.info('[agent] page analysis applied', {
     pageId: scan.id,
@@ -1258,6 +1262,29 @@ async function runAutofill(targetUrl?: string): Promise<unknown> {
           error?: AgentError;
         };
         return built.plan ? { plan: built.plan } : { error: built.error };
+      },
+      fillAccountForm: async (scan) => {
+        const [settings, bundle, profileResult] = await Promise.all([
+          loadSettings(),
+          bundleForUrl(scan.url),
+          getProfile(),
+        ]);
+        const tab = await activeApplicationTab(targetUrl).catch(() => null);
+        if (!tab?.id) return { filled: false, reason: 'The application tab could not be reached.' };
+        const write = async (selector: string, payload: { value?: string; checked?: boolean }) => {
+          const response: unknown = await chrome.tabs
+            .sendMessage(tab.id!, { type: 'ACCOUNT_WRITE_FIELD', selector, ...payload })
+            .catch(() => null);
+          return (response as { ok?: boolean } | null)?.ok === true;
+        };
+        return fillAccountForm({
+          scan,
+          settings,
+          profile: bundle?.profile ?? profileResult.data?.profile,
+          accountPreferences: bundle?.accountPreferences,
+          writeField: (selector, value) => write(selector, { value }),
+          writeCheckbox: (selector, checked) => write(selector, { checked }),
+        });
       },
       approve: async (decisions) => {
         const result = (await mutatePlan((plan) => {

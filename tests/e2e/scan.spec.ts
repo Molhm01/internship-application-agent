@@ -91,7 +91,8 @@ test('the popup detects a generic fixture, preserves the form, and opens review'
   ).toBe(false);
 
   const reviewPromise = context.waitForEvent('page');
-  await popup.getByRole('button', { name: 'Review every detected field' }).click();
+  // A secondary link now, not a step before autofill.
+  await popup.getByRole('button', { name: 'Preview detected fields' }).click();
   const review = await reviewPromise;
   await review.waitForLoadState();
   await expect(review.getByRole('heading', { name: 'Software Intern' })).toBeVisible();

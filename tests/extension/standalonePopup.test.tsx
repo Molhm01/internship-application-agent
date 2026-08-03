@@ -169,9 +169,13 @@ describe('standalone popup autofill', () => {
     const autofill = await screen.findByRole('button', { name: 'Autofill Application' });
     fireEvent.click(autofill);
 
-    await waitFor(() => expect(screen.getByText(/Filled: 1/)).toBeDefined());
-    expect(screen.getByText(/Uploaded: 1/)).toBeDefined();
-    expect(screen.getByText(/Needs review: 1/)).toBeDefined();
+    // The five named counts, shown after the run rather than a field-by-field
+    // list to work through before it.
+    await waitFor(() => expect(screen.getByText('Automatically filled: 1')).toBeDefined());
+    expect(screen.getByText('Fields detected: 2')).toBeDefined();
+    expect(screen.getByText('Documents uploaded: 1')).toBeDefined();
+    expect(screen.getByText('Needs confirmation: 1')).toBeDefined();
+    expect(screen.getByText('Could not fill: 0')).toBeDefined();
     expect(screen.getByText(/final Submit button was never clicked/i)).toBeDefined();
     // The unresolved question is offered as something the user can jump to.
     expect(screen.getByRole('button', { name: 'Gender' })).toBeDefined();
@@ -179,6 +183,13 @@ describe('standalone popup autofill', () => {
     const messageTypes = chromeMock.runtime.sendMessage.mock.calls.map(
       ([message]) => (message as { type: string }).type,
     );
+    // Only the unresolved question is listed. The verified one is not, and
+    // neither is a field-by-field walk of everything detected.
+    expect(screen.queryByRole('button', { name: 'First name' })).toBeNull();
+    // Reviewing every field is a secondary link, not a step before autofill.
+    expect(screen.getByRole('button', { name: 'Preview detected fields' })).toBeDefined();
+    expect(screen.queryByText('Review every detected field')).toBeNull();
+
     expect(messageTypes).toContain('RUN_APPLICATION_AUTOFILL');
     // One button, one run: the popup no longer drives a four-step sequence.
     expect(messageTypes).not.toContain('BUILD_DETERMINISTIC_PLAN');

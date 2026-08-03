@@ -99,6 +99,15 @@ function RouteChoices({
   );
 }
 
+/**
+ * The fields still waiting on the user, and only those.
+ *
+ * One card per unresolved question, with the question in the page's own words
+ * and the options the page actually offers, so answering it takes a click
+ * rather than a trip to the form. A field that filled and verified never
+ * appears here — the point is that 26 detected fields produce a list of the two
+ * or three nobody could answer safely, not a list of 26.
+ */
 function ReviewList({
   report,
   onFocus,
@@ -111,15 +120,60 @@ function ReviewList({
   return (
     <ul className="review-list">
       {needsReview.map((result) => (
-        <li key={result.fieldId}>
+        <li key={result.fieldId} className="review-list__card">
+          <strong className="review-list__badge">{REVIEW_BADGES[result.reviewReason!]}</strong>
           <button type="button" className="link-button" onClick={() => onFocus(result.fieldId)}>
             {result.question || 'Unlabelled question'}
           </button>
-          <span className="review-list__badge">{REVIEW_BADGES[result.reviewReason!]}</span>
           {result.reason ? <span className="review-list__reason">{result.reason}</span> : null}
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Required fields the run could not settle, named individually.
+ *
+ * `results` covers fields the planner produced an action for. A required field
+ * the run never reached produces no action at all, so it would be absent from
+ * that list entirely — which is the silent skip this is here to prevent.
+ */
+function OutstandingRequired({
+  report,
+  onFocus,
+}: {
+  report: ApplicationAutofillReport;
+  onFocus: (fieldId: string) => void;
+}): JSX.Element | null {
+  const answered = new Set(report.results.map((result) => result.fieldId));
+  const missed = report.requiredFields.filter(
+    (verdict) => verdict.outcome !== 'FILLED_VERIFIED' && !answered.has(verdict.fieldId),
+  );
+  if (missed.length === 0) return null;
+  return (
+    <>
+      <p className="autofill__analysis">
+        {missed.length === 1
+          ? 'One required field still needs an answer:'
+          : `${missed.length} required fields still need an answer:`}
+      </p>
+      <ul className="review-list">
+        {missed.map((verdict) => (
+          <li key={verdict.fieldId} className="review-list__card">
+            <strong className="review-list__badge">
+              {verdict.outcome === 'BLOCKED_BY_CAPTCHA_OR_VERIFICATION'
+                ? 'Blocked — needs you'
+                : 'Required answer needed'}
+            </strong>
+            <button type="button" className="link-button" onClick={() => onFocus(verdict.fieldId)}>
+              {verdict.label}
+            </button>
+            <span className="review-list__reason">{verdict.reason}</span>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -244,16 +298,28 @@ export function AutofillPanel({
 
       {report && !running ? (
         <section className="result" role="status">
-          <p>
-            Filled: {report.fieldsVerified} · Uploaded: {report.documentsAttached} · Needs review:{' '}
-            {report.uncertainSuggestions + report.manualBlockers} · Unable to fill:{' '}
-            {report.failedFields}
-          </p>
+          {/*
+            The five numbers the user actually wants after a run, named rather
+            than abbreviated. "Needs confirmation" is the only one that asks
+            anything of them, and the list below it holds exactly those fields —
+            not all 26.
+          */}
+          <ul className="autofill__summary">
+            <li>Fields detected: {report.fieldsFound}</li>
+            <li>Automatically filled: {report.fieldsVerified}</li>
+            <li>Documents uploaded: {report.documentsAttached}</li>
+            <li>Needs confirmation: {report.uncertainSuggestions + report.manualBlockers}</li>
+            <li>Could not fill: {report.failedFields}</li>
+          </ul>
           <p className="autofill__never-submits">
             The final Submit button was never clicked. Review the application and submit it
             yourself.
           </p>
           <ReviewList report={report} onFocus={(fieldId) => void state.focusField(fieldId)} />
+          <OutstandingRequired
+            report={report}
+            onFocus={(fieldId) => void state.focusField(fieldId)}
+          />
           {report.results.some((result) => result.reviewReason) ? (
             <button
               type="button"
@@ -279,14 +345,19 @@ export function AutofillPanel({
             : 'Nothing to autofill on this page'}
       </button>
 
-      {/* The full field-by-field view. The popup shows what needs attention;
-          this is for someone who wants to see every question and its source. */}
+      {/*
+        The full field-by-field view, and deliberately a secondary link rather
+        than a step. It read as something to do *before* autofill — 26 fields to
+        approve one at a time — which is the opposite of one-button autofill.
+        The popup surfaces what needs attention; this is for someone who wants
+        to see every question and where its answer came from.
+      */}
       <button
         type="button"
         className="link-button"
         onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('review.html') })}
       >
-        Review every detected field
+        Preview detected fields
       </button>
     </section>
   );

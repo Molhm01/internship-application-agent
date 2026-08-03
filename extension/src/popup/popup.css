@@ -114,3 +114,22 @@ body {
   color: var(--text-muted);
   line-height: 1.4;
 }
+
+/* A card, not a row: these are the two or three questions the run could not
+   answer, and they should read as things to do rather than as list entries. */
+.review-list__card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+/* The five numbers after a run. Laid out as a plain list so the labels stay
+   legible at popup width instead of collapsing into one run-on line. */
+.autofill__summary {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}

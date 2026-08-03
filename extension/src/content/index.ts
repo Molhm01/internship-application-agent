@@ -135,6 +135,35 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
     return true;
   }
 
+  if (raw?.type === 'ACCOUNT_WRITE_FIELD') {
+    // One selector, one value, one field. Deliberately the narrowest possible
+    // message: this is the path an employer-site password travels, and it must
+    // carry nothing else and be usable for nothing else.
+    //
+    // Nothing here logs `value`. The response is a boolean.
+    const element = document.querySelector(raw.selector);
+    if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement)) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    if (typeof raw.checked === 'boolean') {
+      if (!(element instanceof HTMLInputElement)) {
+        sendResponse({ ok: false });
+        return false;
+      }
+      element.checked = raw.checked;
+    } else {
+      element.value = raw.value ?? '';
+    }
+    // The events a framework-backed form listens for. Without them a React or
+    // Angular control keeps its own empty state and the typed value vanishes on
+    // the next render.
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (raw?.type === 'HIGHLIGHT_REVIEW_FIELDS') {
     clearHighlights();
     let drawn = 0;

@@ -313,7 +313,14 @@ export function App(): JSX.Element {
         </button>
       </section>
       <footer className="popup__footer">
-        <p>Only explicitly approved deterministic actions can change fields.</p>
+        {/*
+          The old line — "only explicitly approved deterministic actions can
+          change fields" — described a workflow where the user approved each
+          action first. What is actually true now, and what matters, is that the
+          model decides the answer while the deterministic executor is the only
+          thing that touches the page.
+        */}
+        <p>AI decides the answer; the deterministic executor is what changes a field.</p>
         <p>This agent never submits an application.</p>
         {/*
           Which build this actually is. A stale unpacked extension loaded from a

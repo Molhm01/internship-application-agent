@@ -32,6 +32,13 @@ export type PageKind = (typeof PAGE_KINDS)[number];
 /** A control that moves the applicant somewhere rather than answering a question. */
 export const NAVIGATION_INTENTS = [
   'login',
+  /**
+   * "Continue with Google", "Log in with Apple". A navigation alternative to
+   * the portal's own account flow, never a question and never a route the
+   * agent takes: it hands off to an identity provider whose consent screen is
+   * the user's to complete.
+   */
+  'social_login',
   'create_account',
   'apply_as_guest',
   'continue',
@@ -91,6 +98,17 @@ const INTENT_RULES: ReadonlyArray<{ intent: NavigationIntent; pattern: RegExp }>
     intent: 'final_submit',
     pattern:
       /\b(submit application|submit your application|send application|complete application|finish (and )?submit|submit my application)\b/,
+  },
+  {
+    // Ordered above `create_account` and `login` deliberately. "Sign in with
+    // Google" and "Sign up with LinkedIn" both contain the wording those rules
+    // look for, so without this they read as the portal's own sign-in or
+    // registration route — and the agent would take an identity-provider route
+    // it cannot complete. They are alternatives to the account flow, not
+    // questions and not the account flow itself.
+    intent: 'social_login',
+    pattern:
+      /\b(log ?in|sign ?in|sign ?up|continue|register)\b.{0,12}\b(with|using|via)\b.{0,12}\b(google|apple|facebook|linked ?in|microsoft|github|twitter|x)\b|\b(google|apple|facebook|linked ?in|microsoft|github)\b.{0,4}\b(sign ?in|log ?in|sign ?up)\b/,
   },
   {
     intent: 'create_account',

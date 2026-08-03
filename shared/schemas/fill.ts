@@ -111,6 +111,15 @@ export const deterministicFillActionSchema = z
     matchedOption: matchedOptionSchema.optional(),
     source: deterministicAnswerSourceSchema,
     sourceReference: z.string().max(500).optional(),
+    /**
+     * The saved facts an AI-proposed answer rests on.
+     *
+     * Carried through from the model's `sourceFactIds` so the approval policy
+     * can tell a grounded answer from an invented one *at execution time*,
+     * rather than trusting a confidence number the model chose for itself.
+     * Empty on deterministic actions, which are grounded by construction.
+     */
+    sourceFactIds: z.array(z.string().min(1).max(200)).max(20).optional(),
     confidence: confidenceSchema,
     sensitive: z.boolean(),
     requiresReview: z.boolean(),

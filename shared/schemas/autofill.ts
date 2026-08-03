@@ -4,6 +4,7 @@ import { agentErrorSchema } from './error.js';
 import { confidenceSchema, idSchema, isoDateTimeSchema } from './common.js';
 import { canonicalQuestionSchema } from './fields.js';
 import { deterministicAnswerSourceSchema, deterministicFillActionKindSchema } from './fill.js';
+import { REQUIRED_FIELD_OUTCOMES } from '../logic/requiredFieldAudit.js';
 
 /**
  * One-button autofill: the contract between the popup, the background
@@ -22,23 +23,40 @@ export const autofillSettingsSchema = z.object({
   autoFillSemanticProfileMatches: z.boolean().default(true),
   autoFillApprovedAnswers: z.boolean().default(true),
   /**
-   * Written answers the model produced and validation passed. Off until the
-   * user opts in, because generated prose is the one thing here they have not
-   * already written themselves.
+   * Written answers the model produced and validation passed.
+   *
+   * On by default. It was off, which meant every drafted answer landed in
+   * review no matter how good it was — so "Autofill Application" filled the
+   * name and email and handed back two dozen fields to do by hand, which is not
+   * autofill. The safety is not this switch: it is that the answer must pass
+   * validation, must be grounded, must clear the confidence bands, and can
+   * never touch a protected or employer-relationship question.
    */
-  autoFillValidatedAiAnswers: z.boolean().default(false),
+  autoFillValidatedAiAnswers: z.boolean().default(true),
   /**
-   * Permits a grounded best-effort answer on ordinary questions. Off by
-   * default: an unanswered field is visibly unanswered, while a wrong one looks
-   * finished.
+   * Permits a grounded best-effort answer on ordinary questions.
+   *
+   * "Grounded" is load-bearing and enforced in `approvalPolicy`: below 0.90 an
+   * answer fills only when it names the saved facts it rests on. An ungrounded
+   * guess still does not fill at any confidence.
    */
-  allowGroundedNonSensitiveGuesses: z.boolean().default(false),
+  allowGroundedNonSensitiveGuesses: z.boolean().default(true),
   /**
    * Applies a saved disclosure preset — in practice, declining. Only ever acts
    * on an explicit preset; it can never cause a trait to be disclosed.
    */
   autoFillSensitiveDisclosurePresets: z.boolean().default(true),
-  autoAttachApprovedDocuments: z.boolean().default(false),
+  /**
+   * Attach the tailored résumé and cover letter to the upload fields that ask
+   * for them.
+   *
+   * On by default. Uploading the document the user generated for this exact job
+   * is the point of the handoff; making them do it by hand on every form was
+   * the single largest remaining manual step. Only bundle documents and the
+   * user's own registered résumé are ever attached — this can never reach an
+   * arbitrary file, and a form asking for a transcript still gets nothing.
+   */
+  autoAttachApprovedDocuments: z.boolean().default(true),
   scrollToFirstReviewField: z.boolean().default(true),
   /**
    * Not a preference. It is stored so it appears in any exported settings and
@@ -164,6 +182,25 @@ export const applicationAutofillReportSchema = z
      * submission happened, rather than something the reader has to trust.
      */
     submissionPrevented: z.literal(true).default(true),
+    /**
+     * The terminal state of every required field on the page.
+     *
+     * Carried in the report rather than recomputed by each reader, because "no
+     * required field may be silently skipped" is only checkable if the run
+     * itself states what happened to each one. A field the run never reached is
+     * reported as needing the user, which makes the omission visible.
+     */
+    requiredFields: z
+      .array(
+        z.object({
+          fieldId: idSchema,
+          label: z.string().max(2000),
+          outcome: z.enum(REQUIRED_FIELD_OUTCOMES),
+          reason: z.string().max(2000),
+        }),
+      )
+      .max(2000)
+      .default([]),
     status: autofillStatusSchema,
     results: z.array(autofillFieldResultSchema).max(2000).default([]),
     warnings: z.array(z.string().min(1).max(2000)).max(50).default([]),

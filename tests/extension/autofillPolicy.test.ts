@@ -66,11 +66,15 @@ describe('autofill settings', () => {
     expect(SETTINGS.autoFillExactProfileValues).toBe(true);
     expect(SETTINGS.autoFillSemanticProfileMatches).toBe(true);
     expect(SETTINGS.autoFillApprovedAnswers).toBe(true);
-    // Generated prose and guessing are opt-in.
-    expect(SETTINGS.autoFillValidatedAiAnswers).toBe(false);
-    expect(SETTINGS.allowGroundedNonSensitiveGuesses).toBe(false);
+    // Validated answers, grounded matches and the tailored documents all fill
+    // by default. They used to be opt-in, which meant "Autofill Application"
+    // filled the name and email and handed back two dozen fields to do by hand.
+    // The safety is not these switches — it is grounding, the confidence bands,
+    // and the questions the policy will never answer at any confidence.
+    expect(SETTINGS.autoFillValidatedAiAnswers).toBe(true);
+    expect(SETTINGS.allowGroundedNonSensitiveGuesses).toBe(true);
     expect(SETTINGS.autoFillSensitiveDisclosurePresets).toBe(true);
-    expect(SETTINGS.autoAttachApprovedDocuments).toBe(false);
+    expect(SETTINGS.autoAttachApprovedDocuments).toBe(true);
     expect(SETTINGS.scrollToFirstReviewField).toBe(true);
     expect(SETTINGS.neverSubmit).toBe(true);
   });
@@ -269,16 +273,17 @@ describe('protected and legal questions', () => {
 describe('grounded guessing', () => {
   const suggestion = action({ source: 'ai_suggestion', requiresReview: true });
 
-  it('leaves an uncertain answer for the user by default', () => {
-    const decision = decideApproval(suggestion, SETTINGS, field());
-    expect(decision.approved).toBe(false);
-    expect(decision.reviewReason).toBe('ai_suggestion');
+  it('fills a confident answer without qualification', () => {
+    const decision = decideApproval({ ...suggestion, confidence: 0.94 }, SETTINGS, field());
+    expect(decision.approved).toBe(true);
+    // Above 0.90 the answer is effectively a lookup; nothing is flagged.
+    expect(decision.reviewReason).toBeUndefined();
   });
 
-  it('fills and flags it once guessing is enabled', () => {
+  it('fills a middling answer that names its saved facts, and flags it', () => {
     const decision = decideApproval(
-      suggestion,
-      autofillSettingsSchema.parse({ ...SETTINGS, allowGroundedNonSensitiveGuesses: true }),
+      { ...suggestion, confidence: 0.8, sourceFactIds: ['profile.personal.linkedin'] },
+      SETTINGS,
       field(),
     );
     expect(decision.approved).toBe(true);
@@ -286,7 +291,30 @@ describe('grounded guessing', () => {
     expect(decision.reviewReason).toBe('ai_suggestion');
   });
 
-  it('fills a validated generated answer only after opt-in', () => {
+  it('refuses a middling answer that rests on nothing saved', () => {
+    // Same confidence as the case above. Grounding is what separates them: an
+    // ungrounded answer is an invention with a score attached, and the score is
+    // the least trustworthy part of it.
+    const decision = decideApproval(
+      { ...suggestion, confidence: 0.8, sourceFactIds: [] },
+      SETTINGS,
+      field(),
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reason).toMatch(/names no saved fact/i);
+  });
+
+  it('refuses a low-confidence answer however well grounded', () => {
+    const decision = decideApproval(
+      { ...suggestion, confidence: 0.6, sourceFactIds: ['profile.personal.linkedin'] },
+      SETTINGS,
+      field(),
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reviewReason).toBe('ai_suggestion');
+  });
+
+  it('fills a validated generated answer by default', () => {
     const generated = action({
       action: 'fill_generated_text',
       source: 'ai_generated',
@@ -294,14 +322,14 @@ describe('grounded guessing', () => {
       answerValidationPassed: true,
       proposedValue: 'A grounded paragraph.',
     });
-    expect(decideApproval(generated, SETTINGS, field()).approved).toBe(false);
+    expect(decideApproval(generated, SETTINGS, field()).approved).toBe(true);
     expect(
       decideApproval(
         generated,
-        autofillSettingsSchema.parse({ ...SETTINGS, autoFillValidatedAiAnswers: true }),
+        autofillSettingsSchema.parse({ ...SETTINGS, autoFillValidatedAiAnswers: false }),
         field(),
       ).approved,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('never fills a generated answer that failed validation', () => {
