@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { HealthResponse } from '@internship-agent/shared';
+import { RECONNECT_MESSAGE, type HealthResponse } from '@internship-agent/shared';
 import { App } from '../../extension/src/popup/App.js';
 import type { AgentStatusResult } from '../../extension/src/messaging/messages.js';
 import { installChromeMock } from './setup.js';
@@ -40,6 +40,10 @@ function mockPopup(
 ): void {
   const chromeMock = installChromeMock();
   chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+    if (message.type === 'ENSURE_CONTENT_SCRIPT')
+      return Promise.resolve({ reachable: true, injected: false });
+    if (message.type === 'GET_PORTAL_ROUTE')
+      return Promise.resolve({ decision: 'none', reason: 'no routes' });
     if (message.type === 'GET_LAST_SCAN') {
       return Promise.resolve({ scan: emptyApplicationScan(tabUrl) });
     }
@@ -204,6 +208,14 @@ describe('popup connection status', () => {
       tokenConfigured: true,
     } satisfies AgentStatusResult;
     chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      // Reinjection was attempted from the worker and the page still will not
+      // answer, which is the only state that should reach the user at all.
+      if (message.type === 'ENSURE_CONTENT_SCRIPT') {
+        return Promise.resolve({ reachable: false, injected: true, reason: RECONNECT_MESSAGE });
+      }
+      if (message.type === 'GET_PORTAL_ROUTE') {
+        return Promise.resolve({ decision: 'none', reason: 'no routes' });
+      }
       if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
       if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
       return Promise.resolve(status);
@@ -212,6 +224,9 @@ describe('popup connection status', () => {
     chromeMock.tabs.sendMessage.mockRejectedValue(new Error('Receiving end does not exist'));
 
     render(<App />);
-    await waitFor(() => expect(screen.getByText(/content script is not reachable/)).toBeDefined());
+    // The instruction names the page, not the extension: reinstalling is not
+    // the fix and telling people it is cost real time.
+    await waitFor(() => expect(screen.getAllByText(RECONNECT_MESSAGE).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/reinstall/i)).toBeNull();
   });
 });

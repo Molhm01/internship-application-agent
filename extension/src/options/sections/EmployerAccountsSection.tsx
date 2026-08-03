@@ -35,7 +35,12 @@ const STRATEGIES: ReadonlyArray<{ value: PortalStrategy | ''; label: string; hin
   {
     value: 'create_when_required',
     label: 'Create an account when one is required',
-    hint: 'Register only when there is no way to apply without it.',
+    hint: 'Take the New User or Create Account route, and register there. Requires the switch below.',
+  },
+  {
+    value: 'use_existing_account',
+    label: 'I already have an account',
+    hint: 'Take the sign-in route. Your browser’s password manager or the extension’s vault fills the credentials; the agent never types a password it was not given.',
   },
   {
     value: 'always_ask',

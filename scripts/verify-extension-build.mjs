@@ -2,6 +2,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { anyPatternMatches } from '../shared/dist/logic/matchPattern.js';
 
 /**
  * Proves the built extension is loadable, current, and internally consistent
@@ -236,6 +237,32 @@ async function main() {
     }
   }
 
+  // Reachability. A content script that Chrome never injects, or that the
+  // worker may not reinject after an extension reload, is a total failure of
+  // the extension's purpose on that site — and it is completely invisible from
+  // the file list, because every file is present and correct.
+  const REACHABLE_URLS = [
+    'https://careers2-quanta.icims.com/jobs/12345/login',
+    'https://careers.icims.eu/jobs/2/apply',
+    'https://company.wd5.myworkdayjobs.com/en-US/careers/job/Intern',
+    'https://company.taleo.net/careersection/2/jobapply.ftl',
+    'https://careers.example.com/apply',
+  ];
+  const matchesEntries = (manifest.content_scripts ?? []).flatMap((entry) => entry.matches ?? []);
+  for (const url of REACHABLE_URLS) {
+    if (!anyPatternMatches(matchesEntries, url)) {
+      problems.push(`No content script would run on ${url}.`);
+    }
+    if (!anyPatternMatches(manifest.host_permissions ?? [], url)) {
+      problems.push(
+        `No host permission covers ${url}, so the worker could not reinject the content script there after an extension reload.`,
+      );
+    }
+  }
+  if (!manifest.permissions?.includes('scripting')) {
+    problems.push('The "scripting" permission is missing, so reinjection is impossible.');
+  }
+
   if (problems.length > 0) {
     console.error('Extension build integrity: FAILED');
     for (const problem of problems) console.error(`  - ${problem}`);
@@ -253,6 +280,9 @@ async function main() {
     })`,
   );
   console.log(`iCIMS hosts: OK (${ICIMS_HOSTS.join(', ')} all matched; lookalike rejected)`);
+  console.log(
+    `Content-script reachability: OK (${REACHABLE_URLS.length} employer URLs are both matched and reinjectable)`,
+  );
   console.log('Freshness: OK (every bundle is newer than the newest source file)');
 }
 

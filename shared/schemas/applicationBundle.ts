@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { idSchema, isoDateTimeSchema } from './common.js';
 import { profileSchema } from './profile.js';
 import { approvedAnswerSchema } from './answers.js';
+import { portalStrategySchema } from './employerAccounts.js';
 
 /**
  * The application bundle: everything Internship Pilot hands to the extension
@@ -57,8 +58,12 @@ export const accountPreferencesSchema = z.object({
    * not chosen, and the extension asks rather than picking a route on their
    * behalf — creating an account and applying as a guest have permanently
    * different consequences for them.
+   *
+   * The list itself lives in `employerAccounts.ts`. Re-spelling it here meant a
+   * strategy the extension understood was rejected the moment it arrived inside
+   * a bundle, which reads as "the website sent nothing".
    */
-  portalStrategy: z.enum(['prefer_guest', 'create_when_required', 'always_ask']).optional(),
+  portalStrategy: portalStrategySchema.optional(),
 });
 
 export type AccountPreferences = z.infer<typeof accountPreferencesSchema>;
@@ -233,6 +238,28 @@ export function bundleMatchesUrl(bundle: ApplicationBundle, url: string): boolea
     if (targetPath === actualPath) return true;
     // ATS flows push the applicant from /jobs/123 to /jobs/123/apply and back.
     return actualPath.startsWith(`${targetPath}/`) || targetPath.startsWith(`${actualPath}/`);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a page is on the same employer portal as this bundle.
+ *
+ * Deliberately weaker than `bundleMatchesUrl`, and used only as a fallback for
+ * the *active* bundle. Taking a route off a portal's landing page lands the
+ * applicant somewhere with no path relationship to the job at all — iCIMS sends
+ * `/jobs/12345/job` to `/jobs/login` — so a path-based match drops the bundle
+ * at exactly the moment the account form needs it, and the panel goes from
+ * "Ready for Quanta — Field Engineer Intern" to "No application loaded" with
+ * the tailored documents apparently gone.
+ *
+ * Scoped to the active bundle on purpose: history is still matched on path, so
+ * two jobs at one employer in two tabs cannot borrow each other's documents.
+ */
+export function bundleSharesPortal(bundle: ApplicationBundle, url: string): boolean {
+  try {
+    return new URL(bundle.officialApplicationUrl).origin === new URL(url).origin;
   } catch {
     return false;
   }

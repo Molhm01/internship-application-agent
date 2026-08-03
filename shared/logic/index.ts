@@ -19,3 +19,5 @@ export * from './accountCreation.js';
 export * from './companyRelationship.js';
 export * from './requiredFieldAudit.js';
 export * from './schemaFailure.js';
+export * from './portalRoute.js';
+export * from './matchPattern.js';

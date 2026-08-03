@@ -55,6 +55,10 @@ function mountPopup(status: Partial<AgentStatusResult>): void {
   } satisfies AgentStatusResult;
   const tabUrl = 'https://boards.example.com/apply/1';
   chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+    if (message.type === 'ENSURE_CONTENT_SCRIPT')
+      return Promise.resolve({ reachable: true, injected: false });
+    if (message.type === 'GET_PORTAL_ROUTE')
+      return Promise.resolve({ decision: 'none', reason: 'no routes' });
     if (message.type === 'GET_LAST_SCAN') {
       return Promise.resolve({ scan: emptyApplicationScan(tabUrl) });
     }
@@ -212,6 +216,10 @@ describe('popup standalone gating', () => {
     } satisfies AgentStatusResult;
     const tabUrl = 'https://example.com/apply';
     chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'ENSURE_CONTENT_SCRIPT')
+        return Promise.resolve({ reachable: true, injected: false });
+      if (message.type === 'GET_PORTAL_ROUTE')
+        return Promise.resolve({ decision: 'none', reason: 'no routes' });
       if (message.type === 'GET_LAST_SCAN') {
         return Promise.resolve({ scan: emptyApplicationScan(tabUrl) });
       }

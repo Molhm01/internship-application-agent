@@ -14,6 +14,7 @@ import {
 } from '@internship-agent/shared';
 import type { AgentStatusResult } from '../messaging/messages.js';
 import { sendMessage } from '../messaging/messages.js';
+import { detectAtsByHostname } from '../scanner/adapters.js';
 import { traceFailure } from '../utils/trace.js';
 
 export interface TabInfo {
@@ -21,6 +22,8 @@ export interface TabInfo {
   domain: string | null;
   url: string | null;
   contentScriptReachable: boolean;
+  /** True when the script had to be put back for this tab, i.e. it predated this build. */
+  reconnected: boolean;
   fieldsDetected: number | null;
   /**
    * The ATS as the page itself reports it, independent of any scan.
@@ -59,6 +62,7 @@ const EMPTY_TAB: TabInfo = {
   domain: null,
   url: null,
   contentScriptReachable: false,
+  reconnected: false,
   ats: null,
   fieldsDetected: null,
 };
@@ -73,24 +77,34 @@ async function readActiveTab(): Promise<TabInfo> {
     domain = null;
   }
   let contentScriptReachable = false;
+  let reconnected = false;
   let ats: TabInfo['ats'] = null;
   if (tab.id !== undefined && /^https?:/.test(tab.url)) {
-    try {
-      const pong: unknown = await chrome.tabs.sendMessage(tab.id, { type: 'CONTENT_PING' });
-      contentScriptReachable = Boolean(pong);
-      const reported = (pong as { ats?: TabInfo['ats'] } | null)?.ats;
-      // An older content script answers a ping without this key. Treating that
-      // as "no ATS" is correct and keeps a mixed-version install working.
-      if (reported && typeof reported.displayName === 'string') ats = reported;
-    } catch {
-      contentScriptReachable = false;
-    }
+    // Asks the worker to ping and, if needed, put the content script back. Every
+    // tab open at the moment the extension reloaded has lost its script, and
+    // that used to be reported as "the content script is not reachable" with the
+    // only remedy being a reinstall.
+    const connection = await sendMessage({
+      type: 'ENSURE_CONTENT_SCRIPT',
+      tabId: tab.id,
+      url: tab.url,
+    });
+    contentScriptReachable = connection.reachable === true;
+    reconnected = connection.injected === true && contentScriptReachable;
+    const reported = connection.ats;
+    // An older content script answers a ping without this key. Treating that
+    // as "no ATS" is correct and keeps a mixed-version install working.
+    if (reported && typeof reported.displayName === 'string') ats = reported;
   }
+  // The hostname alone identifies every branded ATS, so the vendor stays visible
+  // even when the page cannot be reached at all.
+  if (!ats && domain) ats = detectAtsByHostname(domain);
   return {
     id: tab.id ?? null,
     domain,
     url: tab.url,
     contentScriptReachable,
+    reconnected,
     fieldsDetected: null,
     ats,
   };

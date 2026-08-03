@@ -1,6 +1,7 @@
 import { DEFAULT_ERROR_GUIDANCE } from '@internship-agent/shared';
 import { z } from 'zod';
 import { trace, traceFailure } from '../utils/trace.js';
+import type { ContentScriptConnection } from '../background/contentScript.js';
 import type {
   AgentError,
   ApprovedAnswer,
@@ -35,6 +36,9 @@ import type {
   ApplicationAutofillReport,
   AutofillProgress,
   ReviewReason,
+  PortalRouteIntent,
+  PortalRouteResponse,
+  NavigationActivationResult,
 } from '@internship-agent/shared';
 import {
   clearLastScanResponseSchema,
@@ -51,6 +55,7 @@ import {
   agentErrorSchema,
   modelsResponseSchema,
   aiGenerationTestResponseSchema,
+  portalRouteResponseSchema,
 } from '@internship-agent/shared';
 
 /**
@@ -71,6 +76,15 @@ export type ExtensionMessage =
   | { type: 'SET_ACTIVE_BUNDLE'; bundleId: string }
   | { type: 'DELETE_BUNDLE'; bundleId: string }
   // One-button autofill: the whole run, start to review summary.
+  | { type: 'ENSURE_CONTENT_SCRIPT'; tabId: number; url?: string }
+  | { type: 'GET_PORTAL_ROUTE'; targetUrl?: string }
+  | { type: 'FOLLOW_PORTAL_ROUTE'; targetUrl?: string }
+  | {
+      type: 'ACTIVATE_NAVIGATION';
+      intent: PortalRouteIntent;
+      selector: string;
+      expectedLabel?: string;
+    }
   | { type: 'RUN_APPLICATION_AUTOFILL'; targetUrl?: string }
   | { type: 'CANCEL_APPLICATION_AUTOFILL' }
   | { type: 'GET_AUTOFILL_REPORT' }
@@ -185,97 +199,109 @@ export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends 'A
             ? { report: ApplicationAutofillReport } | { error: AgentError }
             : M extends 'GET_AUTOFILL_REPORT'
               ? { report: ApplicationAutofillReport | null }
-              : M extends
-                    | 'CANCEL_APPLICATION_AUTOFILL'
-                    | 'AUTOFILL_PROGRESS'
-                    | 'HIGHLIGHT_REVIEW_FIELDS'
-                    | 'FOCUS_REVIEW_FIELD'
-                    | 'CLEAR_REVIEW_HIGHLIGHTS'
-                ? { ok: boolean }
-                : M extends 'OLLAMA_MODELS_LIST'
-                  ? AgentResult<ModelsResponse>
-                  : M extends 'TEST_AI_GENERATION'
-                    ? AgentResult<AiGenerationTestResponse>
-                    : M extends 'SETTINGS_UPDATED'
-                      ? { ok: true }
-                      : M extends 'CONTENT_PING'
-                        ? ContentPingResult
-                        : M extends 'PROFILE_GET' | 'PROFILE_SAVE'
-                          ? AgentResult<ProfilePayload>
-                          : M extends 'DOCUMENTS_LIST'
-                            ? AgentResult<DocumentListResponse>
-                            : M extends 'DOCUMENT_CREATE' | 'DOCUMENT_UPDATE'
-                              ? AgentResult<SavedDocument>
-                              : M extends 'DOCUMENT_DELETE' | 'ANSWER_DELETE'
-                                ? AgentResult<{ id: string }>
-                                : M extends 'DOCUMENT_EXTRACT'
-                                  ? AgentResult<DocumentExtraction>
-                                  : M extends 'ANSWERS_LIST'
-                                    ? AgentResult<{ answers: ApprovedAnswer[] }>
-                                    : M extends 'ANSWER_CREATE' | 'ANSWER_UPDATE'
-                                      ? AgentResult<ApprovedAnswer>
-                                      : M extends 'SCAN_APPLICATION'
-                                        ? ScanApplicationResponse
-                                        : M extends
-                                              | 'SCAN_CANCEL'
-                                              | 'SCAN_PROGRESS'
-                                              | 'SCAN_COMPLETE'
-                                              | 'SCAN_FAILED'
-                                          ? { ok: true }
-                                          : M extends 'GET_LAST_SCAN'
-                                            ? GetLastScanResponse
-                                            : M extends 'CLEAR_LAST_SCAN'
-                                              ? { ok: true } | { ok: false; error: AgentError }
+              : M extends 'ENSURE_CONTENT_SCRIPT'
+                ? ContentScriptConnection
+                : M extends 'GET_PORTAL_ROUTE' | 'FOLLOW_PORTAL_ROUTE'
+                  ? PortalRouteResponse
+                  : M extends 'ACTIVATE_NAVIGATION'
+                    ? NavigationActivationResult
+                    : M extends
+                          | 'CANCEL_APPLICATION_AUTOFILL'
+                          | 'AUTOFILL_PROGRESS'
+                          | 'HIGHLIGHT_REVIEW_FIELDS'
+                          | 'FOCUS_REVIEW_FIELD'
+                          | 'CLEAR_REVIEW_HIGHLIGHTS'
+                      ? { ok: boolean }
+                      : M extends 'OLLAMA_MODELS_LIST'
+                        ? AgentResult<ModelsResponse>
+                        : M extends 'TEST_AI_GENERATION'
+                          ? AgentResult<AiGenerationTestResponse>
+                          : M extends 'SETTINGS_UPDATED'
+                            ? { ok: true }
+                            : M extends 'CONTENT_PING'
+                              ? ContentPingResult
+                              : M extends 'PROFILE_GET' | 'PROFILE_SAVE'
+                                ? AgentResult<ProfilePayload>
+                                : M extends 'DOCUMENTS_LIST'
+                                  ? AgentResult<DocumentListResponse>
+                                  : M extends 'DOCUMENT_CREATE' | 'DOCUMENT_UPDATE'
+                                    ? AgentResult<SavedDocument>
+                                    : M extends 'DOCUMENT_DELETE' | 'ANSWER_DELETE'
+                                      ? AgentResult<{ id: string }>
+                                      : M extends 'DOCUMENT_EXTRACT'
+                                        ? AgentResult<DocumentExtraction>
+                                        : M extends 'ANSWERS_LIST'
+                                          ? AgentResult<{ answers: ApprovedAnswer[] }>
+                                          : M extends 'ANSWER_CREATE' | 'ANSWER_UPDATE'
+                                            ? AgentResult<ApprovedAnswer>
+                                            : M extends 'SCAN_APPLICATION'
+                                              ? ScanApplicationResponse
                                               : M extends
-                                                    | 'BUILD_DETERMINISTIC_PLAN'
-                                                    | 'UPDATE_FILL_ACTION'
-                                                    | 'APPROVE_FILL_ACTION'
-                                                    | 'APPROVE_SAFE_ACTIONS'
-                                                ? FillPlanResponse
-                                                : M extends 'GET_FILL_PLAN'
-                                                  ? GetFillPlanResponse
-                                                  : M extends
-                                                        | 'EXECUTE_APPROVED_ACTIONS'
-                                                        | 'EXECUTE_FILL_PLAN'
-                                                    ? FillExecutionResponse
+                                                    | 'SCAN_CANCEL'
+                                                    | 'SCAN_PROGRESS'
+                                                    | 'SCAN_COMPLETE'
+                                                    | 'SCAN_FAILED'
+                                                ? { ok: true }
+                                                : M extends 'GET_LAST_SCAN'
+                                                  ? GetLastScanResponse
+                                                  : M extends 'CLEAR_LAST_SCAN'
+                                                    ? | { ok: true }
+                                                      | { ok: false; error: AgentError }
                                                     : M extends
-                                                          | 'FILL_PROGRESS'
-                                                          | 'FILL_COMPLETE'
-                                                          | 'FILL_FAILED'
-                                                          | 'FILL_CANCEL'
-                                                          | 'CLEAR_FILL_PLAN'
-                                                          | 'FILL_PLAN_UPDATED'
-                                                      ? | { ok: true }
-                                                        | { ok: false; error: AgentError }
-                                                      : M extends 'CLASSIFY_CUSTOM_QUESTION'
-                                                        ? | QuestionClassificationResult
-                                                          | { error: AgentError }
+                                                          | 'BUILD_DETERMINISTIC_PLAN'
+                                                          | 'UPDATE_FILL_ACTION'
+                                                          | 'APPROVE_FILL_ACTION'
+                                                          | 'APPROVE_SAFE_ACTIONS'
+                                                      ? FillPlanResponse
+                                                      : M extends 'GET_FILL_PLAN'
+                                                        ? GetFillPlanResponse
                                                         : M extends
-                                                              | 'GENERATE_CUSTOM_ANSWER'
-                                                              | 'UPDATE_GENERATED_ANSWER'
-                                                              | 'APPROVE_GENERATED_ANSWER'
-                                                              | 'REJECT_GENERATED_ANSWER'
-                                                              | 'REGENERATE_GENERATED_ANSWER'
-                                                              | 'ADD_ANSWER_EVIDENCE'
-                                                          ? | { record: AnswerGenerationRecord }
-                                                            | { error: AgentError }
+                                                              | 'EXECUTE_APPROVED_ACTIONS'
+                                                              | 'EXECUTE_FILL_PLAN'
+                                                          ? FillExecutionResponse
                                                           : M extends
-                                                                | 'GENERATE_ALL_CUSTOM_ANSWERS'
-                                                                | 'GET_GENERATED_ANSWERS'
-                                                            ? | {
-                                                                  store: AnswerGenerationStore | null;
-                                                                }
-                                                              | { error: AgentError }
-                                                            : M extends
-                                                                  | 'CANCEL_ANSWER_GENERATION'
-                                                                  | 'ANSWER_GENERATION_PROGRESS'
-                                                                  | 'ANSWER_GENERATION_COMPLETE'
-                                                                  | 'ANSWER_GENERATION_FAILED'
-                                                                  | 'SAVE_AS_APPROVED_ANSWER'
-                                                                  | 'CLEAR_GENERATED_ANSWER'
-                                                              ? | { ok: true }
-                                                                | { ok: false; error: AgentError }
-                                                              : never;
+                                                                | 'FILL_PROGRESS'
+                                                                | 'FILL_COMPLETE'
+                                                                | 'FILL_FAILED'
+                                                                | 'FILL_CANCEL'
+                                                                | 'CLEAR_FILL_PLAN'
+                                                                | 'FILL_PLAN_UPDATED'
+                                                            ? | { ok: true }
+                                                              | { ok: false; error: AgentError }
+                                                            : M extends 'CLASSIFY_CUSTOM_QUESTION'
+                                                              ? | QuestionClassificationResult
+                                                                | { error: AgentError }
+                                                              : M extends
+                                                                    | 'GENERATE_CUSTOM_ANSWER'
+                                                                    | 'UPDATE_GENERATED_ANSWER'
+                                                                    | 'APPROVE_GENERATED_ANSWER'
+                                                                    | 'REJECT_GENERATED_ANSWER'
+                                                                    | 'REGENERATE_GENERATED_ANSWER'
+                                                                    | 'ADD_ANSWER_EVIDENCE'
+                                                                ? | {
+                                                                      record: AnswerGenerationRecord;
+                                                                    }
+                                                                  | { error: AgentError }
+                                                                : M extends
+                                                                      | 'GENERATE_ALL_CUSTOM_ANSWERS'
+                                                                      | 'GET_GENERATED_ANSWERS'
+                                                                  ? | {
+                                                                        store: AnswerGenerationStore | null;
+                                                                      }
+                                                                    | { error: AgentError }
+                                                                  : M extends
+                                                                        | 'CANCEL_ANSWER_GENERATION'
+                                                                        | 'ANSWER_GENERATION_PROGRESS'
+                                                                        | 'ANSWER_GENERATION_COMPLETE'
+                                                                        | 'ANSWER_GENERATION_FAILED'
+                                                                        | 'SAVE_AS_APPROVED_ANSWER'
+                                                                        | 'CLEAR_GENERATED_ANSWER'
+                                                                    ? | { ok: true }
+                                                                      | {
+                                                                          ok: false;
+                                                                          error: AgentError;
+                                                                        }
+                                                                    : never;
 
 /**
  * A message must never leave a caller waiting indefinitely. The background worker
@@ -285,10 +311,14 @@ export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends 'A
 const MESSAGE_TIMEOUT_MS = 15_000;
 const SCAN_MESSAGE_TIMEOUT_MS = 25_000;
 const FILL_MESSAGE_TIMEOUT_MS = 35_000;
+const ROUTE_MESSAGE_TIMEOUT_MS = 40_000;
 const ANSWER_MESSAGE_TIMEOUT_MS = 390_000;
 
 function timeoutFor(type: ExtensionMessage['type']): number {
   if (type === 'SCAN_APPLICATION') return SCAN_MESSAGE_TIMEOUT_MS;
+  // A route hop is a click, a wait for the portal to settle, and a full rescan
+  // of whatever it landed on — three waits in series, not one.
+  if (type === 'FOLLOW_PORTAL_ROUTE') return ROUTE_MESSAGE_TIMEOUT_MS;
   if (type === 'EXECUTE_APPROVED_ACTIONS' || type === 'EXECUTE_FILL_PLAN') {
     return FILL_MESSAGE_TIMEOUT_MS;
   }
@@ -318,6 +348,9 @@ function validateScanResponse(type: ExtensionMessage['type'], response: unknown)
         .parse(response);
     case 'SETTINGS_UPDATED':
       return z.object({ ok: z.literal(true) }).parse(response);
+    case 'GET_PORTAL_ROUTE':
+    case 'FOLLOW_PORTAL_ROUTE':
+      return portalRouteResponseSchema.parse(response);
     case 'SCAN_APPLICATION':
       return scanApplicationResponseSchema.parse(response);
     case 'SCAN_CANCEL':

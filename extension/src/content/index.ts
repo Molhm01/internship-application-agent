@@ -13,7 +13,9 @@ import {
   fillExecutionResultSchema,
   type DeterministicFillAction,
   type FillExecutionResult,
+  activateNavigationMessageSchema,
 } from '@internship-agent/shared';
+import { activateNavigation } from './navigate.js';
 import type { ContentPingResult, ExtensionMessage } from '../messaging/messages.js';
 import { scanApplication } from '../scanner/scanApplication.js';
 import { ATS_ADAPTERS, selectAdapter } from '../scanner/adapters.js';
@@ -106,6 +108,31 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
     };
     sendResponse(result);
     return false;
+  }
+
+  if (raw?.type === 'ACTIVATE_NAVIGATION') {
+    // Parsed here rather than trusted: this is the one handler that clicks
+    // something, and the schema is what makes `final_submit` unrepresentable.
+    const parsed = activateNavigationMessageSchema.safeParse(raw);
+    if (!parsed.success) {
+      sendResponse({
+        status: 'refused',
+        reason: 'That navigation request failed validation and was not acted on.',
+      });
+      return false;
+    }
+    void activateNavigation(parsed.data, document, () => window.location.href).then(
+      sendResponse,
+      (cause: unknown) => {
+        sendResponse({
+          status: 'refused',
+          reason: `The navigation control could not be activated: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`,
+        });
+      },
+    );
+    return true;
   }
 
   if (raw?.type === 'HIGHLIGHT_REVIEW_FIELDS') {

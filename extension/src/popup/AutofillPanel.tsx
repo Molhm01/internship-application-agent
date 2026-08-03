@@ -1,10 +1,11 @@
 import {
   PAGE_KIND_LABELS,
+  PORTAL_ROUTE_LABELS,
   REVIEW_BADGES,
   type ApplicationAutofillReport,
-  type NavigationAction,
   type NavigationState,
-  type PortalStrategy,
+  type PortalRouteIntent,
+  type PortalRouteResponse,
 } from '@internship-agent/shared';
 import type { AutofillState } from './useAutofillState.js';
 
@@ -24,75 +25,76 @@ interface AutofillPanelProps {
   fieldsDetected: number | null;
   /** What kind of page this is and where it leads, when the scan knew. */
   navigation?: NavigationState;
-  /** The user's saved employer-portal strategy, shown as a recommendation. */
-  portalStrategy?: PortalStrategy;
+  /** What the saved strategy says to do about this portal's routes. */
+  route?: PortalRouteResponse | null;
+  /** True while a route is being taken. */
+  followingRoute?: boolean;
+  onFollowRoute?: () => void;
   /** One sentence about the AI agent, or null while it is still unknown. */
   agentStatus: string | null;
 }
 
-/** The three routes, in the user's words rather than the ATS's. */
-const ROUTE_LABELS: Partial<Record<NavigationAction['intent'], string>> = {
-  create_account: 'Create employer account',
-  apply_as_guest: 'Apply as guest',
-  login: 'I already have an account',
-};
-
 /**
  * The routes off a sign-in or choose-how-to-apply page.
  *
- * The user's saved strategy is shown as a recommendation, never as a decision
- * already taken. Creating an employer account and applying as a guest have
- * permanently different and largely irreversible consequences, so the agent
- * names what it would do and leaves the click to the person.
+ * The agent takes the route the user's saved strategy names, and says which one
+ * and why. It stops and asks only when the strategy is "ask every time", when no
+ * strategy is saved, or when the page offers nothing the strategy can act on —
+ * and it never asks its way past a CAPTCHA or a verification code, which are
+ * reported as needing the person rather than as a choice.
  */
 function RouteChoices({
-  navigation,
-  portalStrategy,
+  route,
+  following,
+  onFollow,
 }: {
-  navigation: NavigationState;
-  portalStrategy?: PortalStrategy;
+  route: PortalRouteResponse;
+  following: boolean;
+  onFollow: () => void;
 }): JSX.Element | null {
-  const routes = navigation.actions.filter((action) => action.intent in ROUTE_LABELS);
-  if (routes.length === 0) return null;
+  if ('error' in route) return null;
+  if (route.decision === 'none') return null;
 
-  const guest = routes.find((route) => route.intent === 'apply_as_guest');
-  const create = routes.find((route) => route.intent === 'create_account');
-  const recommended =
-    portalStrategy === 'prefer_guest'
-      ? (guest ?? create)
-      : portalStrategy === 'create_when_required'
-        ? (guest ?? create)
-        : null;
+  if (route.decision === 'blocked') {
+    return (
+      <section className="result result--bad" role="alert">
+        {route.reason}
+      </section>
+    );
+  }
+
+  if (route.decision === 'act') {
+    return (
+      <div className="autofill__routes">
+        <p className="autofill__analysis">
+          {route.takenIntent
+            ? `${PORTAL_ROUTE_LABELS[route.takenIntent]}: ${route.reason}`
+            : route.reason}
+        </p>
+        <button type="button" className="primary" disabled={following} onClick={onFollow}>
+          {following ? 'Continuing…' : 'Continue on this page'}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="autofill__routes">
       <p className="autofill__analysis">This page is asking how you want to apply:</p>
       <ul className="autofill__documents">
-        {routes.map((route) => (
-          <li key={`${route.intent}-${route.selector}`}>
-            <strong>{ROUTE_LABELS[route.intent]}</strong>
-            {route.label && route.label !== ROUTE_LABELS[route.intent]
-              ? ` — the page calls this “${route.label}”`
+        {(route.options ?? []).map((option) => (
+          <li key={`${option.intent}-${option.selector}`}>
+            <strong>
+              {PORTAL_ROUTE_LABELS[option.intent as PortalRouteIntent] ?? option.label}
+            </strong>
+            {option.label &&
+            option.label !== PORTAL_ROUTE_LABELS[option.intent as PortalRouteIntent]
+              ? ` — the page calls this “${option.label}”`
               : null}
-            {recommended && recommended.selector === route.selector ? ' · recommended' : null}
           </li>
         ))}
       </ul>
-      {portalStrategy === 'prefer_guest' && guest ? (
-        <p className="autofill__analysis">
-          You asked to prefer applying as a guest, so no account is needed here.
-        </p>
-      ) : null}
-      {portalStrategy === 'create_when_required' && guest ? (
-        <p className="autofill__analysis">
-          You asked to create an account only when required. A guest route exists, so an account is
-          not required here.
-        </p>
-      ) : null}
-      <p className="autofill__never-submits">
-        Choose one yourself. The agent does not pick between creating an account and applying as a
-        guest.
-      </p>
+      <p className="autofill__never-submits">{route.reason}</p>
     </div>
   );
 }
@@ -126,7 +128,9 @@ export function AutofillPanel({
   eligible,
   fieldsDetected,
   navigation,
-  portalStrategy,
+  route,
+  followingRoute = false,
+  onFollowRoute,
   agentStatus,
 }: AutofillPanelProps): JSX.Element {
   const { bundle, loadingBundle, running, progress, phaseLabel, report, error } = state;
@@ -151,21 +155,38 @@ export function AutofillPanel({
           <ul className="autofill__documents">
             <li>
               {bundle.resume ? '✓' : '—'} Tailored résumé
-              {bundle.resume ? ` (${bundle.resume.filename})` : ' not loaded'}
+              {bundle.resume ? ` (${bundle.resume.filename})` : ' unavailable'}
             </li>
             <li>
-              {bundle.coverLetter ? '✓' : '—'} Cover letter
-              {bundle.coverLetter ? ` (${bundle.coverLetter.filename})` : ' not loaded'}
+              {bundle.coverLetter ? '✓' : '—'} Tailored cover letter
+              {bundle.coverLetter ? ` (${bundle.coverLetter.filename})` : ' unavailable'}
             </li>
             <li>
               {bundle.profile ? '✓ Profile synchronized' : '— Profile not included in this bundle'}
             </li>
           </ul>
+          {/*
+            Said explicitly rather than left to be inferred from a dash. This run
+            started on Internship Pilot for a named job, so the user has every
+            reason to assume the tailored documents are what will be attached —
+            and the default résumé is deliberately not substituted for them.
+          */}
+          {!bundle.resume || !bundle.coverLetter ? (
+            <p className="autofill__never-submits">
+              {!bundle.resume && !bundle.coverLetter
+                ? 'No tailored documents came with this application.'
+                : !bundle.resume
+                  ? 'No tailored résumé came with this application.'
+                  : 'No tailored cover letter came with this application.'}{' '}
+              Your default documents will not be attached in their place — generate them on
+              Internship Pilot, or attach a file yourself.
+            </p>
+          ) : null}
         </div>
       ) : (
         <p className="autofill__ready">
-          No application loaded from Internship Pilot. Autofill still works from your saved profile
-          on any application page.
+          No application loaded from Internship Pilot, so no tailored résumé or cover letter is
+          available here. Autofill still works from your saved profile on any application page.
         </p>
       )}
 
@@ -179,8 +200,8 @@ export function AutofillPanel({
         </section>
       ) : null}
 
-      {navigation ? (
-        <RouteChoices navigation={navigation} {...(portalStrategy ? { portalStrategy } : {})} />
+      {route ? (
+        <RouteChoices route={route} following={followingRoute} onFollow={() => onFollowRoute?.()} />
       ) : null}
 
       {navigation?.kind === 'final_submit' ? (

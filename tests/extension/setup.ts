@@ -23,6 +23,9 @@ export interface ChromeMock {
       remove: ReturnType<typeof vi.fn>;
     };
   };
+  scripting: {
+    executeScript: ReturnType<typeof vi.fn>;
+  };
 }
 
 /**
@@ -59,6 +62,9 @@ export function installChromeMock(): ChromeMock {
         }),
       },
     },
+    // Defaults to succeeding: a test about reinjection failing has to say so,
+    // rather than every unrelated test silently exercising the failure path.
+    scripting: { executeScript: vi.fn().mockResolvedValue([{ result: null }]) },
   };
 
   // `typeof chrome` covers the entire extension API; the double cast keeps the

@@ -136,7 +136,28 @@ export function attachBundleDocuments(
     if (!kind) return action;
 
     if (kind === 'resume' || (kind === 'unknown' && singleUnknownSlot)) {
-      if (!bundle.resume) return action;
+      if (!bundle.resume) {
+        // Returning the action untouched used to leave the planner's own choice
+        // in place, which is the profile's default résumé. That is the wrong
+        // document: this run started from Internship Pilot, for this job, and
+        // quietly attaching a generic résumé to a tailored application is worse
+        // than attaching nothing and saying so.
+        // `documentId` and `documentName` are dropped, not just overridden by
+        // the action kind. Leaving the planner's default résumé attached to an
+        // action merely relabelled `missing_information` keeps a live pointer to
+        // the wrong file, one `if` away from being uploaded anyway.
+        const { documentId: _id, documentName: _name, ...withoutDocument } = action;
+        return {
+          ...withoutDocument,
+          action: 'missing_information' as const,
+          requiresReview: true,
+          reason: `This application was opened from Internship Pilot for ${bundle.company}, but no tailored résumé came with it.`,
+          warnings: [
+            ...action.warnings,
+            'Generate a tailored résumé on Internship Pilot and send the bundle again, or attach a file yourself. Your default résumé was not used.',
+          ],
+        };
+      }
       return uploadAction(
         action,
         bundle.resume,

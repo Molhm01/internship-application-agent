@@ -3,6 +3,18 @@
  * human-readable message and a suggested action. Generic "something went wrong"
  * messages are not acceptable anywhere in this product.
  */
+
+/**
+ * The one instruction for a page whose content script cannot be reached.
+ *
+ * Shared, and used verbatim in three places — the worker's error, the popup's
+ * page panel, and the reinjection fallback — because a user who sees three
+ * different sentences for one condition concludes there are three problems.
+ * Reloading the *page* is the fix; reloading or reinstalling the extension is
+ * not, and saying so cost real time.
+ */
+export const RECONNECT_MESSAGE = 'Reload this application page to reconnect the extension.';
+
 export const ERROR_CODES = [
   'AGENT_SERVER_UNAVAILABLE',
   'OLLAMA_UNAVAILABLE',
@@ -242,8 +254,7 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
   EXTENSION_RELOAD_REQUIRED:
     'Open chrome://extensions, press Reload on Internship Application Agent, then reopen this page. The background worker is out of date.',
   ACTIVE_TAB_UNAVAILABLE: 'Open an HTTP or HTTPS application page, then try the scan again.',
-  CONTENT_SCRIPT_UNAVAILABLE:
-    'Reload the application page after reloading the extension, then try again.',
+  CONTENT_SCRIPT_UNAVAILABLE: RECONNECT_MESSAGE,
   UNSUPPORTED_PAGE: 'Open a normal HTTP or HTTPS job application page and retry.',
   ATS_DETECTION_FAILED:
     'Reload the page and retry. The generic scanner will be used when no named ATS matches.',

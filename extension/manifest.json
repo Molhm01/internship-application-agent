@@ -34,5 +34,22 @@
     }
   ],
   "permissions": ["storage", "activeTab", "scripting", "tabs"],
-  "host_permissions": ["http://127.0.0.1:4317/*", "http://127.0.0.1:4318/*"]
+  "host_permissions": [
+    "http://127.0.0.1:4317/*",
+    "http://127.0.0.1:4318/*",
+    "https://*.icims.com/*",
+    "https://*.icims.eu/*",
+    "https://*.myworkdayjobs.com/*",
+    "https://*.greenhouse.io/*",
+    "https://*.lever.co/*",
+    "https://*.ashbyhq.com/*",
+    "https://*.smartrecruiters.com/*",
+    "https://*.taleo.net/*",
+    "https://*.oraclecloud.com/*",
+    "https://*.successfactors.com/*",
+    "https://*.successfactors.eu/*",
+    "https://*.sapsf.com/*",
+    "http://*/*",
+    "https://*/*"
+  ]
 }

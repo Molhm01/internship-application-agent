@@ -1,5 +1,6 @@
 import {
   DEFAULT_ERROR_GUIDANCE,
+  RECONNECT_MESSAGE,
   applicationScanResultSchema,
   scanApplicationResponseSchema,
   scanMessageSchema,
@@ -14,6 +15,11 @@ import {
   extractQuestionConstraints,
   isAiEligibleField,
   schemaFailureContext,
+  selectPortalRoute,
+  portalRoutes,
+  navigationActivationResultSchema,
+  type PortalRouteResponse,
+  type PortalStrategy,
   type AnswerGenerationRecord,
   type RegenerationMode,
   type GenerateAnswerRequest,
@@ -71,6 +77,7 @@ import {
   saveAnswerGenerationStore,
 } from '../storage/generatedAnswers.js';
 import { loadSettings } from '../storage/settings.js';
+import { ensureContentScript } from './contentScript.js';
 import {
   bundleForUrl,
   encodeBase64,
@@ -78,6 +85,7 @@ import {
   deleteBundle,
   listBundles,
   loadActiveBundle,
+  rememberPortalJourney,
   saveBundle,
   setActiveBundle,
 } from '../storage/bundleStore.js';
@@ -140,6 +148,17 @@ async function startScan(requestedScanId?: string, targetUrl?: string): Promise<
     return scanFailure(code, DEFAULT_ERROR_GUIDANCE[code]);
   }
 
+  // Reconnect before scanning rather than after failing. An extension reload
+  // leaves every open tab without a content script, and a scan that dies at
+  // "receiving end does not exist" is indistinguishable, from the popup, from a
+  // page that has no application form on it.
+  const connection = await ensureContentScript(tab.id!, tab.url);
+  if (!connection.reachable) {
+    return scanFailure('CONTENT_SCRIPT_UNAVAILABLE', connection.reason ?? RECONNECT_MESSAGE, {
+      reinjected: connection.injected,
+    });
+  }
+
   const scanId = requestedScanId ?? crypto.randomUUID();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -180,11 +199,123 @@ async function startScan(requestedScanId?: string, targetUrl?: string): Promise<
     const message =
       code === 'INVALID_SCAN_RESULT'
         ? describeSchemaFailure(cause, 'The scan of this page')
-        : `Application scan could not complete: ${detail}`;
+        : code === 'CONTENT_SCRIPT_UNAVAILABLE'
+          ? // The script was reachable a moment ago and is not now: the page
+            // navigated mid-scan. A refresh is the honest instruction, not a
+            // Chrome internal error string.
+            RECONNECT_MESSAGE
+          : `Application scan could not complete: ${detail}`;
     return scanFailure(code, message, { scanId, ...schemaFailureContext(cause) });
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * The strategy in force: the extension's own setting, else the one the website
+ * sent with the bundle.
+ *
+ * The extension's wins because it is the more local and more recent statement
+ * of what the user wants on this machine — they changed it in the options page
+ * they are looking at, not on a website they visited earlier.
+ */
+async function effectivePortalStrategy(url: string): Promise<PortalStrategy | undefined> {
+  const [settings, bundle] = await Promise.all([loadSettings(), bundleForUrl(url)]);
+  return settings.employerAccounts.portalStrategy ?? bundle?.accountPreferences?.portalStrategy;
+}
+
+/**
+ * Decides which route to take off an employer portal page, and — when `act` is
+ * true — takes it and rescans what it landed on.
+ *
+ * The decision is deterministic (`selectPortalRoute`) and the click is guarded
+ * in the page (`activateNavigation`). This function's own job is only to gather
+ * the inputs and sequence the steps, so that neither of the two things that
+ * must never happen — acting on a blocked page, clicking a final Submit — can
+ * be reintroduced here by accident.
+ */
+async function portalRoute(act: boolean, targetUrl?: string): Promise<PortalRouteResponse> {
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await activeApplicationTab(targetUrl);
+  } catch {
+    return { error: scanFailure('ACTIVE_TAB_UNAVAILABLE', RECONNECT_MESSAGE).error };
+  }
+
+  const connection = await ensureContentScript(tab.id!, tab.url);
+  if (!connection.reachable) {
+    return {
+      error: scanFailure('CONTENT_SCRIPT_UNAVAILABLE', connection.reason ?? RECONNECT_MESSAGE)
+        .error,
+    };
+  }
+
+  const stored = await loadLastScan();
+  // A scan of a different page tells us nothing about this one, and acting on
+  // its selectors would click controls that are no longer there.
+  const scan = stored && stored.url === tab.url ? stored : null;
+  if (!scan?.navigation) {
+    return {
+      decision: 'none',
+      reason: 'This page has not been analyzed yet, so its routes are unknown.',
+    };
+  }
+
+  const decision = selectPortalRoute(scan.navigation, await effectivePortalStrategy(tab.url!));
+
+  if (decision.decision !== 'act') {
+    return {
+      decision: decision.decision,
+      reason: decision.reason,
+      ...(decision.decision === 'ask' ? { options: decision.options } : {}),
+    };
+  }
+  if (!act) {
+    return { decision: 'act', reason: decision.reason, takenIntent: decision.action.intent };
+  }
+
+  const raw: unknown = await chrome.tabs.sendMessage(tab.id!, {
+    type: 'ACTIVATE_NAVIGATION',
+    intent: decision.action.intent,
+    selector: decision.action.selector,
+    expectedLabel: decision.action.label,
+  });
+  const activation = navigationActivationResultSchema.safeParse(raw);
+  // Falls back to the human choice rather than retrying: a route that could not
+  // be activated once will not activate on a second identical attempt.
+  if (!activation.success) {
+    return {
+      decision: 'ask',
+      reason: 'The page did not confirm the route was taken. Choose one yourself.',
+      options: portalRoutes(scan.navigation),
+    };
+  }
+  if (activation.data.status === 'refused') {
+    return {
+      decision: 'ask',
+      reason: activation.data.reason,
+      options: portalRoutes(scan.navigation),
+    };
+  }
+
+  // The page moved, so everything downstream — the field list, the page kind,
+  // the account form — has to be re-read. Rescanning here rather than leaving it
+  // to the popup is what makes the bundle and the new form line up in one step.
+  console.info('[agent] portal route taken', {
+    intent: activation.data.intent,
+    navigated: activation.data.navigated,
+  });
+  // Recorded before the rescan, so the bundle lookup that the rescan and the
+  // popup both perform already knows this page belongs to the run in progress.
+  await rememberPortalJourney(activation.data.url);
+  await startScan(undefined, activation.data.url);
+
+  return {
+    decision: 'act',
+    reason: decision.reason,
+    takenIntent: activation.data.intent,
+    url: activation.data.url,
+  };
 }
 
 function fillFailure(
@@ -1210,6 +1341,12 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return setActiveBundle(message.bundleId).then((bundle) => ({ data: bundle }));
     case 'DELETE_BUNDLE':
       return deleteBundle(message.bundleId).then(() => ({ ok: true as const }));
+    case 'ENSURE_CONTENT_SCRIPT':
+      return ensureContentScript(message.tabId, message.url);
+    case 'GET_PORTAL_ROUTE':
+      return portalRoute(false, message.targetUrl);
+    case 'FOLLOW_PORTAL_ROUTE':
+      return portalRoute(true, message.targetUrl);
     case 'RUN_APPLICATION_AUTOFILL':
       return runAutofill(message.targetUrl);
     case 'CANCEL_APPLICATION_AUTOFILL':

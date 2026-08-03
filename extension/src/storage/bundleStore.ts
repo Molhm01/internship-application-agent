@@ -1,6 +1,7 @@
 import {
   applicationBundleSchema,
   bundleMatchesUrl,
+  bundleSharesPortal,
   bundleVersionProblem,
   type ApplicationBundle,
   type ApplicationBundleTransfer,
@@ -216,7 +217,68 @@ export async function bundleForUrl(url: string): Promise<ApplicationBundle | nul
   const active = await loadActiveBundle();
   if (active && bundleMatchesUrl(active, url)) return active;
   const bundles = await allBundles();
-  return bundles.find((bundle) => bundleMatchesUrl(bundle, url)) ?? null;
+  const matched = bundles.find((bundle) => bundleMatchesUrl(bundle, url));
+  if (matched) return matched;
+  // Last resort: the agent itself walked the applicant off the posting and onto
+  // a sign-in or account page, whose path has no relationship to the job's.
+  //
+  // Deliberately not a plain same-origin match. Greenhouse and Lever host every
+  // employer on one origin, so "same origin" there means "some other company's
+  // job" — the journey record is what distinguishes a hop this extension
+  // performed from the user simply browsing to a different posting.
+  const journey = await loadPortalJourney();
+  const sameJourney =
+    active !== null &&
+    journey !== null &&
+    journey.bundleId === active.id &&
+    bundleSharesPortal(active, url);
+  return sameJourney ? active : null;
+}
+
+const JOURNEY_KEY = 'portalJourney';
+/** A journey older than this is stale browsing, not the run that is in progress. */
+const JOURNEY_TTL_MS = 60 * 60 * 1000;
+
+interface PortalJourney {
+  bundleId: string;
+  origin: string;
+  startedAt: number;
+}
+
+/**
+ * Records that the agent took a portal route while this bundle was active.
+ *
+ * This is what lets the bundle follow the applicant from `/jobs/12345/job` to
+ * `/jobs/login` to `/connect` without letting it follow them to an unrelated
+ * employer that happens to share a hostname.
+ */
+export async function rememberPortalJourney(url: string): Promise<void> {
+  const active = await loadActiveBundle();
+  if (!active) return;
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return;
+  }
+  await chrome.storage.local.set({
+    [JOURNEY_KEY]: { bundleId: active.id, origin, startedAt: Date.now() } satisfies PortalJourney,
+  });
+}
+
+async function loadPortalJourney(): Promise<PortalJourney | null> {
+  const stored = await chrome.storage.local.get(JOURNEY_KEY);
+  const raw = stored[JOURNEY_KEY] as Partial<PortalJourney> | undefined;
+  if (
+    !raw ||
+    typeof raw.bundleId !== 'string' ||
+    typeof raw.origin !== 'string' ||
+    typeof raw.startedAt !== 'number'
+  ) {
+    return null;
+  }
+  if (Date.now() - raw.startedAt > JOURNEY_TTL_MS) return null;
+  return raw as PortalJourney;
 }
 
 export async function readBundleDocument(

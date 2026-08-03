@@ -6,6 +6,7 @@ export * from './documents.js';
 export * from './answers.js';
 export * from './fields.js';
 export * from './scan.js';
+export * from './navigation.js';
 export * from './messages.js';
 export * from './plan.js';
 export * from './run.js';

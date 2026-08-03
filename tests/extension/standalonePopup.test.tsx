@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   applicationAutofillReportSchema,
   applicationScanResultSchema,
+  RECONNECT_MESSAGE,
   type HealthResponse,
 } from '@internship-agent/shared';
 import { App } from '../../extension/src/popup/App.js';
@@ -143,6 +144,10 @@ describe('standalone popup autofill', () => {
               reason: 'user_selected',
             },
           });
+        case 'ENSURE_CONTENT_SCRIPT':
+          return Promise.resolve({ reachable: true, injected: false });
+        case 'GET_PORTAL_ROUTE':
+          return Promise.resolve({ decision: 'none', reason: 'no routes' });
         case 'GET_LAST_SCAN':
           return Promise.resolve({ scan: null });
         case 'GET_FILL_PLAN':
@@ -182,7 +187,7 @@ describe('standalone popup autofill', () => {
     expect(autofillReport.submissionPrevented).toBe(true);
   });
 
-  it('reads a sign-in page as a sign-in page and offers the routes without taking one', async () => {
+  it('shows the three choices when the strategy is Ask every time', async () => {
     const chromeMock = installChromeMock();
     chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: URL }]);
     chromeMock.tabs.sendMessage.mockResolvedValue({ present: true, url: URL });
@@ -218,6 +223,15 @@ describe('standalone popup autofill', () => {
             serverUrl: 'http://127.0.0.1:4317',
             tokenConfigured: true,
           });
+        case 'ENSURE_CONTENT_SCRIPT':
+          return Promise.resolve({ reachable: true, injected: false });
+        case 'GET_PORTAL_ROUTE':
+          // "Ask every time": the three routes, and no decision taken.
+          return Promise.resolve({
+            decision: 'ask',
+            reason: 'You asked to be shown the choice on every employer portal.',
+            options: loginScan.navigation?.actions ?? [],
+          });
         case 'GET_LAST_SCAN':
           return Promise.resolve({ scan: null });
         case 'GET_FILL_PLAN':
@@ -242,12 +256,158 @@ describe('standalone popup autofill', () => {
     expect(screen.getByText(/the page calls this .New User./)).toBeDefined();
     expect(screen.getByText('Apply as guest')).toBeDefined();
     expect(screen.getByText('I already have an account')).toBeDefined();
-    expect(
-      screen.getByText(/does not pick between creating an account and applying as a guest/),
-    ).toBeDefined();
+    expect(screen.getByText(/shown the choice on every employer portal/)).toBeDefined();
     // Nothing on a sign-in page is fillable, and the button says so.
     expect(screen.getByRole('button', { name: 'Nothing to autofill on this page' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Autofill Application' })).toBeNull();
+  });
+
+  it('takes the saved route instead of asking, and rescans where it lands', async () => {
+    const chromeMock = installChromeMock();
+    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: URL }]);
+    chromeMock.tabs.sendMessage.mockResolvedValue({ present: true, url: URL });
+    const followed: string[] = [];
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      followed.push(message.type);
+      switch (message.type) {
+        case 'AGENT_STATUS_REQUEST':
+          return Promise.resolve({
+            health: health(),
+            latencyMs: 1,
+            serverUrl: 'http://127.0.0.1:4317',
+            tokenConfigured: true,
+          });
+        case 'ENSURE_CONTENT_SCRIPT':
+          return Promise.resolve({ reachable: true, injected: false });
+        case 'GET_PORTAL_ROUTE':
+          // What "Create an account when required" resolves to on a portal that
+          // offers a New User route.
+          return Promise.resolve({
+            decision: 'act',
+            reason: 'You asked the agent to create an employer account when one is needed.',
+            takenIntent: 'create_account',
+          });
+        case 'FOLLOW_PORTAL_ROUTE':
+          return Promise.resolve({
+            decision: 'act',
+            reason: 'You asked the agent to create an employer account when one is needed.',
+            takenIntent: 'create_account',
+            url: 'https://boards.greenhouse.io/acme/jobs/123/register',
+          });
+        case 'GET_LAST_SCAN':
+          return Promise.resolve({ scan: null });
+        case 'GET_FILL_PLAN':
+          return Promise.resolve({ plan: null, report: null });
+        case 'GET_ACTIVE_BUNDLE':
+          return Promise.resolve({ data: null });
+        case 'GET_AUTOFILL_REPORT':
+          return Promise.resolve({ report: null });
+        case 'SCAN_APPLICATION':
+          return Promise.resolve({ type: 'SCAN_COMPLETE', result: scan });
+        default:
+          throw new Error(`Unexpected message: ${message.type}`);
+      }
+    });
+
+    render(<App />);
+    // The decision is stated before it is taken, naming the route and the reason.
+    const proceed = await screen.findByRole('button', { name: 'Continue on this page' });
+    expect(
+      screen.getByText(/Create employer account: You asked the agent to create/),
+    ).toBeDefined();
+    // And it is emphatically not the old refusal.
+    expect(screen.queryByText(/does not pick between/)).toBeNull();
+
+    fireEvent.click(proceed);
+    await waitFor(() => expect(followed).toContain('FOLLOW_PORTAL_ROUTE'));
+  });
+
+  it('says to reload the page — not that there is no form — when the content script is gone', async () => {
+    const chromeMock = installChromeMock();
+    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: URL }]);
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      switch (message.type) {
+        case 'AGENT_STATUS_REQUEST':
+          return Promise.resolve({
+            health: health(),
+            latencyMs: 1,
+            serverUrl: 'http://127.0.0.1:4317',
+            tokenConfigured: true,
+          });
+        case 'ENSURE_CONTENT_SCRIPT':
+          // Reinjection was attempted and the page still will not answer.
+          return Promise.resolve({
+            reachable: false,
+            injected: true,
+            reason: RECONNECT_MESSAGE,
+          });
+        case 'GET_LAST_SCAN':
+          return Promise.resolve({ scan: null });
+        case 'GET_FILL_PLAN':
+          return Promise.resolve({ plan: null, report: null });
+        case 'GET_ACTIVE_BUNDLE':
+          return Promise.resolve({ data: null });
+        case 'GET_AUTOFILL_REPORT':
+          return Promise.resolve({ report: null });
+        case 'GET_PORTAL_ROUTE':
+          return Promise.resolve({ decision: 'none', reason: 'no routes' });
+        default:
+          throw new Error(`Unexpected message: ${message.type}`);
+      }
+    });
+
+    render(<App />);
+
+    // Said in both places it matters: beside the site row, and where the
+    // application panel would otherwise have rendered a verdict about the page.
+    await waitFor(() => expect(screen.getAllByText(RECONNECT_MESSAGE)).toHaveLength(2));
+    expect(screen.queryByText('No supported application form detected on this page')).toBeNull();
+    // Nor is the user told to reinstall anything.
+    expect(screen.queryByText(/reinstall/i)).toBeNull();
+    // A disconnected page is never scanned: there is nothing there to scan.
+    const attempted = chromeMock.runtime.sendMessage.mock.calls.map(
+      ([message]) => (message as { type: string }).type,
+    );
+    expect(attempted).not.toContain('SCAN_APPLICATION');
+  });
+
+  it('still names the ATS from the hostname when the page cannot be reached at all', async () => {
+    const chromeMock = installChromeMock();
+    const icims = 'https://careers2-quanta.icims.com/jobs/12345/login';
+    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: icims }]);
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      switch (message.type) {
+        case 'AGENT_STATUS_REQUEST':
+          return Promise.resolve({
+            health: health(),
+            latencyMs: 1,
+            serverUrl: 'http://127.0.0.1:4317',
+            tokenConfigured: true,
+          });
+        case 'ENSURE_CONTENT_SCRIPT':
+          return Promise.resolve({ reachable: false, injected: true, reason: RECONNECT_MESSAGE });
+        case 'GET_LAST_SCAN':
+          return Promise.resolve({ scan: null });
+        case 'GET_FILL_PLAN':
+          return Promise.resolve({ plan: null, report: null });
+        case 'GET_ACTIVE_BUNDLE':
+          return Promise.resolve({ data: null });
+        case 'GET_AUTOFILL_REPORT':
+          return Promise.resolve({ report: null });
+        case 'GET_PORTAL_ROUTE':
+          return Promise.resolve({ decision: 'none', reason: 'no routes' });
+        default:
+          throw new Error(`Unexpected message: ${message.type}`);
+      }
+    });
+
+    render(<App />);
+
+    // No scan, no content script, and the vendor is still named. "Not detected"
+    // here would read as "this site is unsupported", which is a different and
+    // wrong diagnosis.
+    expect(await screen.findByText('iCIMS')).toBeDefined();
+    expect(screen.queryByText('Not detected')).toBeNull();
   });
 
   it('names the loaded application and its tailored documents', async () => {
@@ -263,6 +423,10 @@ describe('standalone popup autofill', () => {
             serverUrl: 'http://127.0.0.1:4317',
             tokenConfigured: true,
           });
+        case 'ENSURE_CONTENT_SCRIPT':
+          return Promise.resolve({ reachable: true, injected: false });
+        case 'GET_PORTAL_ROUTE':
+          return Promise.resolve({ decision: 'none', reason: 'no routes' });
         case 'GET_LAST_SCAN':
           return Promise.resolve({ scan: null });
         case 'GET_FILL_PLAN':
@@ -309,7 +473,9 @@ describe('standalone popup autofill', () => {
       await screen.findByText('Ready for Northwind Robotics — Software Engineering Intern'),
     ).toBeDefined();
     expect(screen.getByText(/✓ Tailored résumé \(Resume-Northwind\.pdf\)/)).toBeDefined();
-    expect(screen.getByText(/✓ Cover letter \(Cover-Letter-Northwind\.pdf\)/)).toBeDefined();
+    expect(
+      screen.getByText(/✓ Tailored cover letter \(Cover-Letter-Northwind\.pdf\)/),
+    ).toBeDefined();
   });
 
   it('shows the required message when the scan finds no fields', async () => {
@@ -325,6 +491,10 @@ describe('standalone popup autofill', () => {
           tokenConfigured: true,
         });
       }
+      if (message.type === 'ENSURE_CONTENT_SCRIPT')
+        return Promise.resolve({ reachable: true, injected: false });
+      if (message.type === 'GET_PORTAL_ROUTE')
+        return Promise.resolve({ decision: 'none', reason: 'no routes' });
       if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
       if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
       if (message.type === 'SCAN_APPLICATION') {
@@ -375,6 +545,10 @@ describe('standalone popup autofill', () => {
           tokenConfigured: true,
         });
       }
+      if (message.type === 'ENSURE_CONTENT_SCRIPT')
+        return Promise.resolve({ reachable: true, injected: false });
+      if (message.type === 'GET_PORTAL_ROUTE')
+        return Promise.resolve({ decision: 'none', reason: 'no routes' });
       if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
       if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
       if (message.type === 'GET_ACTIVE_BUNDLE') return Promise.resolve({ bundle: null });
@@ -420,6 +594,10 @@ describe('standalone popup autofill', () => {
           tokenConfigured: true,
         });
       }
+      if (message.type === 'ENSURE_CONTENT_SCRIPT')
+        return Promise.resolve({ reachable: true, injected: false });
+      if (message.type === 'GET_PORTAL_ROUTE')
+        return Promise.resolve({ decision: 'none', reason: 'no routes' });
       if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
       if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
       if (message.type === 'GET_ACTIVE_BUNDLE') return Promise.resolve({ data: null });
@@ -471,6 +649,10 @@ describe('standalone popup autofill', () => {
           tokenConfigured: true,
         });
       }
+      if (message.type === 'ENSURE_CONTENT_SCRIPT')
+        return Promise.resolve({ reachable: true, injected: false });
+      if (message.type === 'GET_PORTAL_ROUTE')
+        return Promise.resolve({ decision: 'none', reason: 'no routes' });
       if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
       if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
       if (message.type === 'GET_ACTIVE_BUNDLE') return Promise.resolve({ data: null });

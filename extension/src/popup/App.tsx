@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
-import { ATS_DISPLAY_NAMES, type PortalStrategy } from '@internship-agent/shared';
-import { loadSettings } from '../storage/settings.js';
+import { useEffect } from 'react';
+import { ATS_DISPLAY_NAMES, RECONNECT_MESSAGE } from '@internship-agent/shared';
 import { BUILD_INFO } from '../generated/buildInfo.js';
 import { StatusRow, type StatusTone } from './StatusRow.js';
 import { usePopupState } from './usePopupState.js';
 import { useAutofillState } from './useAutofillState.js';
+import { usePortalRoute } from './usePortalRoute.js';
 import { AutofillPanel } from './AutofillPanel.js';
 
 const NOT_YET = 'Not analyzed yet';
@@ -54,16 +54,16 @@ export function App(): JSX.Element {
       ...(scanError.debugContext ?? {}),
     });
   }, [scanError]);
-  // The extension's own setting wins over the website's, because it is the more
-  // local and more recent statement of what the user wants on this machine.
-  const [settingsStrategy, setSettingsStrategy] = useState<PortalStrategy | undefined>(undefined);
-  useEffect(() => {
-    void loadSettings().then((loaded) =>
-      setSettingsStrategy(loaded.employerAccounts.portalStrategy),
-    );
-  }, []);
-  const portalStrategy =
-    settingsStrategy ?? autofill.bundle?.accountPreferences?.portalStrategy ?? undefined;
+  // The route decision is made in the background worker, which owns both the
+  // saved strategy and the scan those routes came from. The popup asks what the
+  // decision is and renders it; it does not re-derive it, because two copies of
+  // this rule would eventually disagree about whether an account gets created.
+  //
+  // Re-asked whenever the scan changes, so a route hop re-evaluates the page it
+  // landed on rather than the one it left.
+  const portal = usePortalRoute(tab.url, scan?.id ?? null, refresh);
+  const routeOffered =
+    portal.route !== null && !('error' in portal.route) && portal.route.decision !== 'none';
   // What the AI can actually do right now, said plainly. An unreachable agent
   // is reported as such rather than as a bare error code.
   const agentStatus = loading
@@ -169,6 +169,11 @@ export function App(): JSX.Element {
   const currentScan = scan?.url === tab.url ? scan : null;
   const eligible = Boolean(tab.url?.startsWith('http') && tab.contentScriptReachable);
   const applicationFormDetected = Boolean(currentScan && currentScan.statistics.total > 0);
+  // A page the extension cannot talk to has told us nothing about itself. Saying
+  // "no supported application form detected" there is a diagnosis we have not
+  // earned, and it sent people to reinstall the extension when a refresh was
+  // the whole fix.
+  const disconnected = Boolean(tab.url?.startsWith('http')) && !tab.contentScriptReachable;
 
   return (
     <main className="popup">
@@ -224,8 +229,13 @@ export function App(): JSX.Element {
           value={tab.domain ?? 'No page detected'}
           detail={
             tab.domain && !tab.contentScriptReachable
-              ? 'The content script is not reachable on this tab. Reload the page after installing or updating the extension.'
-              : null
+              ? // One sentence, and the same one the worker uses. The old text
+                // blamed "the content script", which is not a thing the person
+                // reading it has any way to act on.
+                RECONNECT_MESSAGE
+              : tab.reconnected
+                ? 'Reconnected to this page after the extension was reloaded.'
+                : null
           }
         />
         <StatusRow
@@ -271,13 +281,19 @@ export function App(): JSX.Element {
           {RECOVERABLE_SCAN_MESSAGE}
         </section>
       ) : null}
-      {applicationFormDetected || autofill.bundle ? (
+      {disconnected ? (
+        <section aria-label="Application" className="panel">
+          <p role="alert">{RECONNECT_MESSAGE}</p>
+        </section>
+      ) : applicationFormDetected || autofill.bundle || routeOffered ? (
         <AutofillPanel
           state={autofill}
           eligible={eligible}
           fieldsDetected={currentScan?.statistics.total ?? null}
           {...(currentScan?.navigation ? { navigation: currentScan.navigation } : {})}
-          {...(portalStrategy ? { portalStrategy } : {})}
+          route={portal.route}
+          followingRoute={portal.following}
+          onFollowRoute={() => void portal.follow()}
           agentStatus={agentStatus}
         />
       ) : scanState === 'scanning' || loading ? (

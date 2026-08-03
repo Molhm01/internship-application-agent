@@ -77,12 +77,19 @@ class BrowserAdapter implements AtsAdapter {
   readonly displayName: string;
   readonly priority: number;
   readonly hints: AdapterHints;
+  /**
+   * Public because the popup detects the vendor from the hostname alone, with
+   * no page to query — the situation where a user most needs to be told the
+   * site *is* recognized.
+   */
+  readonly hosts: RegExp | undefined;
 
   constructor(private readonly config: AdapterConfig) {
     this.id = config.id;
     this.displayName = ATS_DISPLAY_NAMES[config.id];
     this.priority = config.priority;
     this.hints = config.hints ?? GENERIC_HINTS;
+    this.hosts = config.hosts;
   }
 
   detect(context: PageDetectionContext): AdapterDetection {
@@ -419,6 +426,33 @@ export function isFinalSubmitControl(id: AtsId, text: string): boolean {
  */
 const UNIVERSAL_FINAL_SUBMIT =
   /\b(submit application|submit your application|send application|complete application|finish (and )?submit|review and submit)\b/i;
+
+/**
+ * The ATS a hostname belongs to, without touching the page.
+ *
+ * The popup needs an answer even when it cannot reach the content script — the
+ * case where the user most needs to know the site is recognized. Every branded
+ * adapter is identified by its tenant domain, so the hostname alone is a
+ * complete answer for them; `generic` is not returned here, because "some form
+ * on some site" is not something a hostname can establish.
+ */
+export function detectAtsByHostname(hostname: string): {
+  id: AtsId;
+  displayName: string;
+  confidence: number;
+  reason: string;
+} | null {
+  for (const adapter of ATS_ADAPTERS) {
+    if (!(adapter as BrowserAdapter).hosts?.test(hostname)) continue;
+    return {
+      id: adapter.id,
+      displayName: adapter.displayName,
+      confidence: 0.98,
+      reason: `hostname ${hostname} matches ${adapter.displayName}`,
+    };
+  }
+  return null;
+}
 
 export interface SelectedAdapter {
   adapter: AtsAdapter;

@@ -11,14 +11,26 @@ import { isoDateTimeSchema } from './common.js';
  * confirmation that this schema can prove happened.
  */
 
-export const portalStrategySchema = z.enum([
+/**
+ * The four routes a user can pre-authorize off an employer sign-in page.
+ *
+ * Declared once, here. `applicationBundleSchema` used to spell the same list out
+ * a second time, so a strategy added in one place was silently rejected by the
+ * other — the same duplicate-enum fault that made the scanner and its validator
+ * disagree about field types.
+ */
+export const PORTAL_STRATEGIES = [
   /** Take the guest route whenever the site offers one. */
   'prefer_guest',
   /** Create an account, but only when there is no way past without one. */
   'create_when_required',
+  /** Sign in to an account the user already has on this employer's portal. */
+  'use_existing_account',
   /** Stop and ask on every portal. */
   'always_ask',
-]);
+] as const;
+
+export const portalStrategySchema = z.enum(PORTAL_STRATEGIES);
 
 export type PortalStrategy = z.infer<typeof portalStrategySchema>;
 
