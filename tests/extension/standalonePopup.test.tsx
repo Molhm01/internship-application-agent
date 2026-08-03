@@ -159,7 +159,19 @@ describe('standalone popup autofill', () => {
         case 'SCAN_APPLICATION':
           return Promise.resolve({ type: 'SCAN_COMPLETE', result: scan });
         case 'RUN_APPLICATION_AUTOFILL':
-          return Promise.resolve({ report: autofillReport });
+          // Acknowledged immediately; the run reports through durable state.
+          return Promise.resolve({ ok: true, accepted: true, runId: 'run-1' });
+        case 'GET_AUTOFILL_RUN':
+          return Promise.resolve({
+            run: {
+              runId: 'run-1',
+              status: 'completed',
+              url: URL,
+              startedAt: 1,
+              updatedAt: 2,
+              report: autofillReport,
+            },
+          });
         default:
           throw new Error(`Unexpected message: ${message.type}`);
       }

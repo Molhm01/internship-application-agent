@@ -32,6 +32,15 @@ export interface AutofillState {
   clearHighlights: () => Promise<void>;
 }
 
+/** Often enough to feel live, rarely enough not to wake the worker needlessly. */
+const RUN_POLL_INTERVAL_MS = 700;
+/**
+ * The longest the popup will follow a run. Generous: five passes over a large
+ * form with an AI batch in each is genuinely slow, and cutting it short would
+ * recreate the bug this replaced.
+ */
+const RUN_POLL_CEILING_MS = 10 * 60 * 1000;
+
 export function useAutofillState(tabUrl: string | null): AutofillState {
   const [bundle, setBundle] = useState<ApplicationBundle | null>(null);
   const [loadingBundle, setLoadingBundle] = useState(true);
@@ -61,6 +70,16 @@ export function useAutofillState(tabUrl: string | null): AutofillState {
       ]);
       if (cancelled) return;
       setBundle(bundleResult.data ?? null);
+      // A run started by "Apply with Agent" is already in flight by the time
+      // anyone opens the popup. Adopting it here is what makes the automatic
+      // start visible instead of looking like nothing happened.
+      const { run: existing } = await sendMessage({ type: 'GET_AUTOFILL_RUN' });
+      if (!cancelled && existing) {
+        if (existing.progress) setProgress(existing.progress);
+        if (existing.status === 'running') setRunning(true);
+        else if (existing.report) setReport(existing.report);
+        if (existing.error) setError(existing.error);
+      }
       // A report from another page is not this page's report.
       const previous = reportResult.report;
       setReport(previous && (!tabUrl || previous.url === tabUrl) ? previous : null);
@@ -71,20 +90,57 @@ export function useAutofillState(tabUrl: string | null): AutofillState {
     };
   }, [tabUrl]);
 
+  /**
+   * Starts a run and follows it to completion.
+   *
+   * The request itself returns an acknowledgement in milliseconds; the run then
+   * reports through durable state. Holding one `sendMessage` open for the whole
+   * operation is what produced "no response within 15000ms" on every real form —
+   * the deadline was shorter than a single AI batch, so it always fired.
+   */
   const run = useCallback(async (): Promise<void> => {
     setRunning(true);
     setError(null);
     setProgress(null);
     setReport(null);
-    const response = await sendMessage({
+
+    const accepted = await sendMessage({
       type: 'RUN_APPLICATION_AUTOFILL',
       ...(tabUrl ? { targetUrl: tabUrl } : {}),
     });
-    if ('report' in response) {
-      setReport(response.report);
-      setError(response.report.error ?? null);
-    } else {
-      setError(response.error);
+    if ('error' in accepted) {
+      setError(accepted.error);
+      setRunning(false);
+      return;
+    }
+
+    // Polled rather than awaited. A popup that closes mid-run misses every
+    // broadcast, and reopening it has to be able to find out where the run got
+    // to; reading the state is the only thing that works in both cases.
+    const started = Date.now();
+    for (;;) {
+      const { run: state } = await sendMessage({ type: 'GET_AUTOFILL_RUN' });
+      if (state && state.runId === accepted.runId) {
+        if (state.progress) setProgress(state.progress);
+        if (state.status !== 'running') {
+          if (state.report) setReport(state.report);
+          setError(state.error ?? state.report?.error ?? null);
+          break;
+        }
+      }
+      // A ceiling so the popup can never spin forever on a run whose worker
+      // vanished without recording an outcome.
+      if (Date.now() - started > RUN_POLL_CEILING_MS) {
+        setError({
+          code: 'INTERNAL_ERROR',
+          message: 'The run stopped responding. Try it again.',
+          recoverable: true,
+          suggestedAction: 'Click Autofill Application again.',
+          debugContext: { runId: accepted.runId },
+        });
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, RUN_POLL_INTERVAL_MS));
     }
     setRunning(false);
   }, [tabUrl]);

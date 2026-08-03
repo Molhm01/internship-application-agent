@@ -23,6 +23,7 @@ import {
   type AnswerGenerationRecord,
   type RegenerationMode,
   type GenerateAnswerRequest,
+  type ApplicationAutofillReport,
   type FillRunReport,
   type AgentError,
   type DeterministicFillPlan,
@@ -77,6 +78,7 @@ import {
   saveAnswerGenerationStore,
 } from '../storage/generatedAnswers.js';
 import { loadSettings } from '../storage/settings.js';
+import { finishRun, loadRun, recordProgress, startRun } from '../storage/runState.js';
 import { ensureContentScript } from './contentScript.js';
 import { fillAccountForm } from './accountForm.js';
 import { armAutoStart, shouldAutoStart } from './autoStart.js';
@@ -1244,8 +1246,56 @@ let activeAutofill: { runId: string; cancelled: boolean } | null = null;
  * highlighting each stay where they are, so there is exactly one copy of every
  * rule and no second path that can drift.
  */
-async function runAutofill(targetUrl?: string): Promise<unknown> {
-  const state = { runId: `autofill-${crypto.randomUUID()}`, cancelled: false };
+/**
+ * Accepts an autofill request and answers immediately.
+ *
+ * This is the fix for `EXTENSION_RELOAD_REQUIRED … no response within 15000ms`.
+ * The popup used to hold one `sendMessage` open for the entire run — scan, AI
+ * batch, fill, verify, rescan, up to five passes — against a fifteen-second
+ * deadline. That deadline is shorter than a single AI batch, so the call
+ * *always* timed out on a real form. Nothing was broken, which is exactly why
+ * reloading the extension never helped.
+ *
+ * The request now returns an acknowledgement in milliseconds and the work runs
+ * detached, reporting through durable run state that survives the service
+ * worker being suspended underneath it.
+ */
+async function acceptAutofillRun(targetUrl?: string): Promise<unknown> {
+  const runId = `autofill-${crypto.randomUUID()}`;
+  let url = targetUrl ?? '';
+  if (!url) {
+    url = await activeApplicationTab()
+      .then((tab) => tab.url ?? '')
+      .catch(() => '');
+  }
+  await startRun(runId, url);
+
+  // Deliberately not awaited. The floating promise is the point: the response
+  // below must not wait for it, and every failure inside it is recorded in the
+  // run state rather than thrown at a caller who has already gone.
+  void runAutofill(targetUrl, runId)
+    .then(async (result) => {
+      const outcome = result as { report?: ApplicationAutofillReport; error?: AgentError };
+      await finishRun(runId, outcome);
+    })
+    .catch(async (cause: unknown) => {
+      traceFailure('worker', 'autofill run threw', {
+        runId,
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
+      await finishRun(runId, {
+        error: answerFailure(
+          'INTERNAL_ERROR',
+          'The autofill run stopped unexpectedly. Try it again.',
+        ),
+      });
+    });
+
+  return { ok: true as const, accepted: true as const, runId };
+}
+
+async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise<unknown> {
+  const state = { runId: requestedRunId ?? `autofill-${crypto.randomUUID()}`, cancelled: false };
   activeAutofill = state;
   try {
     const report = await runApplicationAutofill({
@@ -1329,6 +1379,11 @@ async function runAutofill(targetUrl?: string): Promise<unknown> {
         }
       },
       onProgress: (progress) => {
+        // Written first, broadcast second. A closed popup misses the broadcast
+        // entirely, and a popup opened halfway through a run has to be able to
+        // find out where it got to — so the durable copy is the source of
+        // truth and the message is only a nudge to read it sooner.
+        void recordProgress(state.runId, progress);
         void chrome.runtime
           .sendMessage({ type: 'AUTOFILL_PROGRESS', progress })
           .catch(() => undefined);
@@ -1399,11 +1454,27 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return portalRoute(true, message.targetUrl);
     case 'PAGE_READY':
       return maybeAutoStart(message.url);
+    case 'WORKER_PING':
+      // Answered before anything else could fail. This is how the popup tells
+      // "the worker is gone" from "the worker is busy", instead of blaming a
+      // timeout on a stale install and telling the user to reload.
+      return Promise.resolve({ ok: true as const, at: Date.now() });
     case 'RUN_APPLICATION_AUTOFILL':
-      return runAutofill(message.targetUrl);
+      return acceptAutofillRun(message.targetUrl);
+    case 'GET_AUTOFILL_RUN':
+      return loadRun().then((run) => ({ run }));
     case 'CANCEL_APPLICATION_AUTOFILL':
       if (activeAutofill) activeAutofill.cancelled = true;
-      return Promise.resolve({ ok: true });
+      return loadRun().then(async (run) => {
+        // Recorded as cancelled even when the worker restarted and no longer
+        // holds the run in memory, so the popup stops waiting either way.
+        if (run?.status === 'running') {
+          await finishRun(run.runId, {
+            error: answerFailure('AUTOFILL_CANCELLED', 'You cancelled this run.'),
+          });
+        }
+        return { ok: true as const };
+      });
     case 'GET_AUTOFILL_REPORT':
       return loadAutofillReport().then((report) => ({ report }));
     case 'AUTOFILL_PROGRESS':
