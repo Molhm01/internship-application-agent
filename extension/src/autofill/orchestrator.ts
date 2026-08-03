@@ -2,6 +2,7 @@ import {
   DEFAULT_ERROR_GUIDANCE,
   REVIEW_BADGES,
   applicationAutofillReportSchema,
+  QuestionLedger,
   auditRequiredFields,
   autofillFieldResultSchema,
   type AgentError,
@@ -176,6 +177,12 @@ export async function runApplicationAutofill(
    * required field as absent rather than as unanswered.
    */
   let lastFields: readonly DetectedField[] = [];
+  /**
+   * What this run has already tried, keyed by an identity that survives a
+   * rerender. This is what makes the loop converge instead of re-attempting the
+   * same failing fields until it hits the pass limit.
+   */
+  const ledger = new QuestionLedger();
 
   const report = (
     status: ApplicationAutofillReport['status'],
@@ -333,12 +340,22 @@ export async function runApplicationAutofill(
       approvals.set(action.id, decision.approved);
     }
 
-    // A field already filled and verified in an earlier pass is left alone.
+    // Only questions this run has not already settled.
+    //
+    // This used to read "approved and not yet verified", which never converges:
+    // a field that is approved, written, and then fails verification is not
+    // verified, forever. Every pass re-approved and re-executed the identical
+    // failing set, learned nothing, and burned all five passes — the whole of
+    // the MAX_ITERATIONS_REACHED report. The ledger answers "have I tried this
+    // already, and has anything about it changed since?" using an identity that
+    // survives a rerender, so a question is retried only when it is genuinely
+    // different.
     const newlyApproved = [...approvals.entries()].filter(([actionId, approved]) => {
       if (!approved) return false;
       const action = plan.actions.find((candidate) => candidate.id === actionId);
-      const existing = action ? resultsByField.get(action.fieldId) : undefined;
-      return existing?.verification !== 'verified';
+      const field = action ? fieldsById.get(action.fieldId) : undefined;
+      if (!field) return false;
+      return ledger.shouldAttempt(field);
     });
 
     let run: FillRunReport | undefined;
@@ -405,11 +422,25 @@ export async function runApplicationAutofill(
           reason: outcome?.error?.message ?? (decision.approved ? action.reason : decision.reason),
         }),
       );
-      if (field) selectorsByField.set(action.fieldId, field.selector);
+      if (field) {
+        selectorsByField.set(action.fieldId, field.selector);
+        // Recorded whatever happened. An attempt that failed verification is
+        // still an attempt, and forgetting that is what made the loop spin.
+        if (executed || decision.approved) {
+          ledger.record(field, executed?.verified ? 'verified' : 'unverified');
+        } else {
+          ledger.observe(field);
+        }
+      }
     }
 
-    const filledSomething = newlyApproved.length > 0;
-    if (!filledSomething) break;
+    // Convergence, not a fill count. The pass ends when this page has stopped
+    // producing questions nobody has looked at yet — which is the condition the
+    // loop is actually waiting for, and the one the old check never expressed.
+    const revealed = ledger.unseen(scan.fields);
+    for (const field of revealed) ledger.observe(field);
+    const attempted = newlyApproved.length > 0;
+    if (!attempted && revealed.length === 0) break;
 
     await dependencies.waitForStability();
     if (dependencies.isCancelled()) {

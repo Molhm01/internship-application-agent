@@ -22,4 +22,5 @@ export * from './schemaFailure.js';
 export * from './portalRoute.js';
 export * from './confidencePolicy.js';
 export * from './structuralFields.js';
+export * from './questionIdentity.js';
 export * from './matchPattern.js';
