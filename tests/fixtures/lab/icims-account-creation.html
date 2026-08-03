@@ -8,13 +8,24 @@
     <!--
       An iCIMS account-creation page, shaped the way the real one is.
 
-      Two things about it matter for the scanner and are easy to get wrong:
+      Everything here that looks gratuitous is a bug this page reproduced:
 
-      1. The password rules live in a sibling hint element, not on the input, so
-         they are only found by reading around the control.
-      2. "Phone Type" and "Address Type" are dropdowns that sit next to the value
-         they qualify. A scanner that matches on proximity alone reads the type
-         control as the phone number, so both are labelled explicitly here.
+      1. The extension renders its own controls into the page. "Enable AI
+         Autofill" was scanned as an application question. Reproduced below,
+         marked with `data-internship-agent-owned`, and it must never appear as
+         a question.
+      2. "Phones (1)" and "Addresses (1)" are accordion headers — buttons with
+         `aria-expanded` and `aria-controls` but no popup and no options. Both
+         were scanned as questions, and "Addresses (1)* required." twice.
+      3. Under those headers the labels are one word: "Type", "Number",
+         "Address", "Address 2". Without the section they are unanswerable, and
+         the two "Type" controls are indistinguishable.
+      4. "Highest Level of Education" is rendered twice — once as the accordion
+         summary, once as the select it expands — and was reported as two
+         questions.
+      5. The password rules live in a sibling hint element, not on the input.
+      6. There is a validation summary block. It is explanatory text, not a
+         question.
 
       Class names follow the iCIMS_ convention the DOM-marker detector looks for.
     -->
@@ -23,13 +34,30 @@
         <h1>Software Engineering Intern</h1>
       </div>
 
+      <!-- Extension-owned UI. Never a question, never a navigation control. -->
+      <div id="internship-agent-panel" data-internship-agent-owned="true">
+        <label for="agent-ai-toggle">Enable AI Autofill</label>
+        <input type="checkbox" id="agent-ai-toggle" name="enableAiAutofill" />
+        <button type="button" id="agent-autofill">Autofill Application</button>
+        <select id="agent-profile-picker" name="agentProfile">
+          <option value="primary">Primary profile</option>
+        </select>
+      </div>
+
+      <!-- Explanatory text and a validation summary. Neither is a question. -->
+      <div class="iCIMS_ValidationSummary" role="alert">
+        <h2>Some required information is missing</h2>
+        <p>Addresses (1)* required.</p>
+        <p>Please complete every field marked with an asterisk.</p>
+      </div>
+
       <form id="icims_account_form" class="iCIMS_ApplicationForm">
         <fieldset>
           <legend>Account</legend>
 
           <div class="iCIMS_InfoField">
-            <label for="username">Username <span class="required">*</span></label>
-            <input type="text" id="username" name="userName" autocomplete="username" required />
+            <label for="login">Login <span class="required">*</span></label>
+            <input type="text" id="login" name="login" autocomplete="username" required />
           </div>
 
           <div class="iCIMS_InfoField">
@@ -42,8 +70,8 @@
           </div>
 
           <div class="iCIMS_InfoField">
-            <label for="confirmPassword">Confirm Password <span class="required">*</span></label>
-            <input type="password" id="confirmPassword" name="confirmPassword" required />
+            <label for="passwordReenter">Password Re-enter <span class="required">*</span></label>
+            <input type="password" id="passwordReenter" name="passwordReenter" required />
           </div>
 
           <div class="iCIMS_InfoField">
@@ -58,6 +86,12 @@
           <div class="iCIMS_InfoField">
             <label for="firstName">First Name <span class="required">*</span></label>
             <input type="text" id="firstName" name="firstName" required />
+            <!--
+              A sibling whose class contains "menu". Harmless to a person, and
+              the reason a plain text input was handed an option list and the
+              executor answered "No option on the page matched Molhm".
+            -->
+            <div class="iCIMS_field_menu_anchor"></div>
           </div>
 
           <div class="iCIMS_InfoField">
@@ -71,70 +105,95 @@
           </div>
         </fieldset>
 
+        <!-- Phones: an accordion header, then one-word labels beneath it. -->
         <fieldset>
-          <legend>Contact</legend>
+          <legend>Phones (1)</legend>
+          <button
+            type="button"
+            id="phones-toggle"
+            aria-expanded="true"
+            aria-controls="phones-panel"
+          >
+            Phones (1)
+          </button>
+          <div id="phones-panel">
+            <div class="iCIMS_InfoField">
+              <label for="phoneType">Type</label>
+              <select id="phoneType" name="phoneType">
+                <option value="">Please select</option>
+                <option value="mobile">Mobile</option>
+                <option value="home">Home</option>
+                <option value="work">Work</option>
+              </select>
+            </div>
 
-          <div class="iCIMS_InfoField">
-            <label for="phoneType">Phone Type</label>
-            <select id="phoneType" name="phoneType">
-              <option value="">Please select</option>
-              <option value="mobile">Mobile</option>
-              <option value="home">Home</option>
-              <option value="work">Work</option>
-            </select>
+            <div class="iCIMS_InfoField">
+              <label for="phoneNumber">Number <span class="required">*</span></label>
+              <input type="tel" id="phoneNumber" name="phoneNumber" required />
+            </div>
           </div>
+        </fieldset>
 
-          <div class="iCIMS_InfoField">
-            <label for="phoneNumber">Phone Number <span class="required">*</span></label>
-            <input type="tel" id="phoneNumber" name="phoneNumber" required />
-          </div>
+        <!-- Addresses: the same shape, and the header that became a question. -->
+        <fieldset>
+          <legend>Addresses (1)</legend>
+          <button
+            type="button"
+            id="addresses-toggle"
+            aria-expanded="true"
+            aria-controls="addresses-panel"
+          >
+            Addresses (1)* required.
+          </button>
+          <div id="addresses-panel">
+            <div class="iCIMS_InfoField">
+              <label for="addressType">Type</label>
+              <select id="addressType" name="addressType">
+                <option value="">Please select</option>
+                <option value="home">Home</option>
+                <option value="mailing">Mailing</option>
+              </select>
+            </div>
 
-          <div class="iCIMS_InfoField">
-            <label for="addressType">Address Type</label>
-            <select id="addressType" name="addressType">
-              <option value="">Please select</option>
-              <option value="home">Home</option>
-              <option value="mailing">Mailing</option>
-            </select>
-          </div>
+            <div class="iCIMS_InfoField">
+              <label for="addressLine1">Address <span class="required">*</span></label>
+              <input type="text" id="addressLine1" name="addressLine1" required />
+            </div>
 
-          <div class="iCIMS_InfoField">
-            <label for="addressLine1">Address Line 1 <span class="required">*</span></label>
-            <input type="text" id="addressLine1" name="addressLine1" required />
-          </div>
+            <div class="iCIMS_InfoField">
+              <label for="addressLine2">Address 2</label>
+              <input type="text" id="addressLine2" name="addressLine2" />
+            </div>
 
-          <div class="iCIMS_InfoField">
-            <label for="addressLine2">Address Line 2</label>
-            <input type="text" id="addressLine2" name="addressLine2" />
-          </div>
+            <div class="iCIMS_InfoField">
+              <label for="city">City <span class="required">*</span></label>
+              <input type="text" id="city" name="city" required />
+            </div>
 
-          <div class="iCIMS_InfoField">
-            <label for="city">City <span class="required">*</span></label>
-            <input type="text" id="city" name="city" required />
-          </div>
+            <div class="iCIMS_InfoField">
+              <label for="postalCode">Zip/Postal Code <span class="required">*</span></label>
+              <input type="text" id="postalCode" name="postalCode" required />
+            </div>
 
-          <div class="iCIMS_InfoField">
-            <label for="stateProvince">State/Province <span class="required">*</span></label>
-            <select id="stateProvince" name="stateProvince" required>
-              <option value="">Please select</option>
-              <option value="NJ">New Jersey</option>
-              <option value="NY">New York</option>
-              <option value="PA">Pennsylvania</option>
-            </select>
-          </div>
+            <!--
+              Country first, State dependent on it. The State list is empty
+              until a country is chosen, which the executor has to wait for.
+            -->
+            <div class="iCIMS_InfoField">
+              <label for="country">Country <span class="required">*</span></label>
+              <select id="country" name="country" required>
+                <option value="">Please select</option>
+                <option value="US">United States</option>
+                <option value="CA">Canada</option>
+              </select>
+            </div>
 
-          <div class="iCIMS_InfoField">
-            <label for="postalCode">Postal Code <span class="required">*</span></label>
-            <input type="text" id="postalCode" name="postalCode" required />
-          </div>
-
-          <div class="iCIMS_InfoField">
-            <label for="country">Country <span class="required">*</span></label>
-            <select id="country" name="country" required>
-              <option value="">Please select</option>
-              <option value="US">United States</option>
-              <option value="CA">Canada</option>
-            </select>
+            <div class="iCIMS_InfoField">
+              <label for="stateProvince">State/Province <span class="required">*</span></label>
+              <select id="stateProvince" name="stateProvince" required>
+                <option value="">Select a country first</option>
+              </select>
+            </div>
           </div>
         </fieldset>
 
@@ -147,14 +206,49 @@
           </div>
 
           <div class="iCIMS_InfoField">
+            <label for="website">Website</label>
+            <input type="url" id="website" name="website" />
+          </div>
+
+          <!--
+            The education question, rendered twice: an accordion summary and the
+            select it expands. One question, not two.
+          -->
+          <div class="iCIMS_InfoField">
+            <button
+              type="button"
+              id="education-toggle"
+              aria-expanded="true"
+              aria-controls="education-panel"
+            >
+              Highest Level of Education
+            </button>
+            <div id="education-panel">
+              <label for="educationLevel">Highest Level of Education</label>
+              <select id="educationLevel" name="educationLevel">
+                <option value="">Please select</option>
+                <option value="hs">High School</option>
+                <option value="associate">Associate Degree</option>
+                <option value="bachelor">Bachelor's Degree</option>
+                <option value="master">Master's Degree</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="iCIMS_InfoField">
             <label for="source">How did you hear about us?</label>
             <select id="source" name="sourceType">
               <option value="">Please select</option>
-              <option value="job-board">Job Board</option>
               <option value="referral">Employee Referral</option>
               <option value="university">University Career Fair</option>
-              <option value="linkedin">LinkedIn</option>
+              <option value="internet">Internet Job Board</option>
+              <option value="company">Company Website</option>
             </select>
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="sourceDetail">Please specify further</label>
+            <input type="text" id="sourceDetail" name="sourceDetail" />
           </div>
 
           <div class="iCIMS_InfoField">
@@ -165,10 +259,55 @@
               <option value="no">No</option>
             </select>
           </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="anythingElse">Anything else you would like us to know?</label>
+            <textarea id="anythingElse" name="anythingElse" rows="4"></textarea>
+          </div>
+
+          <!-- A legal consent field. Never ticked without permission. -->
+          <div class="iCIMS_InfoField">
+            <label for="policyAgreement">
+              <input type="checkbox" id="policyAgreement" name="policyAgreement" required />
+              I Agree to the Policies stated above
+            </label>
+          </div>
         </fieldset>
 
         <button type="button" id="createAccount">Create Account</button>
       </form>
     </div>
+
+    <script>
+      // The dependent State control: its options exist only once a country is
+      // chosen, so anything filling State has to select Country first and then
+      // read the list again.
+      const STATES = {
+        US: [
+          ['NJ', 'New Jersey'],
+          ['NY', 'New York'],
+          ['PA', 'Pennsylvania'],
+        ],
+        CA: [
+          ['ON', 'Ontario'],
+          ['QC', 'Quebec'],
+        ],
+      };
+      document.getElementById('country').addEventListener('change', (event) => {
+        const state = document.getElementById('stateProvince');
+        const rows = STATES[event.target.value] ?? [];
+        state.replaceChildren();
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = rows.length ? 'Please select' : 'Select a country first';
+        state.append(placeholder);
+        for (const [value, label] of rows) {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = label;
+          state.append(option);
+        }
+      });
+    </script>
   </body>
 </html>

@@ -62,6 +62,53 @@ export const FILLABLE_FIELD_TYPES: readonly FieldType[] = FIELD_TYPES.filter(
   (type): type is Exclude<FieldType, 'file' | 'unknown'> => type !== 'file' && type !== 'unknown',
 );
 
+/**
+ * The types that are answered by *choosing* from a list.
+ *
+ * These, and only these, may carry `options`, be matched against options, or be
+ * driven by an option-selecting executor action.
+ *
+ * The negative case is the one that caused real damage. A text input whose
+ * container happened to hold an element with "menu" in its class name was given
+ * an option list by the scanner, which made the planner match "Molhm" against
+ * page options and the executor report *"No option on the page matched Molhm"*
+ * for a box you simply type your first name into. Anything not in this list is
+ * text-like and is written with `SET_TEXT`.
+ */
+export const OPTION_FIELD_TYPES: readonly FieldType[] = [
+  'select',
+  'combobox',
+  'radio',
+  'checkbox',
+  'multi_select',
+];
+
+/** True when this control is answered by choosing rather than by typing. */
+export function isOptionFieldType(type: FieldType): boolean {
+  return OPTION_FIELD_TYPES.includes(type);
+}
+
+/**
+ * The types a value is *typed* into. A password is text-like in exactly this
+ * sense — what makes it special is where the value comes from, not how it is
+ * written — so it is here, and the vault remains its only source.
+ */
+export const TEXT_FIELD_TYPES: readonly FieldType[] = [
+  'text',
+  'textarea',
+  'email',
+  'tel',
+  'number',
+  'url',
+  'password',
+  'contenteditable',
+];
+
+/** True when this control is answered by typing into it. */
+export function isTextFieldType(type: FieldType): boolean {
+  return TEXT_FIELD_TYPES.includes(type);
+}
+
 export const semanticTypeSchema = z.enum([
   'first_name',
   'middle_name',

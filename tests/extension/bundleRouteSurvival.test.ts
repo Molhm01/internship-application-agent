@@ -154,6 +154,41 @@ describe('a bundle across an account-route navigation', () => {
     expect(await bundleForUrl('https://careers2-quanta.icims.com/jobs/999/other/job')).toBeNull();
   });
 
+  /**
+   * The handoff the popup depends on, and the bug it reported.
+   *
+   * Internship Pilot opens the employer tab itself, right after the extension
+   * acknowledges the bundle. The applicant then clicks "Apply" or "Create
+   * account" by hand — hops the agent never took, so nothing recorded that this
+   * origin belonged to the run. The lookup fell through and the panel said "No
+   * application loaded from Internship Pilot" with the tailored documents
+   * apparently gone.
+   */
+  it('is available on the account form the applicant navigated to themselves', async () => {
+    installChromeMock();
+    await saveBundle(transfer());
+    // No `rememberPortalJourney` call: this is the user clicking, not the agent
+    // routing. Saving the bundle is what starts the journey.
+    for (const url of [
+      'https://careers2-quanta.icims.com/jobs/login',
+      'https://careers2-quanta.icims.com/jobs/register',
+      'https://careers2-quanta.icims.com/connect?jobid=12345',
+    ]) {
+      const found = await bundleForUrl(url);
+      expect(found?.company, `bundle was lost on ${url}`).toBe('Quanta');
+      expect(found?.resume?.filename).toBe('Resume-Quanta-Field-Engineer-Intern.pdf');
+      expect(found?.coverLetter?.filename).toBe('Cover-Letter-Quanta-Field-Engineer-Intern.pdf');
+      expect(found?.profile).toBeUndefined();
+    }
+  });
+
+  it('does not leak the documents to another posting the user opened in the meantime', async () => {
+    installChromeMock();
+    await saveBundle(transfer());
+    // The seeded journey covers portal plumbing, not a different requisition.
+    expect(await bundleForUrl('https://careers2-quanta.icims.com/jobs/999/other/job')).toBeNull();
+  });
+
   it('leaves the strict page match unchanged, so history lookups stay isolated', () => {
     expect(bundleSharesPortal(bundle(), 'https://careers2-quanta.icims.com/jobs/login')).toBe(true);
     expect(bundleMatchesUrl(bundle(), 'https://careers2-quanta.icims.com/jobs/login')).toBe(false);

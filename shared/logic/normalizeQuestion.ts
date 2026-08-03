@@ -149,7 +149,19 @@ const RULES: readonly Rule[] = [
     question: 'phone_country_code',
     patterns: [/\bcountry code\b/, /\bdial(l)?ing code\b/, /\bphone code\b/, /\bcalling code\b/],
   },
+  // Which kind of phone this is, not the number. Before `phone`, whose words it
+  // contains: classifying it as `phone` offered the phone *number* to a dropdown
+  // of Mobile / Home / Work, which never matched and left the field unanswered.
+  {
+    question: 'phone_type',
+    patterns: [/\bphone (type|kind)\b/, /\btype of phone\b/, /\bphone number type\b/],
+  },
   { question: 'phone', patterns: [/\b(phone|mobile|cell|telephone)\b/] },
+  // Likewise for the address block's own "Type" control.
+  {
+    question: 'address_type',
+    patterns: [/\baddress type\b/, /\btype of address\b/],
+  },
   {
     question: 'address_line2',
     patterns: [/\baddress (line )?2\b/, /\b(apt|apartment|suite|unit)\b/],

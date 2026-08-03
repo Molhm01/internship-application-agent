@@ -30,13 +30,88 @@ const KEY = 'autofillRun';
 /** A run older than this was killed by a worker restart mid-flight. */
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
+/**
+ * The states a run can be in, named for what the user is waiting on.
+ *
+ * `status` said only running/completed/failed/cancelled, which cannot answer
+ * "what is it doing?" — so the popup showed one label for a stage that
+ * contained a sixty-second model call, and looked identical whether it was
+ * scanning or stuck. The stage is part of the run's identity now, not a
+ * decoration on top of it.
+ */
+export const AUTOFILL_RUN_STATES = [
+  'IDLE',
+  'SCANNING',
+  'RESOLVING_DETERMINISTIC',
+  'ANALYZING_AI',
+  'EXECUTING',
+  'VERIFYING',
+  'WAITING_FOR_USER',
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+] as const;
+
+export type AutofillRunPhaseState = (typeof AUTOFILL_RUN_STATES)[number];
+
+/** The states in which a run still owns the lock. */
+const ACTIVE_STATES: readonly AutofillRunPhaseState[] = [
+  'SCANNING',
+  'RESOLVING_DETERMINISTIC',
+  'ANALYZING_AI',
+  'EXECUTING',
+  'VERIFYING',
+];
+
+/** Maps a progress phase onto the run state it represents. */
+export function stateForPhase(phase: AutofillProgress['phase']): AutofillRunPhaseState {
+  switch (phase) {
+    case 'preparing':
+    case 'scanning':
+    case 'rescanning':
+      return 'SCANNING';
+    case 'discovering_options':
+    case 'resolving':
+      return 'RESOLVING_DETERMINISTIC';
+    case 'generating':
+      return 'ANALYZING_AI';
+    case 'planning':
+    case 'filling':
+      return 'EXECUTING';
+    case 'verifying':
+      return 'VERIFYING';
+    case 'completed':
+    case 'completed_with_review':
+      return 'COMPLETED';
+    case 'failed':
+      return 'FAILED';
+    case 'cancelled':
+      return 'CANCELLED';
+  }
+}
+
 export const autofillRunStateSchema = z.object({
   runId: z.string().min(1).max(200),
   status: z.enum(['running', 'completed', 'failed', 'cancelled']),
+  /**
+   * The stage. Defaulted rather than required so a run written by an earlier
+   * build still parses instead of vanishing from the popup entirely.
+   */
+  state: z.enum(AUTOFILL_RUN_STATES).default('SCANNING'),
   /** The tab this run belongs to, so a restart can find its way back. */
   url: z.string().max(2048),
   startedAt: z.number(),
   updatedAt: z.number(),
+  /**
+   * Set once, when the run reaches a terminal state.
+   *
+   * The popup's clock reads `completedAt - startedAt` after the run ends and
+   * `Date.now() - startedAt` while it is going, so a finished run shows the
+   * time it actually took rather than continuing to count. Both timestamps come
+   * from the worker; the popup owns neither, which is what makes the elapsed
+   * time survive the popup being closed and reopened.
+   */
+  completedAt: z.number().optional(),
   progress: autofillProgressSchema.optional(),
   report: applicationAutofillReportSchema.optional(),
   error: agentErrorSchema.optional(),
@@ -49,12 +124,35 @@ export async function startRun(runId: string, url: string): Promise<AutofillRunS
   const state: AutofillRunState = {
     runId,
     status: 'running',
+    state: 'SCANNING',
     url,
     startedAt: now,
     updatedAt: now,
   };
   await chrome.storage.local.set({ [KEY]: state });
   return state;
+}
+
+/**
+ * The run currently holding the lock, or null.
+ *
+ * This is what makes "one click, one run" true. `acceptAutofillRun` had no such
+ * check: a second click minted a second id, overwrote the stored run, and left
+ * the first orchestrator running invisibly against the same page and the same
+ * stored plan. So did "Apply with Agent" auto-start racing a user click.
+ *
+ * Reads through `loadRun`, so a run abandoned by a terminated service worker
+ * has already aged out and does not hold the lock forever.
+ */
+export async function activeRun(): Promise<AutofillRunState | null> {
+  const run = await loadRun();
+  if (!run || run.status !== 'running') return null;
+  return ACTIVE_STATES.includes(run.state) ? run : null;
+}
+
+/** Records which stage a run has reached. */
+export async function recordState(runId: string, state: AutofillRunPhaseState): Promise<void> {
+  await patchRun(runId, { state });
 }
 
 /**
@@ -73,7 +171,7 @@ async function patchRun(runId: string, patch: Partial<AutofillRunState>): Promis
 }
 
 export async function recordProgress(runId: string, progress: AutofillProgress): Promise<void> {
-  await patchRun(runId, { progress });
+  await patchRun(runId, { progress, state: stateForPhase(progress.phase) });
 }
 
 export async function finishRun(
@@ -90,8 +188,12 @@ export async function finishRun(
     : outcome.error
       ? 'failed'
       : 'completed';
+  // The lock is released here and nowhere else: whatever happened, the run is
+  // no longer in an active state, so the next click is accepted.
   await patchRun(runId, {
     status,
+    state: cancelled ? 'CANCELLED' : outcome.error ? 'FAILED' : 'COMPLETED',
+    completedAt: Date.now(),
     ...(outcome.report ? { report: outcome.report } : {}),
     ...(outcome.error ? { error: outcome.error } : {}),
   });
@@ -114,6 +216,11 @@ export async function loadRun(): Promise<AutofillRunState | null> {
     return {
       ...run,
       status: 'failed',
+      state: 'FAILED',
+      // The worker died without writing one, so the last sign of life is the
+      // honest end of the run. Leaving it unset would make the popup's clock
+      // count forever on a run that is already over.
+      completedAt: run.completedAt ?? run.updatedAt,
       error: {
         code: 'INTERNAL_ERROR',
         message: 'The run stopped unexpectedly. Start it again.',

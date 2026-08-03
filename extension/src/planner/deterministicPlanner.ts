@@ -1,6 +1,12 @@
 import {
   resolveStructuralField,
   allowsRegionSuffix,
+  chooseDiscoverySource,
+  mayReasonAbout,
+  contractViolation,
+  isTextFieldType,
+  optionActionFor,
+  textActionFor,
   deterministicFillPlanSchema,
   isDeclinePhrasing,
   isLocationQuestion,
@@ -27,6 +33,8 @@ import { isLegalAttestation, matchField } from '../matcher/deterministicMatcher.
 export interface PlanContext {
   location?: LocationTarget;
   hasPhoneCountryCodeField?: boolean;
+  /** The saved answer for "How did you hear about us?", when the user set one. */
+  discoverySource?: string;
 }
 
 /** True when the scan found a control that takes the dialling code by itself. */
@@ -42,6 +50,36 @@ function isDeclineValue(value: unknown): value is string {
 /** True when this field answers by choosing from a list rather than by typing. */
 function isOptionControl(field: DetectedField): boolean {
   return ['select', 'combobox', 'radio', 'multi_select'].includes(field.fieldType);
+}
+
+/**
+ * Optional questions that are answered by *not* answering them.
+ *
+ * Narrow on purpose. A blank optional free-text box is not automatically fine
+ * — "Anything else you would like us to know?" is optional and still worth an
+ * answer — so only fields whose emptiness is itself the correct answer are
+ * listed here. Everything else keeps asking.
+ */
+const OPTIONAL_BLANK_QUESTIONS = new Set<string>([
+  'middle_name',
+  'address_line2',
+  'name_suffix',
+  'preferred_name',
+  'pronouns',
+]);
+
+function leaveOptionalBlank(field: DetectedField): boolean {
+  return field.canonicalKey !== undefined && OPTIONAL_BLANK_QUESTIONS.has(field.canonicalKey);
+}
+
+function optionalBlankReason(field: DetectedField): string {
+  if (field.canonicalKey === 'middle_name') {
+    return 'Optional, and no middle name is saved, so it is correctly left blank.';
+  }
+  if (field.canonicalKey === 'address_line2') {
+    return 'Optional, and your saved address has no second line. Address line 1 is never repeated here.';
+  }
+  return 'Optional, and nothing saved answers it, so it is correctly left blank.';
 }
 
 function locationOf(profile: Profile): LocationTarget {
@@ -90,7 +128,59 @@ export function actionIdForField(value: string): string {
   return `action-${(hash >>> 0).toString(36)}`;
 }
 
+/**
+ * Enforces the control-type contract on a finished action.
+ *
+ * The planner is the first of two places this is checked; the executor is the
+ * second, and neither trusts the other. A repairable mismatch — an option
+ * action on a text box — is rewritten to the right strategy, because the value
+ * is usually correct and only the strategy is wrong. Anything unrepairable
+ * becomes `manual_review` naming the mismatch, rather than being handed to an
+ * executor that will fail in a way nobody can read.
+ */
+function enforceContract(
+  field: DetectedField,
+  action: DeterministicFillAction,
+): DeterministicFillAction {
+  const violation = contractViolation(field.fieldType, action.action);
+  if (!violation) return action;
+
+  const candidate = isTextFieldType(field.fieldType)
+    ? textActionFor(field.fieldType)
+    : optionActionFor(field.fieldType);
+  // A password is never repaired into a plan. `set_password` exists only on the
+  // credential path, and a deterministic plan is stored, sent to the popup, and
+  // rendered on a review screen — the three places a secret must never reach.
+  const repaired = candidate === 'set_password' ? null : candidate;
+  if (repaired && typeof action.proposedValue === 'string' && action.proposedValue.length > 0) {
+    return {
+      ...action,
+      action: repaired,
+      // The matched option is meaningless on a text control and would make the
+      // executor look for a list again on the next pass.
+      ...(isTextFieldType(field.fieldType) ? { matchedOption: undefined } : {}),
+      warnings: [...action.warnings, violation.reason],
+    };
+  }
+  return {
+    ...action,
+    action: 'manual_review',
+    requiresReview: true,
+    reason: violation.reason,
+    warnings: [...action.warnings, violation.reason],
+  };
+}
+
 function actionFor(
+  field: DetectedField,
+  match: FieldMatch,
+  selectedDocument?: SavedDocument,
+  context: PlanContext = {},
+): DeterministicFillAction {
+  return enforceContract(field, planAction(field, match, selectedDocument, context));
+}
+
+function planAction(
   field: DetectedField,
   match: FieldMatch,
   selectedDocument?: SavedDocument,
@@ -176,6 +266,38 @@ function actionFor(
   // Home / Work, fails to find it, and defers the field. A label this specific
   // is better evidence than a canonical key inferred from the word "phone". A
   // fact about the *person* is never a structural field and never reaches here.
+  // "How did you hear about us?" is answered by inspecting every option the
+  // page offers and choosing the closest category that is actually true —
+  // never the first one on the list, and never a referral or a career fair
+  // that did not happen.
+  if (isOptionControl(field) && field.canonicalKey === 'how_did_you_hear') {
+    const chosen = chooseDiscoverySource(field.options ?? [], context.discoverySource);
+    if (chosen) {
+      return {
+        ...base,
+        action: field.fieldType === 'radio' ? 'choose_radio' : 'select_option',
+        proposedValue: chosen.option.value,
+        matchedOption: { label: chosen.option.label, value: chosen.option.value },
+        source: 'profile',
+        sourceReference: context.discoverySource
+          ? 'profile.preferences.discoverySource'
+          : 'form.discoverySource',
+        confidence: chosen.confidence,
+        requiresReview: chosen.confidence < 0.9,
+        reason: chosen.reason,
+      };
+    }
+    return {
+      ...base,
+      action: 'missing_information',
+      requiresReview: true,
+      reason: 'None of this form’s source options truthfully describes how this job was found.',
+      warnings: [
+        ...base.warnings,
+        'Pick the closest option yourself; one is never guessed for you.',
+      ],
+    };
+  }
   if (isOptionControl(field)) {
     const structural = resolveStructuralField(field);
     if (structural) {
@@ -196,14 +318,40 @@ function actionFor(
     // Nothing grounded this field. If an executor exists for the control, say so
     // — the blocker is a missing value, not a missing strategy.
     if (match.requiresReview) return { ...base, action: 'manual_review' };
-    // A question the matcher did not recognize is not a question to discard.
-    // Previously every unrecognized non-sensitive field became `skip` here,
-    // which hid it from the resolver, from option discovery, and from the user.
-    // It is reported as needing information, so its real choices still get read.
+    // An optional field with no saved value is *correctly* blank, and calling
+    // that "Information needed" is wrong twice over: it asks the user for
+    // something the employer did not, and it inflates the outstanding count
+    // with work that does not exist. Middle Name on a profile that states there
+    // is no middle name, and Address 2 for someone with no second line, are
+    // both this case.
+    if (!field.required && leaveOptionalBlank(field)) {
+      return {
+        ...base,
+        action: 'skip',
+        requiresReview: false,
+        reason: optionalBlankReason(field),
+        warnings: base.warnings,
+      };
+    }
+    // A question the deterministic pass could not settle is *not* a dead end.
+    //
+    // This used to read "No saved answer applies to X yet", which stated the
+    // rule that was wrong: that an ordinary question needs an exact saved
+    // answer whose wording matches the page's. It does not. The deterministic
+    // pass is the first of several tiers, and a field arriving here is on its
+    // way to semantic option matching and then to the batched analysis — so the
+    // reason says which stage it is waiting on, and only a question nobody may
+    // reason about is described as needing the user.
+    const awaitingUser = !mayReasonAbout(field.canonicalKey);
     return {
       ...base,
       action: 'missing_information',
-      reason: match.matched ? match.reason : `No saved answer applies to "${field.question}" yet.`,
+      requiresReview: awaitingUser,
+      reason: match.matched
+        ? match.reason
+        : awaitingUser
+          ? `"${field.question}" is a fact only you can confirm.`
+          : `"${field.question}" is waiting on the page analysis.`,
       warnings: [
         ...base.warnings,
         ...(isOptionControl(field)
@@ -502,6 +650,9 @@ export function buildDeterministicPlan(
   const context: PlanContext = {
     location: locationOf(profile),
     hasPhoneCountryCodeField: hasPhoneCountryCodeField(scan),
+    ...(profile.preferences?.discoverySource
+      ? { discoverySource: profile.preferences.discoverySource }
+      : {}),
   };
   const actions = scan.fields.map((field) =>
     actionFor(

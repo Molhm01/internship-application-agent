@@ -359,8 +359,13 @@ test('approved achievement answer survives review reopen and executes from the a
     type: 'EXECUTE_APPROVED_ACTIONS',
     targetUrl: application.url(),
   });
+  // The generated answer is the one thing that must not have been written: it
+  // has not been approved yet.
   await expect(application.locator('#achievements')).toHaveValue('');
-  await expect(application.locator('#heard')).toHaveValue('');
+  // "How did you hear about us?" is answered deterministically now — the source
+  // list is inspected in full and the closest true category chosen, rather than
+  // the question being left for the user because no exact saved answer existed.
+  await expect(application.locator('#heard')).toHaveValue('job_board');
   await expect(application.locator('#availability')).toHaveValue('');
 
   await message(extension, {

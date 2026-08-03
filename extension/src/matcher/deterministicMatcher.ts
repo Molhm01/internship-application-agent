@@ -1,6 +1,7 @@
 import {
   DEFAULT_SENSITIVE_POLICY,
   SENSITIVE_CANONICAL_QUESTIONS,
+  degreeAnswersFor,
   dialCodeForCountry,
   fieldMatchSchema,
   formatValue,
@@ -237,7 +238,14 @@ function profileValue(
       reference: 'profile.education[0].institution',
       value: education?.institution,
     },
-    degree: { reference: 'profile.education[0].degree', value: education?.degree },
+    // The degree being studied for. "Highest level of education" is the other
+    // question and reads `highest_degree_awarded` above.
+    degree: {
+      reference: profile.currentDegreeInProgress
+        ? 'profile.currentDegreeInProgress'
+        : 'profile.education[0].degree',
+      value: profile.currentDegreeInProgress ?? education?.degree,
+    },
     major: { reference: 'profile.education[0].major', value: education?.major },
     minor: { reference: 'profile.education[0].minor', value: education?.minor },
     gpa: { reference: 'profile.education[0].gpa', value: education?.gpa },
@@ -304,12 +312,13 @@ function profileValue(
       reference: 'profile.personal.address.metroRegion',
       value: personal.address.metroRegion,
     },
+    // Deliberately not `education?.degree`: the degree being pursued is a
+    // different answer, and substituting it would overstate the applicant's
+    // qualifications. `degreeAnswersFor` reads the credential actually awarded,
+    // and yields nothing when the profile establishes none.
     highest_degree_awarded: {
-      reference: 'profile.education.highestDegreeAwarded',
-      // Deliberately not `education?.degree`: the degree being pursued is a
-      // different answer, and substituting it would be a fabrication for any
-      // applicant who has not finished it yet.
-      value: undefined,
+      reference: 'profile.highestCompletedDegree',
+      value: degreeAnswersFor(profile).highestCompletedDegree,
     },
     salary_minimum: {
       reference: 'profile.preferences.salaryMinimum',

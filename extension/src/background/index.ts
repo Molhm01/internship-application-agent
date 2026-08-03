@@ -78,7 +78,14 @@ import {
   saveAnswerGenerationStore,
 } from '../storage/generatedAnswers.js';
 import { loadSettings } from '../storage/settings.js';
-import { finishRun, loadRun, recordProgress, startRun } from '../storage/runState.js';
+import {
+  activeRun,
+  finishRun,
+  loadRun,
+  recordProgress,
+  recordState,
+  startRun,
+} from '../storage/runState.js';
 import { ensureContentScript } from './contentScript.js';
 import { fillAccountForm } from './accountForm.js';
 import { armAutoStart, shouldAutoStart } from './autoStart.js';
@@ -94,6 +101,12 @@ import {
   setActiveBundle,
 } from '../storage/bundleStore.js';
 import { applyAnalysisToPlan, buildAnalysisRequest } from '../analysis/formAnalysis.js';
+import {
+  analysisFingerprint,
+  analysisScope,
+  beginAnalysisScope,
+  endAnalysisScope,
+} from '../analysis/analysisMemo.js';
 import { attachBundleDocuments, isBundleDocumentReference } from '../uploads/bundleUploads.js';
 import { selectSavedResume } from './standaloneResources.js';
 import {
@@ -435,18 +448,49 @@ async function analyzePage(
   });
   if (!built.request) return { warnings: [] };
 
+  // Has this exact set of unresolved questions, with these exact options,
+  // already been analyzed successfully during this run? The orchestrator calls
+  // `buildPlan` once per pass, so without this a five-pass run made five full
+  // model calls over an unchanged page — minutes of waiting for answers the
+  // first call had already produced.
+  const memo = analysisScope();
+  const fingerprint = analysisFingerprint(scan.id, built.questions);
+  if (!memo.shouldAnalyze(fingerprint)) {
+    trace('analysis', 'skipping batched analysis; this question set is unchanged', {
+      pageId: scan.id,
+      questions: built.questions.length,
+    });
+    return { warnings: [] };
+  }
+
   trace('analysis', 'requesting batched page analysis', {
     pageId: scan.id,
     questions: built.request.questions.length,
     facts: built.request.facts.length,
     requests: 1,
   });
+  // The model call is the long part of this stage, and the popup was showing
+  // "Matching profile information" throughout it — a truthful label for the
+  // stage and a useless one for the wait. Naming the state here is what lets
+  // the popup say how many custom questions are being analyzed.
+  if (activeAutofill) {
+    await recordState(activeAutofill.runId, 'ANALYZING_AI');
+  }
 
-  const response = await analyzeForm(built.request);
+  const response = await analyzeForm(built.request, activeAutofill?.controller.signal);
   if (response.error) {
     traceFailure('analysis', 'batched page analysis failed', { code: response.error.code });
-    return { warnings: [`Page analysis did not run: ${response.error.message}`] };
+    // Deliberately not memoised: a failure is not an answer, and the next pass
+    // may well succeed. What must not happen is the run *looping* on it, and
+    // that is prevented by the pass limit plus the question ledger rather than
+    // by pretending the call succeeded.
+    return {
+      warnings: [
+        `Page analysis did not run: ${response.error.message} Everything your profile could answer was still filled.`,
+      ],
+    };
   }
+  memo.record(fingerprint, true);
 
   const applied = applyAnalysisToPlan(
     plan,
@@ -1236,7 +1280,8 @@ async function cancelScan(scanId?: string, targetUrl?: string): Promise<unknown>
 }
 
 /** The one in-flight autofill run, so a second click cancels rather than races. */
-let activeAutofill: { runId: string; cancelled: boolean } | null = null;
+let activeAutofill: { runId: string; cancelled: boolean; controller: AbortController } | null =
+  null;
 
 /**
  * The single "Autofill Application" action.
@@ -1261,6 +1306,20 @@ let activeAutofill: { runId: string; cancelled: boolean } | null = null;
  * worker being suspended underneath it.
  */
 async function acceptAutofillRun(targetUrl?: string): Promise<unknown> {
+  // One click, one run. Without this a second click minted a second id,
+  // overwrote the stored run, and left the first orchestrator running
+  // invisibly — two passes over the same page, two batched model calls, and a
+  // cancel button that could only reach the newer of them.
+  const existing = await activeRun();
+  if (existing) {
+    return {
+      ok: true as const,
+      accepted: false as const,
+      runId: existing.runId,
+      state: existing.state,
+      reason: 'A run is already in progress on this page.',
+    };
+  }
   const runId = `autofill-${crypto.randomUUID()}`;
   let url = targetUrl ?? '';
   if (!url) {
@@ -1295,8 +1354,18 @@ async function acceptAutofillRun(targetUrl?: string): Promise<unknown> {
 }
 
 async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise<unknown> {
-  const state = { runId: requestedRunId ?? `autofill-${crypto.randomUUID()}`, cancelled: false };
+  const state = {
+    runId: requestedRunId ?? `autofill-${crypto.randomUUID()}`,
+    cancelled: false,
+    // Reaches an in-flight model call, which the cancelled flag cannot: that
+    // flag is only read between phases.
+    controller: new AbortController(),
+  };
   activeAutofill = state;
+  // One memo per run. Scoped here rather than globally because a new click is
+  // the user asking us to look again — a memo that outlived the run would make
+  // the second click a silent no-op.
+  beginAnalysisScope();
   try {
     const report = await runApplicationAutofill({
       loadSettings: async () => (await loadSettings()).autofill,
@@ -1397,6 +1466,7 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
     await saveAutofillReport(report);
     return { report };
   } finally {
+    endAnalysisScope();
     if (activeAutofill === state) activeAutofill = null;
   }
 }
@@ -1414,10 +1484,12 @@ async function maybeAutoStart(url: string): Promise<unknown> {
   console.info('[agent] auto-starting the run armed by Apply with Agent', {
     company: bundle?.company,
   });
-  // Not awaited: the content script gets its acknowledgement immediately, and
-  // the run reports through AUTOFILL_PROGRESS like any other.
-  void runAutofill(url);
-  return { started: true };
+  // Through the same gate as a click, and for the same reason: an auto-start
+  // racing a user's own click used to produce two concurrent orchestrators over
+  // one page. `acceptAutofillRun` refuses the second, whichever arrives first,
+  // and records the run so the popup can adopt it.
+  const accepted = (await acceptAutofillRun(url)) as { accepted: boolean };
+  return { started: accepted.accepted };
 }
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -1464,7 +1536,13 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
     case 'GET_AUTOFILL_RUN':
       return loadRun().then((run) => ({ run }));
     case 'CANCEL_APPLICATION_AUTOFILL':
-      if (activeAutofill) activeAutofill.cancelled = true;
+      if (activeAutofill) {
+        activeAutofill.cancelled = true;
+        // The flag alone is only read between phases, so a cancel arriving
+        // during a sixty-second model call did nothing until the call returned.
+        // Aborting the controller reaches the in-flight request itself.
+        activeAutofill.controller.abort();
+      }
       return loadRun().then(async (run) => {
         // Recorded as cancelled even when the worker restarted and no longer
         // holds the run in memory, so the popup stops waiting either way.

@@ -135,12 +135,37 @@ export const autofillFieldResultSchema = z.object({
   sensitive: z.boolean().default(false),
   /** What the page actually held afterwards, read back from the DOM. */
   actualValue: z.string().max(2000).optional(),
-  verification: z.enum(['verified', 'unverified', 'not_attempted', 'failed']),
+  /**
+   * What happened to this field.
+   *
+   * `optional_left_blank` is its own state rather than a flavour of
+   * `not_attempted`, because the two look identical in a count and mean
+   * opposite things: one is work outstanding, the other is work correctly
+   * finished. Collapsing them is what produced "Could not fill: 0" beside a
+   * list of fields that read as unresolved.
+   */
+  verification: z.enum([
+    'verified',
+    'unverified',
+    'not_attempted',
+    'optional_left_blank',
+    'failed',
+  ]),
   /** Set when the field is asking for attention; absent when it is settled. */
   reviewReason: reviewReasonSchema.optional(),
   reviewed: z.boolean().default(false),
   failureCode: z.string().max(80).optional(),
   reason: z.string().max(2000).default(''),
+  /**
+   * The action actually attempted, and how long it took.
+   *
+   * Recorded because the report could not previously say what was *tried*: a
+   * field that never received an executable action and one whose execution
+   * failed both arrived as "needs review", which is how the summary read
+   * "Could not fill: 0" above a list of unresolved fields.
+   */
+  attemptedAction: deterministicFillActionKindSchema.optional(),
+  durationMs: z.number().int().nonnegative().max(600_000).optional(),
 });
 
 export type AutofillFieldResult = z.infer<typeof autofillFieldResultSchema>;
@@ -176,6 +201,21 @@ export const applicationAutofillReportSchema = z
     manualBlockers: z.number().int().nonnegative().default(0),
     failedFields: z.number().int().nonnegative().default(0),
     skippedFields: z.number().int().nonnegative().default(0),
+    /**
+     * Optional questions the agent deliberately left empty — no middle name, no
+     * second address line. Counted separately so they never appear as
+     * outstanding work, and never inflate "needs confirmation".
+     */
+    optionalLeftBlank: z.number().int().nonnegative().default(0),
+    /**
+     * Required fields that still need the user, counted from the audit rather
+     * than from the results list — the two disagree whenever a required field
+     * produced no action at all, which is exactly when the summary used to
+     * under-report.
+     */
+    userInputRequired: z.number().int().nonnegative().default(0),
+    /** Wall-clock time for the whole run, so a slow run is visibly slow. */
+    totalDurationMs: z.number().int().nonnegative().max(3_600_000).default(0),
     documentsAttached: z.number().int().nonnegative().default(0),
     /**
      * Always true. Recorded per run so the report itself is evidence that no

@@ -1,8 +1,12 @@
 import {
+  EXTENSION_OWNED_SELECTOR,
   FILLABLE_FIELD_TYPES,
+  OPTION_FIELD_TYPES,
+  contextualQuestionLabel,
   detectedFieldSchema,
   matchCanonicalQuestion,
   normalizeLabel,
+  questionIdentity,
   sectionForQuestion,
   sectionFromHeading,
   type DetectedField,
@@ -123,7 +127,72 @@ function isHoneypot(element: HTMLElement): boolean {
   return /left\s*:\s*-\d{3,}px|top\s*:\s*-\d{3,}px/i.test(style);
 }
 
+/**
+ * True when this element belongs to the extension rather than to the employer.
+ *
+ * Checked against the whole ancestor chain, and across shadow boundaries, so
+ * one mark on the outermost node covers everything the extension renders. This
+ * is what stops "Enable AI Autofill" — a control the extension itself put on
+ * the page — from being reported as an application question.
+ */
+export function isExtensionOwned(element: Element): boolean {
+  let current: Element | null = element;
+  while (current) {
+    if (current.closest(EXTENSION_OWNED_SELECTOR)) return true;
+    const root = current.getRootNode();
+    current = root instanceof ShadowRoot ? root.host : null;
+  }
+  return false;
+}
+
+/**
+ * True when a `button[aria-expanded][aria-controls]` really opens a list of
+ * choices, rather than merely expanding a section.
+ *
+ * The two are indistinguishable by ARIA attributes alone, and treating every
+ * disclosure as a dropdown is how iCIMS's accordion header "Addresses (1)*
+ * required." became an application question — twice. A control is a dropdown
+ * only when the region it controls actually holds options.
+ */
+function opensOptionList(element: HTMLElement): boolean {
+  // `aria-haspopup` — of any kind, including `dialog` for a date picker — is
+  // the element declaring itself a widget trigger. That declaration is enough;
+  // it is the *absence* of one that leaves a bare `aria-expanded` ambiguous.
+  if (element.hasAttribute('aria-haspopup')) return true;
+  const controls = cleanText(element.getAttribute('aria-controls')).split(' ')[0];
+  const region = controls ? element.ownerDocument.getElementById(controls) : null;
+  if (!region) return false;
+  const role = region.getAttribute('role');
+  if (role === 'listbox' || role === 'menu') return true;
+  if (region.matches('select, datalist')) return true;
+  // `[role="option"]` only — deliberately not a bare `option` element. An
+  // accordion panel full of form controls contains plenty of `<option>` tags,
+  // each belonging to a `<select>` inside it rather than to the button that
+  // expanded the panel. Counting those is what turned "Addresses (1)" and
+  // "Highest Level of Education" into questions of their own.
+  return region.querySelector('[role="option"], [role="listbox"]') !== null;
+}
+
+/**
+ * True when the element is a section heading, a validation summary, or another
+ * piece of page furniture that happens to be focusable.
+ *
+ * A container is never a question. It becomes one only when it owns a real
+ * supported control, and that control is reported instead of the container.
+ */
+function isPageFurniture(element: HTMLElement): boolean {
+  if (element.tagName !== 'BUTTON' && element.getAttribute('role') !== 'button') return false;
+  // A disclosure that opens no list is an accordion header. Its fields are
+  // scanned in their own right once it is expanded.
+  if (element.hasAttribute('aria-expanded') && !opensOptionList(element)) return true;
+  return false;
+}
+
 function shouldIgnore(element: HTMLElement): boolean {
+  // Before every other test: an element the extension put on the page is not
+  // part of the employer's form, however control-like it looks.
+  if (isExtensionOwned(element)) return true;
+  if (isPageFurniture(element)) return true;
   if (!isVisibleControl(element) || isHoneypot(element)) return true;
   // A radiogroup is the container for its radios; scanning both would report
   // the same question twice, once with no options.
@@ -318,13 +387,10 @@ export function isCustomCombobox(element: HTMLElement): boolean {
   const role = element.getAttribute('role');
   if (role === 'combobox' || role === 'listbox') return true;
   if (element.matches('.select__control, [class*="react-select"] [class*="control"]')) return true;
-  if (
-    element.tagName === 'BUTTON' &&
-    (element.hasAttribute('aria-haspopup') ||
-      (element.hasAttribute('aria-expanded') && element.hasAttribute('aria-controls')))
-  ) {
-    return true;
-  }
+  // A button is a dropdown only when it opens something holding choices. A bare
+  // `aria-expanded` + `aria-controls` pair is just as often an accordion, and
+  // reading one as a combobox invents a question out of a section heading.
+  if (element.tagName === 'BUTTON' && opensOptionList(element)) return true;
   // Emotion-hashed React Select roots: `css-1abcde-control`.
   return /(^|\s)css-[a-z0-9]+-control(\s|$)/.test(element.className || '');
 }
@@ -399,6 +465,16 @@ function selectedValue(
 function optionsFor(elements: HTMLElement[], fieldType: FieldType): FieldOption[] | undefined {
   const first = elements[0];
   if (!first) return undefined;
+  // Only a control that is *answered by choosing* may carry options.
+  //
+  // Without this gate the custom-dropdown search below ran for every control,
+  // including plain text inputs — and its last resort looks for
+  // `[class*="menu"]` among the control's siblings, which on a real ATS page
+  // matches a navigation menu. A "First Name" box therefore came back with an
+  // option list it had no business having, the planner matched the saved name
+  // against those options, and the executor reported "No option on the page
+  // matched Molhm" for a field you type into.
+  if (!OPTION_FIELD_TYPES.includes(fieldType)) return undefined;
   if (isSelect(first)) {
     return Array.from(first.options, (option) => ({
       label: cleanText(option.textContent),
@@ -422,6 +498,8 @@ function optionsFor(elements: HTMLElement[], fieldType: FieldType): FieldOption[
       return { label, value: input.value, ...(input.checked ? { selected: true } : {}) };
     });
   }
+  // A single checkbox is answered by ticking it, not by picking from a list.
+  if (fieldType === 'checkbox') return undefined;
   // A custom dropdown announces its list through `aria-controls` or
   // `aria-owns`, or renders it as a descendant. Each is tried; the first that
   // yields real options wins. When none does, the options genuinely are not on
@@ -683,8 +761,13 @@ function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedFie
   const accessible = groupLabel ?? extractAccessibleLabel(first);
   const label = accessible.label;
   const normalizedLabel = normalizeLabel(label);
-  const match = matchCanonicalQuestion(label);
   const heading = nearestHeading(first);
+  // A one-word label under a repeating block ("Type" under "Phones (1)") is not
+  // a question on its own. The heading supplies the missing half *before*
+  // canonical matching, so "Type" resolves to phone_type rather than to nothing
+  // — and so the two "Type" controls on the page stop being indistinguishable.
+  const contextualLabel = contextualQuestionLabel(label, heading);
+  const match = matchCanonicalQuestion(contextualLabel);
   const headingSection = sectionFromHeading(heading);
   const section: FieldSection =
     headingSection ?? (match.question === 'unknown' ? 'other' : sectionForQuestion(match.question));
@@ -759,6 +842,10 @@ function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedFie
         : {}),
       ...(first.getAttribute('role') ? { role: first.getAttribute('role') } : {}),
       ...(heading ? { sectionHeading: heading } : {}),
+      // The question as it reads once its section is folded in. Kept beside the
+      // label rather than replacing it, so the user still sees the words the
+      // page used while everything downstream reads the unambiguous version.
+      ...(contextualLabel !== label ? { contextualLabel } : {}),
       ...(nearbyDescription(first) ? { nearbyText: nearbyDescription(first) } : {}),
       ...(uploadInstructions(first) ? { uploadInstructions: uploadInstructions(first) } : {}),
       ...(framePath.length ? { framePath } : {}),
@@ -774,6 +861,9 @@ function collectRoots(document: Document, warnings: string[]): Array<Document | 
     const root = roots[index];
     if (!root) continue;
     for (const element of root.querySelectorAll<HTMLElement>('*')) {
+      // The extension's own overlay is a shadow host too. Descending into it
+      // would scan the agent's UI as though it were the employer's form.
+      if (element.closest(EXTENSION_OWNED_SELECTOR)) continue;
       if (element.shadowRoot && !seen.has(element.shadowRoot)) {
         seen.add(element.shadowRoot);
         roots.push(element.shadowRoot);
@@ -796,12 +886,33 @@ function collectRoots(document: Document, warnings: string[]): Array<Document | 
   return roots;
 }
 
+/**
+ * How many real choices a field offers, ignoring placeholders.
+ *
+ * Used to break a tie between two detections of the same question: the one that
+ * actually read the page's choices is the more useful record of it.
+ */
+function informationScore(field: DetectedField): number {
+  return (field.options?.length ?? 0) * 10 + field.confidence;
+}
+
 function scanOnce(document: Document, pageId: string): DomScanResult {
   const warnings: string[] = [];
   const roots = collectRoots(document, warnings);
   const fields: DetectedField[] = [];
   const seenElements = new WeakSet<HTMLElement>();
-  const dedupe = new Set<string>();
+  /**
+   * One entry per question, keyed by an identity built from what the employer's
+   * markup names it — `name`, element id, canonical key, frame path — rather
+   * than by the label alone.
+   *
+   * Keyed this way because the old key was `selector|label|type`, which cannot
+   * tell that an accordion header and the select it expands are one question:
+   * their selectors differ, so both survived and "Highest Level of Education"
+   * was reported twice. It also could not tell two genuinely different
+   * questions apart when they shared a label, which the identity can.
+   */
+  const byIdentity = new Map<string, DetectedField>();
 
   for (const root of roots) {
     const candidates = Array.from(root.querySelectorAll<HTMLElement>(CONTROL_SELECTOR)).filter(
@@ -832,12 +943,18 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
     for (const elements of groups.values()) {
       const field = fieldFromElements(elements, pageId);
       if (!field) continue;
-      const logicalKey = `${field.selector}|${field.normalizedLabel}|${field.fieldType}`;
-      if (dedupe.has(logicalKey)) continue;
-      dedupe.add(logicalKey);
-      fields.push(field);
+      const key = questionIdentity(field);
+      const existing = byIdentity.get(key);
+      // The richer detection wins. Keeping the first would discard the version
+      // that read the page's real choices whenever the poorer one was found
+      // earlier in document order.
+      if (!existing || informationScore(field) > informationScore(existing)) {
+        byIdentity.set(key, field);
+      }
     }
   }
+
+  fields.push(...byIdentity.values());
 
   if (fields.length === 0) warnings.push('No eligible application fields were found.');
   if (fields.some((field) => field.sourceSignals.includes('unlabelled'))) {
@@ -932,6 +1049,8 @@ export function collectNavigationControls(
   const controls: Array<{ label: string; selector: string }> = [];
   for (const root of collectRoots(document, [])) {
     for (const element of root.querySelectorAll<HTMLElement>(selector)) {
+      // The agent's own buttons are not routes through the employer's site.
+      if (isExtensionOwned(element)) continue;
       if (!isVisibleControl(element)) continue;
       const label = cleanText(
         element instanceof HTMLInputElement

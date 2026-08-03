@@ -1,3 +1,4 @@
+import type { CanonicalQuestion } from '../constants/questions.js';
 import type { DetectedField, FieldOption } from '../schemas/fields.js';
 
 /**
@@ -25,6 +26,13 @@ export interface StructuralResolution {
 }
 
 interface StructuralRule {
+  /**
+   * The canonical question this rule answers, when there is one. Checked before
+   * the wording, because a control labelled only "Type" carries no words to
+   * match — the scanner resolved it from its section instead, and the canonical
+   * key is the only evidence left by the time this runs.
+   */
+  canonical?: CanonicalQuestion;
   /** Recognizes the question. */
   matches: RegExp;
   /**
@@ -38,11 +46,13 @@ interface StructuralRule {
 
 const RULES: readonly StructuralRule[] = [
   {
+    canonical: 'phone_type',
     matches: /\bphone (type|kind)\b|\btype of phone\b|\bphone number type\b/i,
     preferences: [/\bmobile\b|\bcell\b/i, /\bpersonal\b/i, /\bhome\b/i],
     reason: 'A mobile number is the one an employer should call.',
   },
   {
+    canonical: 'address_type',
     matches: /\baddress type\b|\btype of address\b/i,
     preferences: [/\bhome\b/i, /\bpersonal\b/i, /\bcurrent\b/i, /\bpermanent\b/i],
     reason: 'Your saved address is a home address.',
@@ -81,8 +91,14 @@ function isPlaceholder(option: FieldOption): boolean {
  * understand is one it has nothing useful to say about.
  */
 export function resolveStructuralField(field: DetectedField): StructuralResolution | null {
-  const haystack = [field.label, field.question, field.normalizedLabel].filter(Boolean).join(' ');
-  const rule = RULES.find((candidate) => candidate.matches.test(haystack));
+  const contextual =
+    typeof field.metadata.contextualLabel === 'string' ? field.metadata.contextualLabel : '';
+  const haystack = [field.label, field.question, field.normalizedLabel, contextual]
+    .filter(Boolean)
+    .join(' ');
+  const rule =
+    RULES.find((candidate) => candidate.canonical && candidate.canonical === field.canonicalKey) ??
+    RULES.find((candidate) => candidate.matches.test(haystack));
   if (!rule) return null;
 
   const options = (field.options ?? []).filter((option) => !isPlaceholder(option));

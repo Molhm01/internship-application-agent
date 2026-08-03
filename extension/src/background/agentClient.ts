@@ -79,6 +79,12 @@ interface RequestOptions<T> {
   timeoutMs?: number;
   /** Some callers (the popup) need the round-trip time. */
   onLatency?: (latencyMs: number) => void;
+  /**
+   * The caller's own cancellation signal, when it has one. Aborting it aborts
+   * the in-flight request, which is what makes Cancel reach a model call
+   * already in progress rather than only taking effect at the next phase.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -92,6 +98,12 @@ async function request<T>(options: RequestOptions<T>): Promise<AgentResult<T>> {
   const startedAt = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? TIMEOUTS.healthMs);
+  // The run's own signal, when the caller has one. Without it, Cancel during a
+  // sixty-second model call did nothing until the call returned on its own —
+  // the cancelled flag is only read between phases.
+  const onExternalAbort = (): void => controller.abort();
+  options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+  if (options.signal?.aborted) controller.abort();
 
   trace('http', 'requesting', { method: options.method, path: options.path });
 
@@ -174,6 +186,7 @@ async function request<T>(options: RequestOptions<T>): Promise<AgentResult<T>> {
     };
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', onExternalAbort);
   }
 }
 
@@ -243,13 +256,17 @@ export async function fetchAgentStatus(): Promise<AgentStatusResult> {
  * timeout follows the request, so a page with eighty questions is not judged by
  * the same clock as one with three.
  */
-export function analyzeForm(body: FormAnalysisRequest): Promise<AgentResult<FormAnalysisResponse>> {
+export function analyzeForm(
+  body: FormAnalysisRequest,
+  signal?: AbortSignal,
+): Promise<AgentResult<FormAnalysisResponse>> {
   return request({
     method: 'POST',
     path: '/ai/analyze-form',
     schema: formAnalysisResponseSchema,
     body,
     timeoutMs: body.timeoutMs + 5_000,
+    ...(signal ? { signal } : {}),
   });
 }
 

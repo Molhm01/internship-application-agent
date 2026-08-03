@@ -8,6 +8,47 @@ import {
   type PortalRouteResponse,
 } from '@internship-agent/shared';
 import type { AutofillState } from './useAutofillState.js';
+import type { AutofillRunPhaseState } from '../storage/runState.js';
+
+/**
+ * What each run state says while it is happening.
+ *
+ * Named for what the agent is doing to *this* page, not for an internal phase,
+ * so a long stage is legible as a long stage rather than as a stall.
+ */
+/** The states in which a run is still working, and Cancel means something. */
+const ACTIVE_RUN_STATES: readonly AutofillRunPhaseState[] = [
+  'SCANNING',
+  'RESOLVING_DETERMINISTIC',
+  'ANALYZING_AI',
+  'EXECUTING',
+  'VERIFYING',
+];
+
+/**
+ * Elapsed time, in the shape a person reads.
+ *
+ * Under a minute stays in seconds; past that, minutes and seconds — because
+ * "94s" is exactly the number someone has to stop and divide.
+ */
+export function formatElapsed(milliseconds: number): string {
+  const total = Math.max(0, Math.round(milliseconds / 1000));
+  if (total < 60) return `${total}s`;
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
+const RUN_STATE_LABELS: Record<AutofillRunPhaseState, string> = {
+  IDLE: 'Ready',
+  SCANNING: 'Scanning page…',
+  RESOLVING_DETERMINISTIC: 'Matching saved profile…',
+  ANALYZING_AI: 'Analyzing custom questions…',
+  EXECUTING: 'Filling fields…',
+  VERIFYING: 'Verifying answers…',
+  WAITING_FOR_USER: 'Waiting for your answers',
+  COMPLETED: 'Autofill complete',
+  FAILED: 'Autofill failed',
+  CANCELLED: 'Autofill cancelled',
+};
 
 /**
  * The application panel: which job is loaded, what a run is doing, and what it
@@ -190,7 +231,11 @@ export function AutofillPanel({
   agentStatus,
   developerMode = false,
 }: AutofillPanelProps): JSX.Element {
-  const { bundle, loadingBundle, running, progress, phaseLabel, report, error } = state;
+  const { bundle, loadingBundle, progress, report, error } = state;
+  // One source of truth for "is something happening": the run state. Cancel,
+  // the progress bar, the timer and the primary button all read it, so the
+  // invalid combination the user saw cannot be constructed.
+  const active = ACTIVE_RUN_STATES.includes(state.runState);
   // A page that is asking for credentials or that has ended the application is
   // not one to fill: the button would do nothing useful and implying otherwise
   // is worse than saying so.
@@ -282,9 +327,21 @@ export function AutofillPanel({
         </p>
       ) : null}
 
-      {running ? (
+      {/*
+        Driven by the run state, not by a separate `running` flag. The two used
+        to be able to disagree — an adopted run left `running` true while the
+        state stayed IDLE, which is how a live Cancel button ended up beside a
+        button reading "Ready", a frozen 2/27 bar and 0s elapsed.
+      */}
+      {active ? (
         <div className="scan-progress" aria-live="polite">
-          <strong>{phaseLabel ?? 'Preparing…'}</strong>
+          <strong>{RUN_STATE_LABELS[state.runState]}</strong>
+          <span className="autofill__analysis">
+            {formatElapsed(state.elapsedMs)} elapsed
+            {progress?.fieldsTotal
+              ? ` · ${progress.fieldsCompleted}/${progress.fieldsTotal} fields`
+              : ''}
+          </span>
           <progress max={progress?.fieldsTotal || 1} value={progress?.fieldsCompleted ?? 0} />
           <button type="button" onClick={() => void state.cancel()}>
             Cancel
@@ -292,14 +349,14 @@ export function AutofillPanel({
         </div>
       ) : null}
 
-      {error && !running ? (
+      {error && !active ? (
         <section className="result result--bad" role="alert">
           <strong>{error.code}</strong> {error.message}
           <span className="status-row__action">{error.suggestedAction}</span>
         </section>
       ) : null}
 
-      {report && !running ? (
+      {report && !active ? (
         <section className="result" role="status">
           {/*
             The five numbers the user actually wants after a run, named rather
@@ -311,8 +368,20 @@ export function AutofillPanel({
             <li>Fields detected: {report.fieldsFound}</li>
             <li>Automatically filled: {report.fieldsVerified}</li>
             <li>Documents uploaded: {report.documentsAttached}</li>
+            {report.optionalLeftBlank > 0 ? (
+              <li>Optional, left blank: {report.optionalLeftBlank}</li>
+            ) : null}
+            {/*
+              Required fields the run could not settle, counted from the audit
+              rather than from the results list. The two disagree whenever a
+              required field produced no action at all — which is exactly when
+              the summary used to read "Could not fill: 0" above a list of
+              fields the user still had to answer.
+            */}
+            <li>Required fields still needing you: {report.userInputRequired}</li>
             <li>Needs confirmation: {report.uncertainSuggestions + report.manualBlockers}</li>
             <li>Could not fill: {report.failedFields}</li>
+            <li>Total time: {Math.round(report.totalDurationMs / 1000)}s</li>
           </ul>
           <p className="autofill__never-submits">
             The final Submit button was never clicked. Review the application and submit it
@@ -338,14 +407,20 @@ export function AutofillPanel({
       <button
         type="button"
         className="primary"
-        disabled={!eligible || running || !fillable}
+        disabled={!eligible || active || !fillable}
         onClick={() => void state.run()}
       >
-        {running
-          ? 'Autofilling…'
-          : fillable
-            ? 'Autofill Application'
-            : 'Nothing to autofill on this page'}
+        {active
+          ? // Named rather than a spinner: a disabled button that says what it
+            // is waiting on is the difference between "working" and "stuck".
+            RUN_STATE_LABELS[state.runState]
+          : !fillable
+            ? 'Nothing to autofill on this page'
+            : state.runState === 'FAILED'
+              ? 'Try again'
+              : report && report.failedFields > 0
+                ? 'Retry failed fields'
+                : 'Autofill Application'}
       </button>
 
       {/*

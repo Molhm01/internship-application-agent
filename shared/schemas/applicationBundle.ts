@@ -64,7 +64,29 @@ export const accountPreferencesSchema = z.object({
    * a bundle, which reads as "the website sent nothing".
    */
   portalStrategy: portalStrategySchema.optional(),
+  /**
+   * Whether the agent may tick "I Agree to the Policies stated above" and its
+   * equivalents on the applicant's behalf.
+   *
+   * Defaulted to `ask_every_time`, and deliberately not to the convenient
+   * answer. A policy acknowledgement is a statement the applicant makes to the
+   * employer, and an agent that agrees to terms nobody read has made it for
+   * them. `allow_required` is opt-in and still narrow: it covers only
+   * acknowledgements the form requires in order to proceed, never a marketing
+   * opt-in that happens to share a checkbox.
+   */
+  //
+  // Optional rather than defaulted, so an absent preference stays visibly
+  // absent until the one place that reads it, where it becomes
+  // `ask_every_time`. A schema default would make the field *required* on the
+  // parsed type, forcing every construction site to name a value for a
+  // permission the user may never have been asked about.
+  policyAcknowledgement: z.enum(['allow_required', 'ask_every_time']).optional(),
 });
+
+/** How the applicant wants required policy acknowledgements handled. */
+export const POLICY_ACKNOWLEDGEMENT_MODES = ['allow_required', 'ask_every_time'] as const;
+export type PolicyAcknowledgementMode = (typeof POLICY_ACKNOWLEDGEMENT_MODES)[number];
 
 export type AccountPreferences = z.infer<typeof accountPreferencesSchema>;
 
@@ -262,5 +284,59 @@ export function bundleSharesPortal(bundle: ApplicationBundle, url: string): bool
     return new URL(bundle.officialApplicationUrl).origin === new URL(url).origin;
   } catch {
     return false;
+  }
+}
+
+/** Requisition-style identifiers an ATS puts in a path segment or a query. */
+function postingIdentifiers(url: URL): string[] {
+  const fromPath = url.pathname.split('/').filter((segment) => /^\d+$/.test(segment));
+  const fromQuery = [...url.searchParams.values()].filter((value) => /^\d+$/.test(value));
+  return [...new Set([...fromPath, ...fromQuery])];
+}
+
+/**
+ * The employer slug a shared-origin ATS puts first in the path — Greenhouse's
+ * `/northwind/jobs/9911`, Lever's `/helios/abc-123`. Empty when the first
+ * segment is plumbing rather than a tenant name.
+ */
+const PORTAL_PLUMBING = /^(jobs?|careers?|apply|login|register|connect|account|search|candidate)$/i;
+
+function tenantSegment(url: URL): string {
+  const first = url.pathname.split('/').filter(Boolean)[0] ?? '';
+  return PORTAL_PLUMBING.test(first) || /^\d+$/.test(first) ? '' : first.toLowerCase();
+}
+
+/**
+ * True when a same-portal page is unmistakably a *different* job.
+ *
+ * Every branded ATS hosts many employers, and many postings per employer, on
+ * one origin. So "same origin" alone cannot say whether a page belongs to the
+ * run in progress — and the job identifier in the URL is the one thing that
+ * can. `/jobs/999/other/job` beside a bundle for `/jobs/12345/…` is somebody
+ * else's posting, whatever else the two pages have in common.
+ *
+ * Portal plumbing — `/jobs/login`, `/jobs/register`, `/connect` — carries no
+ * posting identifier at all, and is therefore *not* a different job. That is
+ * exactly the case the bundle has to survive.
+ */
+export function urlIsDifferentPosting(bundle: ApplicationBundle, url: string): boolean {
+  try {
+    const target = new URL(url);
+    const own = new URL(bundle.officialApplicationUrl);
+
+    // A named employer that is not this bundle's employer settles it outright:
+    // Greenhouse and Lever host every company on one origin, so the tenant slug
+    // is the only thing distinguishing them.
+    const candidateTenant = tenantSegment(target);
+    const ownTenant = tenantSegment(own);
+    if (candidateTenant && ownTenant && candidateTenant !== ownTenant) return true;
+
+    const candidateIds = postingIdentifiers(target);
+    if (candidateIds.length === 0) return false;
+    // The candidate names a posting; the bundle's own identifiers are the only
+    // thing that can vouch for it. When none of them appears, it is another job.
+    return !candidateIds.some((identifier) => postingIdentifiers(own).includes(identifier));
+  } catch {
+    return true;
   }
 }

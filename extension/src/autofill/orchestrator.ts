@@ -161,6 +161,7 @@ export async function runApplicationAutofill(
 ): Promise<ApplicationAutofillReport> {
   const runId = `autofill-${crypto.randomUUID()}`;
   const startedAt = dependencies.now();
+  const startedAtMs = Date.now();
   const scanIds: string[] = [];
   const warnings: string[] = [];
   const resultsByField = new Map<string, AutofillFieldResult>();
@@ -232,6 +233,15 @@ export async function runApplicationAutofill(
         .length,
       failedFields: reviewing.filter((result) => result.reviewReason === 'failed').length,
       skippedFields: results.filter((result) => result.action === 'skip').length,
+      optionalLeftBlank: results.filter((result) => result.verification === 'optional_left_blank')
+        .length,
+      // From the audit, not from the results list. A required field the run
+      // never reached produces no result at all, so counting results is exactly
+      // how "Could not fill: 0" ended up above a list of unanswered fields.
+      userInputRequired: audit.outstanding.filter(
+        (verdict) => verdict.outcome === 'USER_CONFIRMATION_REQUIRED',
+      ).length,
+      totalDurationMs: Math.max(0, Date.now() - startedAtMs),
       submissionPrevented: true,
       status,
       results,
@@ -391,6 +401,10 @@ export async function runApplicationAutofill(
       const previous = resultsByField.get(action.fieldId);
       // Never downgrade a field that already verified in an earlier iteration.
       if (previous?.verification === 'verified' && !executed) continue;
+      // The planner skips an optional question whose correct answer is silence.
+      // Nothing was attempted, and nothing should have been.
+      const optionalLeftBlank =
+        action.action === 'skip' && field !== undefined && !field.required && !executed;
 
       resultsByField.set(
         action.fieldId,
@@ -411,11 +425,18 @@ export async function runApplicationAutofill(
               : 'failed'
             : decision.approved
               ? 'unverified'
-              : 'not_attempted',
-          ...(reviewReasonFor(action, decision, executed)
+              : optionalLeftBlank
+                ? 'optional_left_blank'
+                : 'not_attempted',
+          // An optional field the planner deliberately left empty is settled,
+          // not outstanding. Giving it a review reason is what put "Middle
+          // Name" and "Address 2" on a list of things needing the user.
+          ...(!optionalLeftBlank && reviewReasonFor(action, decision, executed)
             ? { reviewReason: reviewReasonFor(action, decision, executed) }
             : {}),
           reviewed: false,
+          attemptedAction: action.action,
+          ...(outcome?.durationMs !== undefined ? { durationMs: outcome.durationMs } : {}),
           ...(outcome?.error?.code ? { failureCode: outcome.error.code } : {}),
           // The executor's own words when it failed, the policy's when it
           // declined to act, and the planner's otherwise.
@@ -451,6 +472,39 @@ export async function runApplicationAutofill(
       warnings.push('The form kept revealing new questions; autofill stopped after five passes.');
       terminal = agentError('MAX_ITERATIONS_REACHED', 'Stopped after five passes.');
     }
+  }
+
+  // Every question the last scan saw must end with a status.
+  //
+  // The results map is built from `plan.actions`, so a field the planner never
+  // produced an action for — a control revealed on the final pass, or one a
+  // scan/plan failure cut short — would simply be absent. Absent is
+  // indistinguishable from "was not on the page", and that is how a run that
+  // settled two of twenty-seven fields could still look finished. A field with
+  // no record is recorded here as needing the user, which makes the gap
+  // visible instead of invisible.
+  for (const field of lastFields) {
+    if (resultsByField.has(field.id)) continue;
+    resultsByField.set(
+      field.id,
+      autofillFieldResultSchema.parse({
+        fieldId: field.id,
+        question: field.question || field.label,
+        ...(field.canonicalKey ? { canonicalQuestion: field.canonicalKey } : {}),
+        action: 'manual_review',
+        attemptedAction: 'manual_review',
+        source: 'none',
+        confidence: 0,
+        sensitive: false,
+        verification: field.required ? 'not_attempted' : 'optional_left_blank',
+        ...(field.required ? { reviewReason: 'missing_information' as const } : {}),
+        reviewed: false,
+        reason: field.required
+          ? 'The run ended before this question was reached. Check it yourself before submitting.'
+          : 'Optional, and the run ended before it was reached.',
+      }),
+    );
+    selectorsByField.set(field.id, field.selector);
   }
 
   // Highlighting runs whatever stopped the loop: a run that ended early still

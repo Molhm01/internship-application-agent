@@ -33,27 +33,37 @@ const FIXTURE = resolve(
   'icims-account-creation.html',
 );
 
-/** Every field the fixture asks for, by the label a person reads. */
+/**
+ * Every field the fixture asks for, by the label a person reads.
+ *
+ * Several of these are one word. That is the page's own wording — iCIMS labels
+ * the controls under "Phones (1)" and "Addresses (1)" as "Type", "Number",
+ * "Address" and "Address 2" — and the section is what makes them answerable.
+ */
 const EXPECTED_QUESTIONS = [
-  'Username',
+  'Login',
   'Password',
-  'Confirm Password',
+  'Password Re-enter',
   'Email Address',
   'First Name',
   'Middle Name',
   'Last Name',
-  'Phone Type',
-  'Phone Number',
-  'Address Type',
-  'Address Line 1',
-  'Address Line 2',
+  'Type',
+  'Number',
+  'Address',
+  'Address 2',
   'City',
   'State/Province',
-  'Postal Code',
+  'Zip/Postal Code',
   'Country',
   'Resume',
+  'Website',
+  'Highest Level of Education',
   'How did you hear about us?',
+  'Please specify further',
   'Are you willing to relocate?',
+  'Anything else you would like us to know?',
+  'I Agree to the Policies stated above',
 ] as const;
 
 function loadFixture(): void {
@@ -78,6 +88,17 @@ function labelled(fields: DetectedField[], label: string): DetectedField | undef
         .trim()
         .replace(/ $/, '') === wanted,
   );
+}
+
+/**
+ * A field by the question it turned out to be asking.
+ *
+ * Necessary because the page labels two different controls "Type": the section
+ * they sit in is the only thing that tells them apart, and the canonical key is
+ * where that resolution ends up.
+ */
+function byCanonical(fields: DetectedField[], canonical: string): DetectedField | undefined {
+  return fields.find((field) => field.canonicalKey === canonical);
 }
 
 beforeEach(() => {
@@ -123,46 +144,51 @@ describe('scanning the account-creation form', () => {
     expect(missing, `these questions were not found: ${missing.join(', ')}`).toEqual([]);
   });
 
-  it('finds all nineteen of them', async () => {
-    expect(EXPECTED_QUESTIONS).toHaveLength(19);
-    expect((await scanFields()).length).toBeGreaterThanOrEqual(EXPECTED_QUESTIONS.length);
+  it('finds every one of them and nothing more', async () => {
+    const fields = await scanFields();
+    // 24, not 27: the list above names "Type" once, and the page asks it twice
+    // — once under Phones and once under Addresses. The three accordion
+    // headers, the validation summary, and the extension's own panel are not
+    // questions, so this count is an upper bound as well as a lower one.
+    expect(fields).toHaveLength(EXPECTED_QUESTIONS.length + 1);
+    expect(fields.filter((field) => field.label === 'Type')).toHaveLength(2);
   });
 
-  it('emits the password and its confirmation as password fields', async () => {
+  it('emits the password and its re-entry as password fields', async () => {
     const fields = await scanFields();
     const password = labelled(fields, 'Password');
-    const confirm = labelled(fields, 'Confirm Password');
+    const confirm = labelled(fields, 'Password Re-enter');
     expect(password?.fieldType).toBe('password');
     expect(confirm?.fieldType).toBe('password');
     expect(isPasswordField(password!)).toBe(true);
   });
 
-  it('recognizes the username box as a username, not as a plain question', async () => {
-    expect(isUsernameField(labelled(await scanFields(), 'Username')!)).toBe(true);
+  it('recognizes the Login box as the account username, not as a plain question', async () => {
+    expect(isUsernameField(labelled(await scanFields(), 'Login')!)).toBe(true);
   });
 
-  it('keeps Phone Type distinct from Phone Number', async () => {
+  it('keeps the phone block’s Type distinct from its Number', async () => {
     const fields = await scanFields();
-    expect(labelled(fields, 'Phone Type')?.fieldType).toBe('select');
-    expect(labelled(fields, 'Phone Number')?.fieldType).toBe('tel');
+    expect(byCanonical(fields, 'phone_type')?.fieldType).toBe('select');
+    expect(byCanonical(fields, 'phone')?.fieldType).toBe('tel');
   });
 
-  it('keeps Address Type distinct from the address lines', async () => {
+  it('keeps the address block’s Type distinct from the address lines', async () => {
     const fields = await scanFields();
-    expect(labelled(fields, 'Address Type')?.fieldType).toBe('select');
-    expect(labelled(fields, 'Address Line 1')?.fieldType).toBe('text');
-    expect(labelled(fields, 'Address Line 2')?.fieldType).toBe('text');
+    expect(byCanonical(fields, 'address_type')?.fieldType).toBe('select');
+    expect(byCanonical(fields, 'address_line1')?.fieldType).toBe('text');
+    expect(byCanonical(fields, 'address_line2')?.fieldType).toBe('text');
   });
 
   it('reads every option of every dropdown rather than the first', async () => {
     const source = labelled(await scanFields(), 'How did you hear about us?');
     const values = source?.options?.map((option) => option.value) ?? [];
-    expect(values).toEqual(['', 'job-board', 'referral', 'university', 'linkedin']);
+    expect(values).toEqual(['', 'referral', 'university', 'internet', 'company']);
   });
 
   it('marks the required fields as required', async () => {
     const fields = await scanFields();
-    for (const label of ['Username', 'Password', 'Email Address', 'First Name', 'Resume']) {
+    for (const label of ['Login', 'Password', 'Email Address', 'First Name', 'Resume']) {
       expect(labelled(fields, label)?.required, `${label} should be required`).toBe(true);
     }
     expect(labelled(fields, 'Middle Name')?.required).toBe(false);
@@ -283,8 +309,8 @@ describe('the password never leaves the deterministic path', () => {
 
     const questions = built.questions.map((question) => question.questionText);
     expect(questions).not.toContain('Password');
-    expect(questions).not.toContain('Confirm Password');
-    expect(questions).not.toContain('Username');
+    expect(questions).not.toContain('Password Re-enter');
+    expect(questions).not.toContain('Login');
 
     // Nothing password-shaped anywhere in the serialized request.
     const serialized = JSON.stringify(built.request ?? {});

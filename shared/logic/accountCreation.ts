@@ -1,6 +1,9 @@
 import type { DetectedField } from '../schemas/fields.js';
 import type { Profile } from '../schemas/profile.js';
-import type { AccountPreferences } from '../schemas/applicationBundle.js';
+import type {
+  AccountPreferences,
+  PolicyAcknowledgementMode,
+} from '../schemas/applicationBundle.js';
 import {
   isPasswordConfirmationField,
   isPasswordField,
@@ -279,7 +282,11 @@ export function planAccountCreation(input: AccountPlanInput): AccountPlanOutcome
     }
   }
 
-  const consents = planConsents(visible, input.profile);
+  const consents = planConsents(
+    visible,
+    input.profile,
+    input.accountPreferences?.policyAcknowledgement ?? 'ask_every_time',
+  );
   for (const consent of consents) claimed.add(consent.fieldId);
 
   // Every required field this plan leaves unanswered, so none can be silently
@@ -317,6 +324,8 @@ export function planAccountCreation(input: AccountPlanInput): AccountPlanOutcome
 export function planConsents(
   fields: readonly DetectedField[],
   profile: Profile | undefined,
+  /** Defaults to asking, so an omitted preference can never mean "agree". */
+  mode: PolicyAcknowledgementMode = 'ask_every_time',
 ): ConsentDecision[] {
   return fields.filter(isConsentField).map((field) => {
     const label = field.label || field.question;
@@ -335,15 +344,21 @@ export function planConsents(
       };
     }
     if (kind === 'terms') {
+      // Permission first, requirement second. "Required to register" explains
+      // why ticking it is reasonable; it is not on its own consent to tick it,
+      // and the default is to ask.
+      const permitted = mode === 'allow_required';
       return {
         fieldId: field.id,
         selector: field.selector,
         label,
         kind,
-        check: field.required,
-        reason: field.required
-          ? 'Required to register, and declining would abandon the application'
-          : 'Optional, so it is left for you to decide',
+        check: permitted && field.required,
+        reason: !permitted
+          ? 'Agreeing to an employer’s policies is yours to do; read it and tick it yourself'
+          : field.required
+            ? 'Required to register, and you allowed required policy acknowledgements'
+            : 'Optional, so it is left for you to decide',
       };
     }
     return {

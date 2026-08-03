@@ -176,5 +176,35 @@ export function buildNormalizedQuestions(fields: readonly DetectedField[]): Norm
     }
     questions.set(question.questionId, question);
   }
-  return [...questions.values()];
+  const built = [...questions.values()];
+  assertOneQuestionPerField(built);
+  return built;
+}
+
+/**
+ * Proves that no field is claimed by two questions.
+ *
+ * A duplicate here is not cosmetic: the model is asked the same thing twice, the
+ * executor writes the same control twice, and the completion counters count it
+ * twice — which is what "Highest Level of Education appears twice" looked like
+ * from the outside. The scanner deduplicates by runtime identity upstream; this
+ * is the assertion that the deduplication actually held.
+ *
+ * Throws rather than repairing, because a silent repair would hide the scanner
+ * regression that caused it. Deliberately checked in production too: the cost is
+ * one pass over a list of a few dozen ids.
+ */
+export function assertOneQuestionPerField(questions: readonly NormalizedQuestion[]): void {
+  const owner = new Map<string, string>();
+  for (const question of questions) {
+    for (const fieldId of question.fieldIds) {
+      const existing = owner.get(fieldId);
+      if (existing !== undefined && existing !== question.questionId) {
+        throw new Error(
+          `Two normalized questions claim the same field: "${existing}" and "${question.questionId}" both point at ${fieldId}.`,
+        );
+      }
+      owner.set(fieldId, question.questionId);
+    }
+  }
 }

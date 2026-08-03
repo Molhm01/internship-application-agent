@@ -10,32 +10,84 @@ import {
 import { allowsRegionSuffix, matchOption } from './optionMatcher.js';
 
 /**
- * Questions the resolver may propose a value for from saved data alone. Anything
- * absent from this list is left to the deterministic matcher or to the user —
- * the resolver widens coverage deliberately, one question at a time, rather than
- * by inferring whatever looks plausible.
+ * Questions the resolver may never propose a value for, whatever the model
+ * concludes.
+ *
+ * This used to be the opposite list — an allow-list of nineteen questions, and
+ * everything else was refused for want of an exact saved answer. That made the
+ * agent useless on ordinary forms: a page could ask twenty-six perfectly
+ * answerable questions and get twenty-six "no saved answer applies" cards,
+ * because the *wording* had not been anticipated. Understanding a question is
+ * what the model is for.
+ *
+ * Inverting it moves the judgement to where it belongs. Anything here is a fact
+ * about the applicant's life or legal position that cannot be derived, only
+ * known — inventing one is a misrepresentation with consequences, not a wrong
+ * guess. Anything not here may be reasoned about, and still never fills without
+ * the user's approval.
  */
-export const AI_SUGGESTIBLE_QUESTIONS: readonly CanonicalQuestion[] = [
-  'country',
-  'city',
-  'state',
-  'postal_code',
-  'address_line1',
+export const AI_PROHIBITED_QUESTIONS: readonly CanonicalQuestion[] = [
+  // Employment and education history: dates, employers, and credentials are
+  // matters of record.
+  'employer',
+  'job_title',
+  'employment_start_date',
+  'employment_end_date',
+  'employment_history',
+  'years_of_experience',
   'school',
-  'degree',
-  'major',
-  'minor',
-  'willing_to_relocate',
-  'willing_to_travel',
-  'earliest_start_date',
-  'internship_availability',
-  'how_did_you_hear',
+  'gpa',
+  'graduation_date',
+  'graduation_month',
+  'graduation_year',
+  'highest_degree_awarded',
+  // Who vouches for the applicant, and how.
   'referral',
-  'website',
-  'portfolio',
-  'linkedin',
-  'github',
+  'referral_name',
+  'referral_email',
+  'referral_relationship',
+  'employee_referral',
+  'family_member_employed',
+  'previously_employed',
+  'previously_applied',
+  'previously_interviewed',
+  // Legal position. Every one of these is governed by the sensitive-answer
+  // policy as well; they are named here so the prohibition survives a
+  // classification miss.
+  'work_authorization',
+  'sponsorship_required',
+  'citizenship',
+  'security_clearance',
+  'criminal_history',
+  'salary_expectation',
+  'salary_minimum',
+  // Protected characteristics.
+  'gender',
+  'transgender',
+  'race_ethnicity',
+  'hispanic_latino',
+  'veteran_status',
+  'disability_status',
+  'sexual_orientation',
+  'religion',
+  'medical_information',
+  // Consent is the applicant's to give.
+  'terms_attestation',
+  'signature',
+  'marketing_text_consent',
 ];
+
+/**
+ * True when the resolver may reason about this question at all.
+ *
+ * An unrecognized question — `canonical` absent or `unknown` — is answerable:
+ * that is precisely the case the model exists for, and refusing it was the rule
+ * that produced a page of unanswered ordinary questions.
+ */
+export function mayReasonAbout(canonical: CanonicalQuestion | undefined): boolean {
+  if (canonical === undefined) return true;
+  return !AI_PROHIBITED_QUESTIONS.includes(canonical);
+}
 
 /**
  * Legal attestations are never accepted automatically, regardless of source.
@@ -438,9 +490,11 @@ export function resolveUnresolvedField(input: ResolverInput): UnresolvedFieldRes
   }
 
   // ---- Tier 4: grounded AI suggestion ------------------------------------
-  // Reached only when every tier above found nothing, and only for questions on
-  // the allow-list. Never auto-approved.
-  if (aiSuggestion && canonical && AI_SUGGESTIBLE_QUESTIONS.includes(canonical)) {
+  // Reached only when every tier above found nothing, and refused only for the
+  // facts nobody may invent. A question whose wording nothing anticipated is
+  // reasoned about here rather than handed back as unanswerable. Never
+  // auto-approved: the user still confirms it before it is written.
+  if (aiSuggestion && mayReasonAbout(canonical)) {
     const matched = matchAgainstOptions(aiSuggestion.value);
     if (matched && 'failure' in matched) return matched.failure;
     return resolution({

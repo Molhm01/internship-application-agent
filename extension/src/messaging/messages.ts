@@ -2,7 +2,7 @@ import { DEFAULT_ERROR_GUIDANCE } from '@internship-agent/shared';
 import { z } from 'zod';
 import { trace, traceFailure } from '../utils/trace.js';
 import type { ContentScriptConnection } from '../background/contentScript.js';
-import type { AutofillRunState } from '../storage/runState.js';
+import type { AutofillRunPhaseState, AutofillRunState } from '../storage/runState.js';
 import type {
   AgentError,
   ApprovedAnswer,
@@ -207,7 +207,24 @@ export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends 'A
         : M extends 'DELETE_BUNDLE'
           ? { ok: true } | { ok: false; error: AgentError }
           : M extends 'RUN_APPLICATION_AUTOFILL'
-            ? { ok: true; accepted: true; runId: string } | { error: AgentError }
+            ? // `accepted: false` means a run already owns this page. It carries
+              // that run's id so the caller can follow it instead of starting a
+              // second one — refusing the click is not the same as failing it.
+              | {
+                  ok: true;
+                  accepted: true;
+                  runId: string;
+                  state?: AutofillRunPhaseState;
+                  reason?: string;
+                }
+              | {
+                  ok: true;
+                  accepted: false;
+                  runId: string;
+                  state?: AutofillRunPhaseState;
+                  reason?: string;
+                }
+              | { error: AgentError }
             : M extends 'GET_AUTOFILL_REPORT'
               ? { report: ApplicationAutofillReport | null }
               : M extends 'ENSURE_CONTENT_SCRIPT'

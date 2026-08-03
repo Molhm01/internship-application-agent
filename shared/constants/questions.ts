@@ -32,6 +32,11 @@ export const CANONICAL_QUESTIONS = [
   // routinely not the city of residence.
   'metro_region',
   'phone_country_code',
+  // Which *kind* of phone or address a repeating contact block is recording.
+  // Structural facts about the form, not facts about the applicant, and
+  // meaningless without the section they sit under.
+  'phone_type',
+  'address_type',
   // Links
   'linkedin',
   'github',
@@ -194,6 +199,8 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   country: 'contact_information',
   current_location: 'contact_information',
   phone_country_code: 'contact_information',
+  phone_type: 'contact_information',
+  address_type: 'contact_information',
 
   linkedin: 'contact_information',
   github: 'contact_information',

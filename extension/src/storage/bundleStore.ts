@@ -3,6 +3,7 @@ import {
   bundleMatchesUrl,
   bundleSharesPortal,
   bundleVersionProblem,
+  urlIsDifferentPosting,
   type ApplicationBundle,
   type ApplicationBundleTransfer,
   type BundleDocumentKind,
@@ -163,6 +164,21 @@ export async function saveBundle(transfer: ApplicationBundleTransfer): Promise<A
 
   await withStore(BUNDLE_STORE, 'readwrite', (store) => runRequest(store.put(bundle)));
   await chrome.storage.local.set({ [ACTIVE_KEY]: bundle.id });
+  // The journey starts here, not at the first route the agent takes.
+  //
+  // Internship Pilot opens the employer tab itself, immediately after this
+  // acknowledgement, and the applicant then clicks "Apply" or "Create account"
+  // by hand. Those hops leave the job's path — iCIMS sends /jobs/12345/job to
+  // /jobs/login — and until the agent happened to take a route of its own,
+  // nothing recorded that this origin belonged to the run in progress. So
+  // `bundleForUrl` fell through to null and the popup said "No application
+  // loaded from Internship Pilot" with the tailored documents apparently gone.
+  //
+  // Seeding it from the bundle's own URL is safe because it is scoped to the
+  // active bundle, expires with the journey TTL, and history bundles are still
+  // matched on path — two jobs at one employer in two tabs cannot borrow each
+  // other's documents.
+  await rememberPortalJourneyFor(bundle.id, bundle.officialApplicationUrl);
   await pruneHistory();
   return bundle;
 }
@@ -231,7 +247,13 @@ export async function bundleForUrl(url: string): Promise<ApplicationBundle | nul
     active !== null &&
     journey !== null &&
     journey.bundleId === active.id &&
-    bundleSharesPortal(active, url);
+    bundleSharesPortal(active, url) &&
+    // A page that names a different requisition is another job on the same
+    // portal, not a hop in this application. Without this the journey — which
+    // now starts the moment the bundle is saved, so the applicant's own click
+    // on "Apply" keeps it — would hand this bundle's tailored documents to any
+    // posting the user happened to open on the same host.
+    !urlIsDifferentPosting(active, url);
   return sameJourney ? active : null;
 }
 
@@ -255,6 +277,17 @@ interface PortalJourney {
 export async function rememberPortalJourney(url: string): Promise<void> {
   const active = await loadActiveBundle();
   if (!active) return;
+  await rememberPortalJourneyFor(active.id, url);
+}
+
+/**
+ * Records a journey for a named bundle.
+ *
+ * Separate from the above because `saveBundle` calls it while the active
+ * pointer is still being written, and reading the active bundle back at that
+ * moment would be both wasteful and racy.
+ */
+export async function rememberPortalJourneyFor(bundleId: string, url: string): Promise<void> {
   let origin: string;
   try {
     origin = new URL(url).origin;
@@ -262,7 +295,7 @@ export async function rememberPortalJourney(url: string): Promise<void> {
     return;
   }
   await chrome.storage.local.set({
-    [JOURNEY_KEY]: { bundleId: active.id, origin, startedAt: Date.now() } satisfies PortalJourney,
+    [JOURNEY_KEY]: { bundleId, origin, startedAt: Date.now() } satisfies PortalJourney,
   });
 }
 

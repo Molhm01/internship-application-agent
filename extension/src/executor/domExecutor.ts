@@ -1,6 +1,7 @@
 import {
   DEFAULT_ERROR_GUIDANCE,
   allowsRegionSuffix,
+  contractViolation,
   fillExecutionResultSchema,
   type AgentError,
   type DeterministicFillAction,
@@ -260,6 +261,14 @@ export async function executeDomAction(
       'The sensitive action requires explicit review.',
       started,
     );
+  }
+  // The second half of the planner/executor contract. A plan that asks a text
+  // box to pick an option is refused here rather than being attempted, because
+  // attempting it produces "No option on the page matched Molhm" — a message
+  // that tells the user nothing about what actually went wrong.
+  const violation = contractViolation(field.fieldType, action.action);
+  if (violation) {
+    return failure(action, 'UNSUPPORTED_CONTROL', violation.reason, started);
   }
   const element = findScannedElement(document, field);
   if (!element)

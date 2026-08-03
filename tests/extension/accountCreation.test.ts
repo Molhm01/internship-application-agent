@@ -88,7 +88,11 @@ const TALEO_REGISTRATION: DetectedField[] = [
   }),
 ];
 
-function plan(fields: DetectedField[] = TALEO_REGISTRATION, pageText = '') {
+function plan(
+  fields: DetectedField[] = TALEO_REGISTRATION,
+  pageText = '',
+  policyAcknowledgement: 'allow_required' | 'ask_every_time' = 'ask_every_time',
+) {
   const navigation = classifyPage({
     url: 'https://careers.example.com/register',
     title: 'New User Registration',
@@ -106,6 +110,7 @@ function plan(fields: DetectedField[] = TALEO_REGISTRATION, pageText = '') {
       applicationEmail: 'jordan.applies@example.com',
       preferredUsername: 'jordanellis',
       wantsAccountCreationHelp: true,
+      policyAcknowledgement,
     },
     hasStoredCredential: false,
   });
@@ -177,12 +182,30 @@ describe('planning a Taleo registration', () => {
 });
 
 describe('consent', () => {
-  it('ticks required terms, because refusing abandons the application', () => {
+  it('leaves required terms for the user by default', () => {
+    // Agreeing to an employer's policies is a statement the applicant makes.
+    // "Required to register" explains why ticking it is reasonable; it is not
+    // consent to tick it, and the saved preference defaults to asking.
     const outcome = plan();
     if (outcome.status !== 'ready') throw new Error('expected a plan');
     const terms = outcome.plan.consents.find((entry) => entry.fieldId === 'terms');
     expect(terms?.kind).toBe('terms');
+    expect(terms?.check).toBe(false);
+    expect(terms?.reason).toMatch(/yourself/i);
+  });
+
+  it('ticks required terms once the user has allowed it', () => {
+    const outcome = plan(TALEO_REGISTRATION, '', 'allow_required');
+    if (outcome.status !== 'ready') throw new Error('expected a plan');
+    const terms = outcome.plan.consents.find((entry) => entry.fieldId === 'terms');
     expect(terms?.check).toBe(true);
+    expect(terms?.reason).toMatch(/you allowed/i);
+  });
+
+  it('still never ticks marketing, even with policy acknowledgement allowed', () => {
+    const outcome = plan(TALEO_REGISTRATION, '', 'allow_required');
+    if (outcome.status !== 'ready') throw new Error('expected a plan');
+    expect(outcome.plan.consents.find((entry) => entry.fieldId === 'marketing')?.check).toBe(false);
   });
 
   it('never ticks marketing the user did not opt in to', () => {

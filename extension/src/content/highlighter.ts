@@ -1,4 +1,4 @@
-import { REVIEW_BADGES, type ReviewReason } from '@internship-agent/shared';
+import { REVIEW_BADGES, markExtensionOwned, type ReviewReason } from '@internship-agent/shared';
 
 /**
  * Draws attention to fields that need a person, without editing the employer's
@@ -48,6 +48,9 @@ function ensureLayer(): HTMLElement {
   if (!host) {
     host = document.createElement('div');
     host.id = HOST_ID;
+    // Claims the whole subtree, shadow root included, so the next scan skips
+    // every badge and check mark instead of reading them as page content.
+    markExtensionOwned(host);
     // The host itself must never intercept a click meant for the application.
     host.style.cssText =
       'position:absolute;top:0;left:0;width:0;height:0;pointer-events:none;z-index:2147483646;';

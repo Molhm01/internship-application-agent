@@ -128,6 +128,51 @@ describe('resolution priority', () => {
   it('falls back to an AI suggestion only when nothing saved answers the question', () => {
     const result = resolveUnresolvedField({
       field: field({
+        canonicalKey: 'why_this_company',
+        label: 'What appeals to you about working here?',
+        normalizedLabel: 'what appeals to you about working here',
+        fieldType: 'textarea',
+      }),
+      profile: profileWith(),
+      answers: [],
+      aiSuggestion: { value: 'Drawn to the hardware work.', reference: 'profile.projects[0]' },
+    });
+
+    expect(result.source).toBe('ai_suggestion');
+    expect(result.status).toBe('needs_review');
+    expect(result.requiresReview).toBe(true);
+  });
+
+  it('reasons about a question no rule anticipated, rather than demanding an exact saved answer', () => {
+    // The wording matches nothing in the canonical table, so `canonicalKey` is
+    // absent. That used to be fatal: only nineteen allow-listed questions could
+    // reach the model, and everything else came back as unanswerable. An
+    // ordinary question the page phrased its own way is exactly what the model
+    // is for.
+    const result = resolveUnresolvedField({
+      field: {
+        ...field(),
+        // No canonical key at all: the page's wording matches no rule.
+        canonicalKey: undefined,
+        label: 'Which of our product lines interests you most?',
+        normalizedLabel: 'which of our product lines interests you most',
+        question: 'Which of our product lines interests you most?',
+        fieldType: 'textarea',
+      },
+      profile: profileWith(),
+      answers: [],
+      aiSuggestion: { value: 'Grid instrumentation.', reference: 'profile.skills.technical' },
+    });
+
+    expect(result.source).toBe('ai_suggestion');
+    expect(result.status).toBe('needs_review');
+    // Widened coverage, unchanged safety: it still never fills without approval.
+    expect(result.requiresReview).toBe(true);
+  });
+
+  it('still refuses to invent a referral, however confident the suggestion', () => {
+    const result = resolveUnresolvedField({
+      field: field({
         canonicalKey: 'referral',
         label: 'Referral source',
         normalizedLabel: 'referral source',
@@ -138,9 +183,8 @@ describe('resolution priority', () => {
       aiSuggestion: { value: 'University career fair', reference: 'profile.education[0]' },
     });
 
-    expect(result.source).toBe('ai_suggestion');
-    expect(result.status).toBe('needs_review');
-    expect(result.requiresReview).toBe(true);
+    expect(result.source).toBe('none');
+    expect(result.proposedValue).toBeUndefined();
   });
 
   it('reports missing information rather than guessing', () => {

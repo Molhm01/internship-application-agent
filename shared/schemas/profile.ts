@@ -68,6 +68,13 @@ export const educationEntrySchema = z.object({
   graduationDate: partialDateSchema.optional(),
   gpa: z.number().min(0).max(100).optional(),
   gpaScale: z.number().min(0).max(100).optional(),
+  /**
+   * Whether this credential has been awarded. Absent means the user has not
+   * said, which is different from "not completed" and must stay different: only
+   * an entry that positively states completion can answer "highest degree
+   * awarded".
+   */
+  status: z.enum(['completed', 'in_progress']).optional(),
   coursework: z.array(z.string().max(200)).default([]),
   honors: z.array(z.string().max(200)).default([]),
   activities: z.array(z.string().max(200)).default([]),
@@ -194,6 +201,16 @@ export const profileSchema = z.object({
   id: idSchema.default('primary'),
   personal: personalInfoSchema.default({}),
   education: z.array(educationEntrySchema).default([]),
+  /**
+   * The highest credential actually awarded, and what is being studied now.
+   *
+   * Two fields rather than one because they are two different answers for
+   * anyone mid-degree, and "Highest Level of Education" asks for the first.
+   * Answering it with the second overstates the applicant's qualifications,
+   * which is a misrepresentation rather than a formatting mistake.
+   */
+  highestCompletedDegree: z.string().max(120).optional(),
+  currentDegreeInProgress: z.string().max(120).optional(),
   experience: z.array(experienceEntrySchema).default([]),
   projects: z.array(projectEntrySchema).default([]),
   certifications: z.array(certificationSchema).default([]),
