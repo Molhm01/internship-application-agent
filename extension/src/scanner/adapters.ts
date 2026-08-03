@@ -268,7 +268,11 @@ export const ATS_ADAPTERS: readonly AtsAdapter[] = [
   new BrowserAdapter({
     id: 'icims',
     priority: 75,
-    hosts: /(^|\.)icims\.com$/i,
+    // Every employer sits on a tenant subdomain — careers2-quanta.icims.com,
+    // jobs-company.icims.com — never on the bare domain, so the leading
+    // `(^|\.)` is what makes this work at all. `.eu` is the European tenant
+    // domain and was missing entirely.
+    hosts: /(^|\.)icims\.(com|eu)$/i,
     markers: ['[class*="iCIMS"]', '[id*="iCIMS"]', '#icims_content_iframe'],
     supported: true,
     selectors: {

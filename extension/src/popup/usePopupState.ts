@@ -22,6 +22,14 @@ export interface TabInfo {
   url: string | null;
   contentScriptReachable: boolean;
   fieldsDetected: number | null;
+  /**
+   * The ATS as the page itself reports it, independent of any scan.
+   *
+   * Kept separate from the scan's own `ats` so a failed scan no longer erases
+   * the vendor: showing "Not detected" on a page the detector recognizes reads
+   * as "this site is unsupported", which is a different and wrong diagnosis.
+   */
+  ats: { id: string; displayName: string; confidence: number; reason: string } | null;
 }
 
 export interface PopupState {
@@ -51,6 +59,7 @@ const EMPTY_TAB: TabInfo = {
   domain: null,
   url: null,
   contentScriptReachable: false,
+  ats: null,
   fieldsDetected: null,
 };
 
@@ -64,10 +73,15 @@ async function readActiveTab(): Promise<TabInfo> {
     domain = null;
   }
   let contentScriptReachable = false;
+  let ats: TabInfo['ats'] = null;
   if (tab.id !== undefined && /^https?:/.test(tab.url)) {
     try {
       const pong: unknown = await chrome.tabs.sendMessage(tab.id, { type: 'CONTENT_PING' });
       contentScriptReachable = Boolean(pong);
+      const reported = (pong as { ats?: TabInfo['ats'] } | null)?.ats;
+      // An older content script answers a ping without this key. Treating that
+      // as "no ATS" is correct and keeps a mixed-version install working.
+      if (reported && typeof reported.displayName === 'string') ats = reported;
     } catch {
       contentScriptReachable = false;
     }
@@ -78,6 +92,7 @@ async function readActiveTab(): Promise<TabInfo> {
     url: tab.url,
     contentScriptReachable,
     fieldsDetected: null,
+    ats,
   };
 }
 

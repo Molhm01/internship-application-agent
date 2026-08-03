@@ -182,6 +182,60 @@ async function main() {
     );
   }
 
+  // Scanner and receiver parity.
+  //
+  // content.js holds the scanner; the worker's chunk holds the validator. They
+  // are produced by two separate Vite passes into one folder, so they can be of
+  // different vintages — that is precisely the failure this checks for. Every
+  // copy must be the same set, not merely a superset of the required members.
+  const memberSets = new Map();
+  for (const relative of bundles) {
+    const source = await readFile(join(DIST, relative), 'utf8').catch(() => null);
+    if (source === null) continue;
+    for (const literal of canonicalListLiterals(source)) {
+      const members = [...literal.matchAll(/['"]([a-z_]+)['"]/g)].map((match) => match[1]);
+      memberSets.set(relative, [...new Set(members)].sort().join(','));
+    }
+  }
+  const distinct = new Set(memberSets.values());
+  if (distinct.size > 1) {
+    problems.push(
+      `Bundles disagree about the field-type list — the scanner and its receiver are from different builds:\n      ${[
+        ...memberSets.entries(),
+      ]
+        .map(([file, set]) => `${file}: ${set}`)
+        .join('\n      ')}`,
+    );
+  }
+
+  // iCIMS host recognition, checked in the generated runtime rather than in the
+  // source that produced it.
+  const ICIMS_HOSTS = ['careers2-quanta.icims.com', 'jobs-company.icims.com', 'careers.icims.eu'];
+  let icimsPattern = null;
+  for (const relative of bundles) {
+    const source = await readFile(join(DIST, relative), 'utf8').catch(() => null);
+    if (source === null) continue;
+    // Reads the TLD group out of the emitted `/(^|\.)icims\.(com|eu)$/i`
+    // literal. Anchored on `icims` so it cannot pick up an unrelated pattern.
+    const match = /icims\\[.]\(?([a-z|]+)\)?[$]/i.exec(source);
+    if (match) {
+      icimsPattern = new RegExp(`(^|\\.)icims\\.(${match[1]})$`, 'i');
+      break;
+    }
+  }
+  if (!icimsPattern) {
+    problems.push('No built bundle contains an iCIMS hostname pattern.');
+  } else {
+    for (const host of ICIMS_HOSTS) {
+      if (!icimsPattern.test(host)) {
+        problems.push(`The built iCIMS hostname pattern does not match ${host}.`);
+      }
+    }
+    if (icimsPattern.test('icims.com.attacker.example')) {
+      problems.push('The built iCIMS hostname pattern matches a lookalike domain.');
+    }
+  }
+
   if (problems.length > 0) {
     console.error('Extension build integrity: FAILED');
     for (const problem of problems) console.error(`  - ${problem}`);
@@ -193,6 +247,12 @@ async function main() {
   console.log(
     `Field-type contract: OK (${carriers} bundle(s) carry the list, each with ${REQUIRED_FIELD_TYPES.join(', ')})`,
   );
+  console.log(
+    `Scanner/receiver parity: OK (${memberSets.size} bundle(s), one identical member set of ${
+      [...distinct][0]?.split(',').length ?? 0
+    })`,
+  );
+  console.log(`iCIMS hosts: OK (${ICIMS_HOSTS.join(', ')} all matched; lookalike rejected)`);
   console.log('Freshness: OK (every bundle is newer than the newest source file)');
 }
 

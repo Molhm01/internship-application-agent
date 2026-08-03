@@ -26,7 +26,7 @@
     "start:mock-ollama": "node scripts/mock-ollama.mjs",
     "clean": "node scripts/clean.mjs",
     "check:ollama": "node scripts/check-ollama.mjs",
-    "verify:extension": "node scripts/verify-extension-build.mjs",
+    "verify:extension": "node scripts/verify-extension-build.mjs && node scripts/find-stale-enums.mjs",
     "backup:verify": "node scripts/backup-verify.mjs",
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore": "node scripts/db-restore.mjs",
@@ -40,7 +40,8 @@
     "test": "npm run build:shared && vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "validate": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
+    "validate": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "verify:enums": "node scripts/find-stale-enums.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

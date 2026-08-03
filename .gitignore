@@ -35,3 +35,6 @@ Thumbs.db
 # Graphify knowledge graph: regenerable build output.
 graphify-out/
 tmp-graph.js
+
+# Generated build stamp — written by scripts/write-build-info.mjs on every build.
+extension/src/generated/

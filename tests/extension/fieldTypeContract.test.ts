@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -35,6 +35,11 @@ import {
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** A repo-relative, forward-slashed path, for readable failure messages. */
+function relativeTo(path: string): string {
+  return relative(ROOT, path).split(sep).join('/');
+}
 const DIST = join(ROOT, 'extension', 'dist');
 
 /** The exact list, in order. Changing it is a deliberate act, not a drive-by. */
@@ -210,33 +215,40 @@ describe('every source boundary accepts every canonical member', () => {
  */
 const built = existsSync(join(DIST, 'content.js'));
 
+const CANONICAL_MEMBERS = ['contenteditable', 'multi_select', 'file', 'unknown'];
+
+/**
+ * Bracketed literals that are the canonical list, not some other list.
+ *
+ * Four members that co-occur only here. A looser test flagged
+ * `isAiEligibleField`'s `['textarea','contenteditable','text']` — a
+ * legitimately different list that correctly excludes `password`.
+ */
+function canonicalLiterals(source: string): string[] {
+  const literals = source.match(/\[[^[\]]{0,800}\]/g) ?? [];
+  return literals.filter((literal) =>
+    CANONICAL_MEMBERS.every(
+      (member) => literal.includes(`'${member}'`) || literal.includes(`"${member}"`),
+    ),
+  );
+}
+
+/** Every emitted JavaScript bundle, entry points and shared chunks alike. */
+function bundlePaths(): string[] {
+  const paths: string[] = [];
+  for (const entry of readdirSync(DIST, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith('.js')) paths.push(join(DIST, entry.name));
+  }
+  const chunks = join(DIST, 'chunks');
+  if (existsSync(chunks)) {
+    for (const entry of readdirSync(chunks, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.js')) paths.push(join(chunks, entry.name));
+    }
+  }
+  return paths;
+}
+
 describe.skipIf(!built)('the built bundles agree with the source', () => {
-  const CANONICAL_MEMBERS = ['contenteditable', 'multi_select', 'file', 'unknown'];
-
-  /** Bracketed literals that are the canonical list, not some other list. */
-  function canonicalLiterals(source: string): string[] {
-    const literals = source.match(/\[[^[\]]{0,800}\]/g) ?? [];
-    return literals.filter((literal) =>
-      CANONICAL_MEMBERS.every(
-        (member) => literal.includes(`'${member}'`) || literal.includes(`"${member}"`),
-      ),
-    );
-  }
-
-  function bundlePaths(): string[] {
-    const paths: string[] = [];
-    for (const entry of readdirSync(DIST, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.js')) paths.push(join(DIST, entry.name));
-    }
-    const chunks = join(DIST, 'chunks');
-    if (existsSync(chunks)) {
-      for (const entry of readdirSync(chunks, { withFileTypes: true })) {
-        if (entry.isFile() && entry.name.endsWith('.js')) paths.push(join(chunks, entry.name));
-      }
-    }
-    return paths;
-  }
-
   it('has at least one bundle carrying the list, so this test can fail', () => {
     const carriers = bundlePaths().filter(
       (path) => canonicalLiterals(readFileSync(path, 'utf8')).length > 0,
@@ -249,7 +261,7 @@ describe.skipIf(!built)('the built bundles agree with the source', () => {
     for (const path of bundlePaths()) {
       for (const literal of canonicalLiterals(readFileSync(path, 'utf8'))) {
         if (!literal.includes("'password'") && !literal.includes('"password"')) {
-          stale.push(path.replace(ROOT, '').replace(/\\/g, '/'));
+          stale.push(relativeTo(path));
         }
       }
     }
@@ -264,7 +276,7 @@ describe.skipIf(!built)('the built bundles agree with the source', () => {
     for (const path of bundlePaths()) {
       for (const literal of canonicalLiterals(readFileSync(path, 'utf8'))) {
         if (!literal.includes("'month'") && !literal.includes('"month"')) {
-          stale.push(path.replace(ROOT, '').replace(/\\/g, '/'));
+          stale.push(relativeTo(path));
         }
       }
     }
@@ -277,5 +289,85 @@ describe.skipIf(!built)('the built bundles agree with the source', () => {
     // back at all.
     expect(existsSync(join(DIST, 'content.js'))).toBe(true);
     expect(readFileSync(join(DIST, 'content.js'), 'utf8').length).toBeGreaterThan(1000);
+  });
+});
+
+/**
+ * Behavioural checks against the generated runtime, not just its text.
+ *
+ * The bundle is loaded and its schema is actually exercised. Searching a bundle
+ * for a string proves the string is present; importing it and parsing a
+ * password field proves the runtime accepts one, which is the thing that failed.
+ */
+describe.skipIf(!built)('the generated runtime accepts what the scanner emits', () => {
+  it('parses a password field through the freshly built shared schema', async () => {
+    // shared/dist is what every bundle is compiled from, so this is the
+    // generated artifact rather than the TypeScript source.
+    const built = await import('../../shared/dist/schemas/fields.js');
+    expect(built.fieldTypeSchema.options).toContain('password');
+    expect(built.fieldTypeSchema.options).toContain('month');
+    expect(built.fieldTypeSchema.safeParse('password').success).toBe(true);
+    expect(built.fieldTypeSchema.safeParse('month').success).toBe(true);
+  });
+
+  it('still rejects an arbitrary type in the generated runtime', async () => {
+    const built = await import('../../shared/dist/schemas/fields.js');
+    expect(built.fieldTypeSchema.safeParse('quantum_flux').success).toBe(false);
+  });
+
+  it('has one field-type member set across every bundle, not a superset', () => {
+    // Two Vite passes write into one folder. If they are of different vintages
+    // the sets differ, and the scanner emits what its receiver rejects.
+    const sets = new Map<string, string>();
+    for (const path of bundlePaths()) {
+      for (const literal of canonicalLiterals(readFileSync(path, 'utf8'))) {
+        const members = [...literal.matchAll(/['"]([a-z_]+)['"]/g)].map((match) => match[1]);
+        sets.set(relativeTo(path), [...new Set(members)].sort().join(','));
+      }
+    }
+    expect(sets.size).toBeGreaterThan(0);
+    const distinct = new Set(sets.values());
+    expect(
+      distinct.size,
+      `bundles disagree about the field-type list:\n${[...sets.entries()]
+        .map(([file, set]) => `  ${file}: ${set}`)
+        .join('\n')}`,
+    ).toBe(1);
+    expect([...distinct][0]?.split(',')).toHaveLength(FIELD_TYPES.length);
+  });
+
+  it('carries an iCIMS hostname pattern that matches real tenant subdomains', () => {
+    let pattern: RegExp | null = null;
+    for (const path of bundlePaths()) {
+      // Pulls the TLD group out of the emitted `/(^|\.)icims\.(com|eu)$/i`.
+      const match = /icims\\[.]\(?([a-z|]+)\)?[$]/i.exec(readFileSync(path, 'utf8'));
+      if (match) {
+        pattern = new RegExp(String.raw`(^|\.)icims\.(${match[1]})$`, 'i');
+        break;
+      }
+    }
+    expect(pattern, 'no iCIMS hostname pattern found in any bundle').not.toBeNull();
+    for (const host of [
+      'careers2-quanta.icims.com',
+      'careers-quanta.icims.com',
+      'jobs-company.icims.com',
+      'careers.icims.eu',
+    ]) {
+      expect(pattern!.test(host), `${host} should match`).toBe(true);
+    }
+    expect(pattern!.test('icims.com.attacker.example')).toBe(false);
+  });
+
+  it('stamps the build so a stale unpacked folder is identifiable', async () => {
+    const { BUILD_INFO } = await import('../../extension/src/generated/buildInfo.js');
+    expect(BUILD_INFO.sourceRoot).toBe(ROOT);
+    expect(BUILD_INFO.commit).toMatch(/^[0-9a-f]{7,}$|^unknown$/);
+    // Present in the popup bundle, so it is visible without opening devtools.
+    const popup = readFileSync(join(DIST, 'popup.js'), 'utf8');
+    // The stamp is embedded as a JSON string literal, so a Windows path arrives
+    // with its separators doubled. `JSON.stringify` reproduces that exactly,
+    // and works unchanged on a platform where there is nothing to escape.
+    const embedded = JSON.stringify(BUILD_INFO.sourceRoot).slice(1, -1);
+    expect(popup).toContain(embedded);
   });
 });

@@ -479,6 +479,18 @@ const REQUIRED_CLASS = /\b(required|mandatory|is-required|reqfield|asterisk)\b/i
 const REQUIRED_TEXT =
   /(^|\s)\*(\s|$)|\brequired\b|\bmandatory\b|\bthis field is needed\b|\binformation needed\b|\bmanual response required\b|\bplease (complete|answer|provide)\b|\bcannot be (blank|empty)\b|\bmust be (completed|answered|provided)\b/i;
 
+/**
+ * Containers that wrap exactly one question.
+ *
+ * `fieldset` is deliberately absent. A fieldset groups several questions, so
+ * reading its text for an asterisk marks every field in the group required as
+ * soon as one of them is — on the iCIMS fixture that made "Middle Name"
+ * required because "First Name *" sits beside it. A legend's *own* asterisk is
+ * still honoured below; what is excluded is the rest of the group's text.
+ */
+const REQUIRED_CONTAINER_SELECTOR =
+  'label, .field, .form-field, .iCIMS_InfoField, [data-automation-id*="formField"], [data-qa*="field"], [class*="required"], [class*="mandatory"]';
+
 function isRequired(element: HTMLElement, label: string): boolean {
   if ((isInput(element) || isTextArea(element) || isSelect(element)) && element.required) {
     return true;
@@ -487,13 +499,14 @@ function isRequired(element: HTMLElement, label: string): boolean {
   // An invalid control is one the page has already refused to accept.
   if (element.getAttribute('aria-invalid') === 'true') return true;
 
-  const container = element.closest(
-    'label, fieldset, .field, .form-field, [data-automation-id*="formField"], [class*="required"], [class*="mandatory"]',
-  );
+  const container = element.closest(REQUIRED_CONTAINER_SELECTOR);
+  // The legend of the enclosing group, read on its own. "Required information"
+  // as a legend applies to every field under it, which is a real pattern; the
+  // rest of the group's text is not.
+  const legend = element.closest('fieldset')?.querySelector(':scope > legend') ?? null;
 
-  // A required marker on the control, its container, or the container's legend.
-  const markedElements = [element, container, container?.querySelector('legend')];
-  for (const candidate of markedElements) {
+  // A required marker on the control, its own container, or that legend.
+  for (const candidate of [element, container, legend]) {
     if (!candidate) continue;
     const className =
       typeof candidate.className === 'string'
@@ -504,7 +517,7 @@ function isRequired(element: HTMLElement, label: string): boolean {
   }
 
   const containerText = cleanText(container?.textContent);
-  const legendText = cleanText(container?.querySelector('legend')?.textContent);
+  const legendText = cleanText(legend?.textContent);
   return REQUIRED_TEXT.test(`${label} ${containerText} ${legendText}`);
 }
 

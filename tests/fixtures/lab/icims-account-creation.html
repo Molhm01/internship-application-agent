@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Create your account - iCIMS Careers</title>
+  </head>
+  <body>
+    <!--
+      An iCIMS account-creation page, shaped the way the real one is.
+
+      Two things about it matter for the scanner and are easy to get wrong:
+
+      1. The password rules live in a sibling hint element, not on the input, so
+         they are only found by reading around the control.
+      2. "Phone Type" and "Address Type" are dropdowns that sit next to the value
+         they qualify. A scanner that matches on proximity alone reads the type
+         control as the phone number, so both are labelled explicitly here.
+
+      Class names follow the iCIMS_ convention the DOM-marker detector looks for.
+    -->
+    <div class="iCIMS_MainWrapper">
+      <div class="iCIMS_Header">
+        <h1>Software Engineering Intern</h1>
+      </div>
+
+      <form id="icims_account_form" class="iCIMS_ApplicationForm">
+        <fieldset>
+          <legend>Account</legend>
+
+          <div class="iCIMS_InfoField">
+            <label for="username">Username <span class="required">*</span></label>
+            <input type="text" id="username" name="userName" autocomplete="username" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="password">Password <span class="required">*</span></label>
+            <input type="password" id="password" name="password" required />
+            <p class="iCIMS_Hint">
+              Password must be between 8 and 20 characters and contain at least one upper case
+              letter and one number.
+            </p>
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="confirmPassword">Confirm Password <span class="required">*</span></label>
+            <input type="password" id="confirmPassword" name="confirmPassword" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="email">Email Address <span class="required">*</span></label>
+            <input type="email" id="email" name="emailAddress" required />
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Your name</legend>
+
+          <div class="iCIMS_InfoField">
+            <label for="firstName">First Name <span class="required">*</span></label>
+            <input type="text" id="firstName" name="firstName" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="middleName">Middle Name</label>
+            <input type="text" id="middleName" name="middleName" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="lastName">Last Name <span class="required">*</span></label>
+            <input type="text" id="lastName" name="lastName" required />
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Contact</legend>
+
+          <div class="iCIMS_InfoField">
+            <label for="phoneType">Phone Type</label>
+            <select id="phoneType" name="phoneType">
+              <option value="">Please select</option>
+              <option value="mobile">Mobile</option>
+              <option value="home">Home</option>
+              <option value="work">Work</option>
+            </select>
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="phoneNumber">Phone Number <span class="required">*</span></label>
+            <input type="tel" id="phoneNumber" name="phoneNumber" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="addressType">Address Type</label>
+            <select id="addressType" name="addressType">
+              <option value="">Please select</option>
+              <option value="home">Home</option>
+              <option value="mailing">Mailing</option>
+            </select>
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="addressLine1">Address Line 1 <span class="required">*</span></label>
+            <input type="text" id="addressLine1" name="addressLine1" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="addressLine2">Address Line 2</label>
+            <input type="text" id="addressLine2" name="addressLine2" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="city">City <span class="required">*</span></label>
+            <input type="text" id="city" name="city" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="stateProvince">State/Province <span class="required">*</span></label>
+            <select id="stateProvince" name="stateProvince" required>
+              <option value="">Please select</option>
+              <option value="NJ">New Jersey</option>
+              <option value="NY">New York</option>
+              <option value="PA">Pennsylvania</option>
+            </select>
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="postalCode">Postal Code <span class="required">*</span></label>
+            <input type="text" id="postalCode" name="postalCode" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="country">Country <span class="required">*</span></label>
+            <select id="country" name="country" required>
+              <option value="">Please select</option>
+              <option value="US">United States</option>
+              <option value="CA">Canada</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Application details</legend>
+
+          <div class="iCIMS_InfoField">
+            <label for="resume">Resume <span class="required">*</span></label>
+            <input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="source">How did you hear about us?</label>
+            <select id="source" name="sourceType">
+              <option value="">Please select</option>
+              <option value="job-board">Job Board</option>
+              <option value="referral">Employee Referral</option>
+              <option value="university">University Career Fair</option>
+              <option value="linkedin">LinkedIn</option>
+            </select>
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="relocate">Are you willing to relocate?</label>
+            <select id="relocate" name="willingToRelocate">
+              <option value="">Please select</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <button type="button" id="createAccount">Create Account</button>
+      </form>
+    </div>
+  </body>
+</html>

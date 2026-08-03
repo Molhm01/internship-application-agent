@@ -392,4 +392,119 @@ describe('standalone popup autofill', () => {
     // And the popup says plainly that deterministic filling still works.
     expect(screen.getByText(/Deterministic autofill still works/)).toBeDefined();
   });
+  it('names the ATS from the page itself, even when the scan fails', async () => {
+    // "ATS: Not detected" used to be a side effect of any scan failure, because
+    // the popup read the vendor off the scan result alone. On a page the
+    // detector recognizes that reads as "this site is unsupported", which sent
+    // the last investigation towards the detector instead of the validator.
+    const chromeMock = installChromeMock();
+    const icimsUrl = 'https://careers2-quanta.icims.com/jobs/12345/login';
+    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: icimsUrl }]);
+    chromeMock.tabs.sendMessage.mockResolvedValue({
+      present: true,
+      url: icimsUrl,
+      fieldsDetected: null,
+      ats: {
+        id: 'icims',
+        displayName: 'iCIMS',
+        confidence: 0.98,
+        reason: 'hostname careers2-quanta.icims.com matches iCIMS',
+      },
+    });
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'AGENT_STATUS_REQUEST') {
+        return Promise.resolve({
+          health: health(),
+          latencyMs: 1,
+          serverUrl: 'http://127.0.0.1:4317',
+          tokenConfigured: true,
+        });
+      }
+      if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
+      if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
+      if (message.type === 'GET_ACTIVE_BUNDLE') return Promise.resolve({ data: null });
+      if (message.type === 'GET_AUTOFILL_REPORT') return Promise.resolve({ report: null });
+      if (message.type === 'SCAN_APPLICATION') {
+        return Promise.resolve({
+          type: 'SCAN_FAILED',
+          error: {
+            code: 'INVALID_SCAN_RESULT',
+            // The shape of the real failure: a schema rejection whose message is
+            // a JSON dump naming every accepted value.
+            message:
+              'The scan of this page did not match what this build expects (fields.0.fieldType). ' +
+              JSON.stringify([
+                { code: 'invalid_enum_value', options: ['text', 'textarea', 'email'] },
+              ]),
+            recoverable: true,
+            suggestedAction: 'Rebuild and reload the extension.',
+            debugContext: {},
+          },
+        });
+      }
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText('iCIMS')).toBeDefined();
+  });
+
+  it('shows one sentence for a failed scan, never the raw validation JSON', async () => {
+    const chromeMock = installChromeMock();
+    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: URL }]);
+    chromeMock.tabs.sendMessage.mockResolvedValue({ present: true, url: URL });
+    const rawZodDump = JSON.stringify([
+      {
+        code: 'invalid_enum_value',
+        options: ['text', 'textarea', 'email', 'tel', 'number', 'contenteditable', 'unknown'],
+        received: 'password',
+        path: ['fields', 0, 'fieldType'],
+      },
+    ]);
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'AGENT_STATUS_REQUEST') {
+        return Promise.resolve({
+          health: health(),
+          latencyMs: 1,
+          serverUrl: 'http://127.0.0.1:4317',
+          tokenConfigured: true,
+        });
+      }
+      if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
+      if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
+      if (message.type === 'GET_ACTIVE_BUNDLE') return Promise.resolve({ data: null });
+      if (message.type === 'GET_AUTOFILL_REPORT') return Promise.resolve({ report: null });
+      if (message.type === 'SCAN_APPLICATION') {
+        return Promise.resolve({
+          type: 'SCAN_FAILED',
+          error: {
+            code: 'INVALID_SCAN_RESULT',
+            message: rawZodDump,
+            recoverable: true,
+            suggestedAction: 'Rebuild and reload the extension.',
+            debugContext: { issues: [{ code: 'invalid_enum_value', path: 'fields.0.fieldType' }] },
+          },
+        });
+      }
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText(
+        'Application analysis failed. Reload the extension and page, then try again.',
+      ),
+    ).toBeDefined();
+
+    const rendered = document.body.textContent ?? '';
+    // None of the dump reaches the screen — not the JSON, not the code, and
+    // above all not the accepted-value list that reads as a false verdict.
+    expect(rendered).not.toContain('invalid_enum_value');
+    expect(rendered).not.toContain('contenteditable');
+    expect(rendered).not.toContain('INVALID_SCAN_RESULT');
+    expect(rendered).not.toContain('{');
+    expect(rendered).not.toContain('password');
+  });
 });

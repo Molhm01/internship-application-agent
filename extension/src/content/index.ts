@@ -16,7 +16,7 @@ import {
 } from '@internship-agent/shared';
 import type { ContentPingResult, ExtensionMessage } from '../messaging/messages.js';
 import { scanApplication } from '../scanner/scanApplication.js';
-import { ATS_ADAPTERS } from '../scanner/adapters.js';
+import { ATS_ADAPTERS, selectAdapter } from '../scanner/adapters.js';
 import { completeReport, createRunningReport } from '../reporter/fillReporter.js';
 import { validatePageIdentity } from '../executor/pageProtection.js';
 import { startBundleBridge } from './bundleBridge.js';
@@ -77,6 +77,32 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
       present: true,
       url: window.location.href,
       fieldsDetected: null,
+      // Detected here, in the page, on every ping. This is the same detector
+      // the scan uses; answering it separately is what lets the popup name the
+      // vendor even when the scan itself fails.
+      ...(() => {
+        try {
+          const selected = selectAdapter({
+            url: window.location.href,
+            hostname: window.location.hostname,
+            title: document.title,
+            bodyText: document.body?.textContent?.slice(0, 4000) ?? '',
+            document,
+          });
+          return {
+            ats: {
+              id: selected.adapter.id,
+              displayName: selected.adapter.displayName,
+              confidence: selected.detection.confidence,
+              reason: selected.detection.reason,
+            },
+          };
+        } catch {
+          // No adapter matched at all. The ping still succeeds — the content
+          // script being reachable is the thing the caller asked about.
+          return {};
+        }
+      })(),
     };
     sendResponse(result);
     return false;

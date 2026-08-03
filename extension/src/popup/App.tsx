@@ -1,12 +1,23 @@
 import { useEffect, useState } from 'react';
 import { ATS_DISPLAY_NAMES, type PortalStrategy } from '@internship-agent/shared';
 import { loadSettings } from '../storage/settings.js';
+import { BUILD_INFO } from '../generated/buildInfo.js';
 import { StatusRow, type StatusTone } from './StatusRow.js';
 import { usePopupState } from './usePopupState.js';
 import { useAutofillState } from './useAutofillState.js';
 import { AutofillPanel } from './AutofillPanel.js';
 
 const NOT_YET = 'Not analyzed yet';
+
+/**
+ * The only thing a normal user is told when a scan fails recoverably.
+ *
+ * Deliberately one sentence with one instruction. The underlying error can be a
+ * schema rejection whose message is a JSON dump of Zod issues; that belongs in
+ * the console, not in the popup.
+ */
+const RECOVERABLE_SCAN_MESSAGE =
+  'Application analysis failed. Reload the extension and page, then try again.';
 
 function openSettings(): void {
   void chrome.runtime.openOptionsPage();
@@ -31,6 +42,18 @@ export function App(): JSX.Element {
   const { status, tab, loading, refresh, scanState, scan, progress, scanError, cancel } =
     usePopupState();
   const autofill = useAutofillState(tab.url);
+  // Development detail goes to the console only, and carries no field values —
+  // a scan holds whatever the user typed, which can be a password.
+  useEffect(() => {
+    if (!scanError) return;
+    console.warn('[agent] scan failed', {
+      code: scanError.code,
+      build: BUILD_INFO.commit,
+      builtAt: BUILD_INFO.builtAt,
+      sourceRoot: BUILD_INFO.sourceRoot,
+      ...(scanError.debugContext ?? {}),
+    });
+  }, [scanError]);
   // The extension's own setting wins over the website's, because it is the more
   // local and more recent statement of what the user wants on this machine.
   const [settingsStrategy, setSettingsStrategy] = useState<PortalStrategy | undefined>(undefined);
@@ -208,8 +231,11 @@ export function App(): JSX.Element {
         <StatusRow
           label="ATS"
           tone={currentScan ? 'ok' : 'idle'}
-          value={currentScan?.ats.displayName ?? ATS_DISPLAY_NAMES.unknown}
-          detail={currentScan?.ats.detectionReason}
+          // The scan's answer when there is one, the page's own detection
+          // otherwise. The second is what keeps the vendor visible when a scan
+          // fails, which is when knowing it matters most.
+          value={currentScan?.ats.displayName ?? tab.ats?.displayName ?? ATS_DISPLAY_NAMES.unknown}
+          detail={currentScan?.ats.detectionReason ?? tab.ats?.reason ?? null}
         />
         <StatusRow
           label="Fields Detected"
@@ -234,8 +260,15 @@ export function App(): JSX.Element {
       ) : null}
       {scanError ? (
         <section className="result result--bad" role="alert">
-          <strong>{scanError.code}</strong> {scanError.message}
-          <span className="status-row__action">{scanError.suggestedAction}</span>
+          {/*
+            A recoverable scan failure says one thing and nothing else. The
+            error's own `message` can be a schema rejection, and rendering that
+            put a raw Zod dump — including the validator's accepted-value list —
+            in front of somebody who wanted to apply for a job. The list read as
+            "your page is unsupported" when the truth was "this build is stale".
+            The code and the details stay in the console for development.
+          */}
+          {RECOVERABLE_SCAN_MESSAGE}
         </section>
       ) : null}
       {applicationFormDetected || autofill.bundle ? (
@@ -266,6 +299,16 @@ export function App(): JSX.Element {
       <footer className="popup__footer">
         <p>Only explicitly approved deterministic actions can change fields.</p>
         <p>This agent never submits an application.</p>
+        {/*
+          Which build this actually is. A stale unpacked extension loaded from a
+          sibling copy of the repository is otherwise indistinguishable from a
+          current one, and that is exactly how a validator came to disagree with
+          the scanner that feeds it.
+        */}
+        <p className="popup__build" title={BUILD_INFO.sourceRoot}>
+          Build {BUILD_INFO.commit} · {new Date(BUILD_INFO.builtAt).toLocaleString()}
+        </p>
+        <p className="popup__build popup__build--path">{BUILD_INFO.sourceRoot}</p>
       </footer>
     </main>
   );

@@ -150,6 +150,25 @@ export interface ContentPingResult {
    * so the popup can say "not analyzed" rather than "zero fields found".
    */
   fieldsDetected: null;
+  /**
+   * Which ATS this page is, detected without scanning it.
+   *
+   * The popup used to read the vendor off the scan result alone, so any scan
+   * failure — including a schema rejection — showed "ATS: Not detected" on a
+   * page the detector recognizes perfectly well. That reads as "we do not
+   * support this site" when the truth is "the scan broke", and it sent the
+   * investigation towards the detector instead of the validator.
+   *
+   * Detection is a hostname test plus a few `querySelector` calls, so it is
+   * cheap enough to answer on every ping and independent of everything that can
+   * go wrong later.
+   */
+  ats?: {
+    id: string;
+    displayName: string;
+    confidence: number;
+    reason: string;
+  };
 }
 
 export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends 'AGENT_STATUS_REQUEST'
