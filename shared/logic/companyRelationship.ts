@@ -56,9 +56,7 @@ const USER_QUESTIONS: Record<CompanyRelationshipQuestion, string> = {
   referral_relationship: 'How do you know your referral at {company}?',
 };
 
-const BOOLEAN_FACTS: Partial<
-  Record<CompanyRelationshipQuestion, keyof CompanyRelationship>
-> = {
+const BOOLEAN_FACTS: Partial<Record<CompanyRelationshipQuestion, keyof CompanyRelationship>> = {
   previously_employed: 'previouslyEmployed',
   previously_applied: 'previouslyApplied',
   previously_interviewed: 'previouslyInterviewed',
@@ -136,7 +134,10 @@ export function companyOverride(
   const overrides = relationship?.overrides;
   if (!overrides) return null;
   const normalize = (value: string): string =>
-    value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
   const wanted = normalize(questionText);
   const found = Object.entries(overrides).find(([key]) => normalize(key) === wanted);
   return found?.[1]?.trim() || null;

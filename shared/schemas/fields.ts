@@ -2,19 +2,42 @@ import { z } from 'zod';
 import { confidenceSchema, idSchema } from './common.js';
 import { CANONICAL_QUESTIONS, FIELD_SECTIONS } from '../constants/questions.js';
 
-/** Low-level DOM behavior. Semantic meaning is represented separately. */
-export const fieldTypeSchema = z.enum([
+/**
+ * THE canonical field-type list. Low-level DOM behavior; semantic meaning is
+ * represented separately.
+ *
+ * This array is the single source of truth for every runtime boundary in the
+ * system — the content script that emits a scan, the background worker that
+ * validates it, the popup that renders it, the agent server that stores it, and
+ * every test fixture. Nothing may re-declare these members.
+ *
+ * That rule exists because breaking it is invisible until it is expensive. When
+ * `password` was added to the scanner, a boundary still holding the old list
+ * rejected the whole scan with INVALID_SCAN_RESULT — the page was read
+ * correctly and thrown away at a validation step nobody had noticed was a
+ * second copy. `fieldTypeContract.test.ts` now fails the build if any boundary,
+ * source or built bundle, disagrees with this array.
+ *
+ * To add a member: add it here, then run the typecheck. Exhaustive `Record<
+ * FieldType, …>` maps (notably `CONTROL_TYPE_BY_FIELD_TYPE`) will fail to
+ * compile until every consumer has been taught what the new member means, which
+ * is the point — a silently-unhandled member is how a field gets skipped.
+ */
+export const FIELD_TYPES = [
   'text',
   'textarea',
   'email',
   'tel',
   'number',
+  'date',
+  // A month/year control. Distinct from `date`: it has no day component, and
+  // writing a full ISO date into one is rejected by the browser.
+  'month',
+  'url',
   // An account password. Scanned so login and registration pages are
   // understood; only ever filled from the encrypted credential vault, never
   // from a profile value and never from a model.
   'password',
-  'date',
-  'url',
   'select',
   'combobox',
   'radio',
@@ -23,26 +46,21 @@ export const fieldTypeSchema = z.enum([
   'file',
   'contenteditable',
   'unknown',
-]);
+] as const;
 
-export type FieldType = z.infer<typeof fieldTypeSchema>;
+export const fieldTypeSchema = z.enum(FIELD_TYPES);
 
-export const FILLABLE_FIELD_TYPES: readonly FieldType[] = [
-  'text',
-  'password',
-  'textarea',
-  'email',
-  'tel',
-  'number',
-  'date',
-  'url',
-  'select',
-  'combobox',
-  'radio',
-  'checkbox',
-  'multi_select',
-  'contenteditable',
-];
+export type FieldType = (typeof FIELD_TYPES)[number];
+
+/**
+ * The types a value can be typed or chosen into.
+ *
+ * `file` is excluded because it is uploaded rather than filled, and `unknown`
+ * because there is nothing to fill it with.
+ */
+export const FILLABLE_FIELD_TYPES: readonly FieldType[] = FIELD_TYPES.filter(
+  (type): type is Exclude<FieldType, 'file' | 'unknown'> => type !== 'file' && type !== 'unknown',
+);
 
 export const semanticTypeSchema = z.enum([
   'first_name',

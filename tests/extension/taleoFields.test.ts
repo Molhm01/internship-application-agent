@@ -75,7 +75,9 @@ describe('reading a Taleo label as the question it actually is', () => {
 
   it('keeps the degree being pursued distinct from the one already awarded', () => {
     expect(matchCanonicalQuestion('Degree').question).toBe('degree');
-    expect(matchCanonicalQuestion('Highest Degree Awarded').question).toBe('highest_degree_awarded');
+    expect(matchCanonicalQuestion('Highest Degree Awarded').question).toBe(
+      'highest_degree_awarded',
+    );
   });
 
   it('keeps the middle-name box distinct from the no-middle-name checkbox', () => {

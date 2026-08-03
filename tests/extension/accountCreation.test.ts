@@ -55,7 +55,8 @@ const TALEO_REGISTRATION: DetectedField[] = [
     question: 'Password',
     fieldType: 'password',
     required: true,
-    helpText: 'The password must be between 8 and 20 characters and contain one upper case letter and one number.',
+    helpText:
+      'The password must be between 8 and 20 characters and contain one upper case letter and one number.',
   }),
   field({
     id: 'confirm',
@@ -64,7 +65,13 @@ const TALEO_REGISTRATION: DetectedField[] = [
     fieldType: 'password',
     required: true,
   }),
-  field({ id: 'email', label: 'E-Mail Address', question: 'E-Mail Address', fieldType: 'email', required: true }),
+  field({
+    id: 'email',
+    label: 'E-Mail Address',
+    question: 'E-Mail Address',
+    fieldType: 'email',
+    required: true,
+  }),
   field({
     id: 'terms',
     label: 'I have read and agree to the Terms of Use and Privacy Policy',
@@ -214,9 +221,9 @@ describe('consent', () => {
   it('reads a combined terms-and-marketing label as marketing, and leaves it alone', () => {
     // The unsafe reading would tick a required "terms" box that also opts the
     // user into marketing they never agreed to.
-    expect(
-      classifyConsent('I agree to the Terms of Use and to receive marketing emails'),
-    ).toBe('marketing');
+    expect(classifyConsent('I agree to the Terms of Use and to receive marketing emails')).toBe(
+      'marketing',
+    );
   });
 
   it('leaves an unrecognized checkbox for the user', () => {
@@ -305,9 +312,9 @@ describe('what the agent refuses to invent', () => {
 
   it('derives a username from the email rather than inventing one', () => {
     expect(usernameFor(undefined, 'jordan.applies@example.com')).toBe('jordan.applies');
-    expect(usernameFor({ preferredUsername: 'jellis', wantsAccountCreationHelp: true }, 'a@b.com')).toBe(
-      'jellis',
-    );
+    expect(
+      usernameFor({ preferredUsername: 'jellis', wantsAccountCreationHelp: true }, 'a@b.com'),
+    ).toBe('jellis');
   });
 
   it('offers no username at all when neither source gives a usable one', () => {
@@ -362,7 +369,9 @@ describe('the account-creation permission', () => {
 
 describe('the secret-detection guard', () => {
   it('spots a password that leaked into a plan', () => {
-    const leaky = { fields: [{ value: { kind: 'literal', value: 'Hunter2!x' } }] } as unknown as AccountPlan;
+    const leaky = {
+      fields: [{ value: { kind: 'literal', value: 'Hunter2!x' } }],
+    } as unknown as AccountPlan;
     expect(planContainsSecret(leaky, 'Hunter2!x')).toBe(true);
   });
 

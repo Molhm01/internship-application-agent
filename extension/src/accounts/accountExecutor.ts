@@ -98,7 +98,9 @@ async function resolveSecret(
 
   const password = makePassword(plan);
   if (!satisfiesPolicy(password, plan.policy)) {
-    return { error: `The generated password does not meet this site's rules (${plan.policyDescription}).` };
+    return {
+      error: `The generated password does not meet this site's rules (${plan.policyDescription}).`,
+    };
   }
   return { password, generated: true };
 }
@@ -127,7 +129,10 @@ export async function executeAccountPlan(
     };
   }
 
-  const resolved = await resolveSecret(input.plan, input.makePassword ?? (({ policy }) => generatePassword(policy)));
+  const resolved = await resolveSecret(
+    input.plan,
+    input.makePassword ?? (({ policy }) => generatePassword(policy)),
+  );
   if ('error' in resolved) {
     return { status: 'refused', ...empty, reason: resolved.error };
   }
@@ -136,8 +141,7 @@ export async function executeAccountPlan(
   const failedLabels: string[] = [];
 
   for (const field of input.plan.fields) {
-    const value =
-      field.value.kind === 'literal' ? field.value.value : resolved.password;
+    const value = field.value.kind === 'literal' ? field.value.value : resolved.password;
     const ok = await input.writeField(field.selector, value);
     (ok ? filledLabels : failedLabels).push(field.label);
   }
@@ -154,7 +158,11 @@ export async function executeAccountPlan(
   if (resolved.generated && input.settings.saveToVault && isVaultUnlocked()) {
     // Saved only after it has actually been typed, so the vault never holds a
     // password for an account that was never created.
-    await saveCredential(input.plan.origin, input.plan.username ?? input.plan.email, resolved.password);
+    await saveCredential(
+      input.plan.origin,
+      input.plan.username ?? input.plan.email,
+      resolved.password,
+    );
     savedToVault = true;
   }
 

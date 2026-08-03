@@ -82,7 +82,8 @@ function numberFrom(token: string | undefined): number | null {
   return word ?? null;
 }
 
-const NUMBER = '(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|sixteen|twenty)';
+const NUMBER =
+  '(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|sixteen|twenty)';
 
 /**
  * Minimum length. Ordered so the more specific phrasing wins: "between 8 and
@@ -91,7 +92,10 @@ const NUMBER = '(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleve
  */
 const MIN_LENGTH_RULES: readonly RegExp[] = [
   new RegExp(`between\\s+${NUMBER}\\s+and\\s+${NUMBER}\\s+characters`, 'i'),
-  new RegExp(`(?:at least|minimum(?: of)?|no fewer than|must (?:be|contain|have)(?: at least)?)\\s+${NUMBER}\\s+characters`, 'i'),
+  new RegExp(
+    `(?:at least|minimum(?: of)?|no fewer than|must (?:be|contain|have)(?: at least)?)\\s+${NUMBER}\\s+characters`,
+    'i',
+  ),
   new RegExp(`${NUMBER}\\s*(?:-|to|–)\\s*${NUMBER}\\s+characters`, 'i'),
   new RegExp(`${NUMBER}\\s+characters?\\s+(?:or more|minimum|long)`, 'i'),
 ];
@@ -105,8 +109,7 @@ const MAX_LENGTH_RULES: readonly RegExp[] = [
 const UPPERCASE_RULE = /\b(upper[\s-]?case|capital)\b/i;
 const LOWERCASE_RULE = /\b(lower[\s-]?case|small letter)\b/i;
 const DIGIT_RULE = /\b(number|numeral|digit|numeric)\b/i;
-const SYMBOL_RULE =
-  /\b(symbol|special character|punctuation|non[\s-]?alphanumeric)\b/i;
+const SYMBOL_RULE = /\b(symbol|special character|punctuation|non[\s-]?alphanumeric)\b/i;
 
 /**
  * A negation such as "no special characters" or "letters and numbers only".

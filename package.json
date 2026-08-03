@@ -17,7 +17,7 @@
     "build": "npm run build:shared && npm run build:server && npm run build:extension",
     "build:shared": "npm run build -w @internship-agent/shared",
     "build:server": "npm run build:shared && npm run build -w @internship-agent/agent-server",
-    "build:extension": "npm run build:shared && npm run build -w @internship-agent/extension",
+    "build:extension": "npm run build:shared && npm run build -w @internship-agent/extension && npm run verify:extension",
     "dev": "npm run build:shared && concurrently -n server,extension -c cyan,magenta \"npm:dev:server\" \"npm:dev:extension\"",
     "dev:server": "npm run dev -w @internship-agent/agent-server",
     "dev:extension": "npm run dev -w @internship-agent/extension",

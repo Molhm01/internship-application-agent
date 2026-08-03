@@ -24,7 +24,19 @@ export default defineConfig({
   plugins: [react(), copyManifest()],
   build: {
     outDir: resolve(root, 'dist'),
-    emptyOutDir: true,
+    // Deliberately false, even though this is the first of the two passes.
+    //
+    // `content.js` is written by the second pass into this same folder. With
+    // `emptyOutDir: true` this pass deleted it, which is invisible in a full
+    // build (the second pass runs straight after) and fatal in `--watch`, where
+    // the second pass never runs at all: every rebuild removed the content
+    // script and left Chrome running whatever it had already loaded. That is
+    // how the scanner and the worker ended up on different builds, and how a
+    // field type the scanner had learned was rejected by a worker that had not.
+    //
+    // The build script empties `dist` explicitly first instead, so a full build
+    // is still clean and a watch rebuild no longer destroys the other pass.
+    emptyOutDir: false,
     target: 'chrome116',
     sourcemap: true,
     minify: false,

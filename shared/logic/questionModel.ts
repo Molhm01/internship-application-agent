@@ -26,6 +26,9 @@ const CONTROL_TYPE_BY_FIELD_TYPE: Record<FieldType, QuestionControlType> = {
   number: 'number',
   password: 'password',
   date: 'date',
+  // A month/year picker is a date question to the person answering it; the
+  // difference is only in the value's shape, which the executor handles.
+  month: 'date',
   url: 'url',
   select: 'select',
   combobox: 'combobox',

@@ -85,7 +85,9 @@ describe('reading a site password policy', () => {
 
   it('reads a rule stated only in the field help text', () => {
     const policy = detectPasswordPolicy(
-      passwordField({ helpText: 'Must be at least 15 characters and include a special character.' }),
+      passwordField({
+        helpText: 'Must be at least 15 characters and include a special character.',
+      }),
       '',
     );
     expect(policy.minLength).toBe(15);

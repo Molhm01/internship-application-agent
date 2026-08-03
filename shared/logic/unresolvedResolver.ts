@@ -202,7 +202,12 @@ export function resolveWebsiteValue(
       label: 'portfolio',
       value: personal.portfolio,
     },
-    { key: 'github', reference: 'profile.personal.github', label: 'GitHub', value: personal.github },
+    {
+      key: 'github',
+      reference: 'profile.personal.github',
+      label: 'GitHub',
+      value: personal.github,
+    },
     {
       key: 'linkedin',
       reference: 'profile.personal.linkedin',
@@ -219,7 +224,8 @@ export function resolveWebsiteValue(
   // A chosen field that is empty falls through rather than blanking the answer:
   // the preference says which link they prefer, not that the others are wrong.
   const found =
-    chosen ?? candidates.slice(0, 3).find((candidate) => candidate.value && candidate.value.length > 0);
+    chosen ??
+    candidates.slice(0, 3).find((candidate) => candidate.value && candidate.value.length > 0);
   return found?.value
     ? { reference: found.reference, value: found.value, label: found.label }
     : null;

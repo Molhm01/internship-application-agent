@@ -7,11 +7,7 @@ import {
   isUsernameField,
   type NavigationState,
 } from './navigationState.js';
-import {
-  detectPasswordPolicy,
-  describePolicy,
-  type PasswordPolicy,
-} from './passwordPolicy.js';
+import { detectPasswordPolicy, describePolicy, type PasswordPolicy } from './passwordPolicy.js';
 
 /**
  * Planning an employer-portal registration.

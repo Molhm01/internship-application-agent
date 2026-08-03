@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build && vite build --config vite.content.config.ts",
-    "dev": "vite build --watch",
+    "build": "npm run clean && vite build && vite build --config vite.content.config.ts",
+    "dev": "npm run clean && concurrently -n app,content -c cyan,magenta \"vite build --watch\" \"vite build --watch --config vite.content.config.ts\"",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {

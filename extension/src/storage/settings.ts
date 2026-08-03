@@ -112,7 +112,8 @@ function normalizeStoredSettings(raw: unknown): {
     // Parsed leniently and defaulted on failure. A corrupt block must never
     // grant the permission, and `employerAccountSettingsSchema` defaults
     // `autoCreateEnabled` to false — so the failure direction is "off".
-    employerAccounts: employerAccountSettingsSchema.safeParse(candidate.employerAccounts).data ??
+    employerAccounts:
+      employerAccountSettingsSchema.safeParse(candidate.employerAccounts).data ??
       employerAccountSettingsSchema.parse({}),
     settingsUpdatedAt:
       typeof candidate.settingsUpdatedAt === 'string'

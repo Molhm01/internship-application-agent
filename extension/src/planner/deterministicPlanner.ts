@@ -382,10 +382,31 @@ function actionFor(
     }
     return { ...base, action: 'toggle_checkbox', proposedValue: match.formattedValue };
   }
-  if (field.fieldType === 'date') {
-    return { ...base, action: 'set_date', proposedValue: match.formattedValue };
+  if (field.fieldType === 'date' || field.fieldType === 'month') {
+    return {
+      ...base,
+      action: 'set_date',
+      // A month control accepts "YYYY-MM" and rejects a full ISO date, so a
+      // saved "2027-05-01" is trimmed rather than written and silently dropped.
+      proposedValue:
+        field.fieldType === 'month' ? monthValue(match.formattedValue) : match.formattedValue,
+    };
   }
   return { ...base, action: 'fill_text', proposedValue: match.formattedValue };
+}
+
+/**
+ * `YYYY-MM` for a month control.
+ *
+ * Trims a full ISO date rather than rejecting it, because the profile stores
+ * one date and both control shapes are legitimate readings of it. A value that
+ * is not a date at all is passed through untouched for the verifier to fail on
+ * honestly, rather than being mangled into something that looks plausible.
+ */
+function monthValue<T>(value: T): T | string {
+  if (typeof value !== 'string') return value;
+  const match = /^(\d{4}-\d{2})(?:-\d{2})?$/.exec(value.trim());
+  return match?.[1] ?? value;
 }
 
 /** True only when the action carries a value an executor can actually apply. */

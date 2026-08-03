@@ -349,8 +349,13 @@ function inferType(element: HTMLElement, grouped = false): FieldType {
     case 'number':
       return 'number';
     case 'date':
-    case 'month':
       return 'date';
+    // Reported as its own type rather than collapsed into `date`. A month
+    // control rejects a full ISO date, so the planner has to know which shape
+    // to produce; collapsing them wrote "2027-05-01" into a box that only
+    // accepts "2027-05" and the browser silently discarded it.
+    case 'month':
+      return 'month';
     case 'url':
       return 'url';
     case 'password':
@@ -491,7 +496,9 @@ function isRequired(element: HTMLElement, label: string): boolean {
   for (const candidate of markedElements) {
     if (!candidate) continue;
     const className =
-      typeof candidate.className === 'string' ? candidate.className : candidate.getAttribute('class');
+      typeof candidate.className === 'string'
+        ? candidate.className
+        : candidate.getAttribute('class');
     if (className && REQUIRED_CLASS.test(className)) return true;
     if (candidate.querySelector('[class*="asterisk"], [class*="required-indicator"]')) return true;
   }

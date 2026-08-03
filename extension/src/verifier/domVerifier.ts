@@ -54,8 +54,11 @@ export function fieldFingerprintMatches(element: HTMLElement, field: DetectedFie
     field.fieldType === 'tel' ||
     field.fieldType === 'number' ||
     field.fieldType === 'date' ||
+    field.fieldType === 'month' ||
     field.fieldType === 'url'
   ) {
+    // `fieldType` and the DOM input type share these names deliberately, month
+    // included, so the identity check stays a check rather than a mapping.
     if (!(element instanceof HTMLInputElement) || element.type !== field.fieldType) return false;
   }
   const grouped =

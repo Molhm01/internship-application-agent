@@ -180,10 +180,7 @@ export function AutofillPanel({
       ) : null}
 
       {navigation ? (
-        <RouteChoices
-          navigation={navigation}
-          {...(portalStrategy ? { portalStrategy } : {})}
-        />
+        <RouteChoices navigation={navigation} {...(portalStrategy ? { portalStrategy } : {})} />
       ) : null}
 
       {navigation?.kind === 'final_submit' ? (

@@ -375,10 +375,7 @@ const RULES: readonly Rule[] = [
   },
   {
     question: 'family_member_employed',
-    patterns: [
-      /\b(relative|relatives|family member|spouse|parent|sibling)\b/,
-      /\bnepotism\b/,
-    ],
+    patterns: [/\b(relative|relatives|family member|spouse|parent|sibling)\b/, /\bnepotism\b/],
   },
   // A referral's details, before the generic referral rule they contain.
   {

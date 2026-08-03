@@ -154,9 +154,7 @@ export async function saveBundle(transfer: ApplicationBundleTransfer): Promise<A
     ...(transfer.accountPreferences ? { accountPreferences: transfer.accountPreferences } : {}),
     // Absent when the user has told us nothing about this employer, which the
     // resolver must be able to see: unknown becomes a question, never a "no".
-    ...(transfer.companyRelationship
-      ? { companyRelationship: transfer.companyRelationship }
-      : {}),
+    ...(transfer.companyRelationship ? { companyRelationship: transfer.companyRelationship } : {}),
     ...(stored.resume ? { resume: stored.resume } : {}),
     ...(stored.cover_letter ? { coverLetter: stored.cover_letter } : {}),
     createdAt: transfer.createdAt,

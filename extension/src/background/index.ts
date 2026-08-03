@@ -10,8 +10,10 @@ import {
   answerGenerationRecordSchema,
   applicationBundleTransferSchema,
   classifyQuestionDeterministically,
+  describeSchemaFailure,
   extractQuestionConstraints,
   isAiEligibleField,
+  schemaFailureContext,
   type AnswerGenerationRecord,
   type RegenerationMode,
   type GenerateAnswerRequest,
@@ -172,7 +174,14 @@ async function startScan(requestedScanId?: string, targetUrl?: string): Promise<
         : detail.includes('Receiving end')
           ? 'CONTENT_SCRIPT_UNAVAILABLE'
           : 'INVALID_SCAN_RESULT';
-    return scanFailure(code, `Application scan could not complete: ${detail}`, { scanId });
+    // A ZodError's `message` is a JSON dump of its issues, and interpolating it
+    // here is what put a raw schema blob in the popup. The sentence goes to the
+    // user; the structured issues go to debugContext for the diagnostics page.
+    const message =
+      code === 'INVALID_SCAN_RESULT'
+        ? describeSchemaFailure(cause, 'The scan of this page')
+        : `Application scan could not complete: ${detail}`;
+    return scanFailure(code, message, { scanId, ...schemaFailureContext(cause) });
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -371,9 +380,10 @@ async function storeApplicationBundle(transfer: unknown): Promise<unknown> {
     return {
       result: {
         ok: false as const,
-        reason: `The extension could not store the bundle: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
+        reason: `The extension could not store the bundle: ${describeSchemaFailure(
+          cause,
+          'The application bundle',
+        )}`,
       },
     };
   }
@@ -860,7 +870,12 @@ async function mutatePlan(
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause);
     const code = detail === 'FIELD_NOT_FOUND' ? 'FIELD_NOT_FOUND' : 'INVALID_FILL_PLAN';
-    return { error: fillFailure(code, `The fill-plan update failed: ${detail}`).error };
+    return {
+      error: fillFailure(
+        code,
+        `The fill-plan update failed: ${describeSchemaFailure(cause, 'The updated plan')}`,
+      ).error,
+    };
   }
 }
 
@@ -1044,8 +1059,11 @@ async function executeApproved(targetUrl?: string): Promise<unknown> {
     const detail = cause instanceof Error ? cause.message : String(cause);
     return fillFailure(
       detail === 'FILL_TIMEOUT' ? 'FILL_TIMEOUT' : 'INVALID_FILL_PLAN',
-      `The deterministic fill run could not complete: ${detail}`,
-      { runId, planId: plan.id },
+      `The deterministic fill run could not complete: ${describeSchemaFailure(
+        cause,
+        "The page's response",
+      )}`,
+      { runId, planId: plan.id, ...schemaFailureContext(cause) },
     );
   } finally {
     if (timer) clearTimeout(timer);
@@ -1516,9 +1534,10 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
       });
       sendResponse({
         error: workerFailure(
-          `The background worker failed handling ${message.type}: ${
-            cause instanceof Error ? cause.message : String(cause)
-          }`,
+          `The background worker failed handling ${message.type}: ${describeSchemaFailure(
+            cause,
+            'That message',
+          )}`,
         ),
         // Also satisfies AgentStatusResult, whose consumers read these fields.
         latencyMs: 0,

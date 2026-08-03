@@ -35,7 +35,9 @@ export function App(): JSX.Element {
   // local and more recent statement of what the user wants on this machine.
   const [settingsStrategy, setSettingsStrategy] = useState<PortalStrategy | undefined>(undefined);
   useEffect(() => {
-    void loadSettings().then((loaded) => setSettingsStrategy(loaded.employerAccounts.portalStrategy));
+    void loadSettings().then((loaded) =>
+      setSettingsStrategy(loaded.employerAccounts.portalStrategy),
+    );
   }, []);
   const portalStrategy =
     settingsStrategy ?? autofill.bundle?.accountPreferences?.portalStrategy ?? undefined;

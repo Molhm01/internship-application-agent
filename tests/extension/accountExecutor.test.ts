@@ -227,7 +227,9 @@ describe('what stops the executor before it types anything', () => {
   });
 
   it('refuses when the switch is on but the terms were never acknowledged', async () => {
-    const { typed, run } = harness(employerAccountSettingsSchema.parse({ autoCreateEnabled: true }));
+    const { typed, run } = harness(
+      employerAccountSettingsSchema.parse({ autoCreateEnabled: true }),
+    );
     const result = await run();
     expect(result.status).toBe('refused');
     expect(typed).toEqual([]);

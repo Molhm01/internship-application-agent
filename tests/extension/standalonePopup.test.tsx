@@ -353,4 +353,43 @@ describe('standalone popup autofill', () => {
       await screen.findByText('No supported application form detected on this page'),
     ).toBeDefined();
   });
+  it('still scans a page deterministically when the agent server is offline', async () => {
+    // Deterministic autofill reads the DOM and the saved profile; it needs no
+    // model and no local server. Gating the scan on server health would make a
+    // stopped background process look like an unsupported page.
+    const chromeMock = installChromeMock();
+    chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: URL }]);
+    chromeMock.tabs.sendMessage.mockResolvedValue({ present: true, url: URL });
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'AGENT_STATUS_REQUEST') {
+        // Exactly what an unreachable server looks like: no health at all.
+        return Promise.resolve({
+          error: {
+            code: 'SERVER_UNREACHABLE',
+            message: 'The local agent server is not running.',
+            recoverable: true,
+            suggestedAction: 'Start it with npm run start:server.',
+            debugContext: {},
+          },
+          serverUrl: 'http://127.0.0.1:4317',
+          tokenConfigured: true,
+        });
+      }
+      if (message.type === 'GET_LAST_SCAN') return Promise.resolve({ scan: null });
+      if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
+      if (message.type === 'GET_ACTIVE_BUNDLE') return Promise.resolve({ bundle: null });
+      if (message.type === 'GET_AUTOFILL_REPORT') return Promise.resolve({ report: null });
+      if (message.type === 'SCAN_APPLICATION') {
+        return Promise.resolve({ type: 'SCAN_COMPLETE', result: scan });
+      }
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    render(<App />);
+
+    // The page is still analyzed and its questions still counted.
+    expect(await screen.findByText(/Page analysis:/)).toBeDefined();
+    // And the popup says plainly that deterministic filling still works.
+    expect(screen.getByText(/Deterministic autofill still works/)).toBeDefined();
+  });
 });

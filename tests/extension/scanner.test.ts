@@ -296,3 +296,51 @@ describe('job context and export safety', () => {
     expect(JSON.stringify(sanitized)).not.toMatch(/token|password|secret/i);
   });
 });
+
+describe('real employer hostnames reach the right adapter', () => {
+  /**
+   * Detection must work from the hostname alone. A tenant subdomain is the
+   * normal case — employers never sit on the vendor's bare domain — and an
+   * adapter that only matched DOM markers would miss the page entirely before
+   * the markers had rendered.
+   */
+  it.each([
+    ['icims', 'careers2-quanta.icims.com'],
+    ['icims', 'careers.icims.com'],
+    ['icims', 'icims.com'],
+    ['taleo', 'acme.taleo.net'],
+    ['smartrecruiters', 'jobs.smartrecruiters.com'],
+    ['workday', 'acme.wd5.myworkdayjobs.com'],
+  ])('detects %s from hostname %s with nothing else on the page', (expected, hostname) => {
+    body('<main><form><input name="q" /></form></main>');
+    const selected = selectAdapter({
+      url: `https://${hostname}/jobs/1234/apply`,
+      hostname,
+      title: '',
+      bodyText: '',
+      document,
+    });
+    expect(selected.adapter.id).toBe(expected);
+    expect(selected.detection.confidence).toBeGreaterThan(0.9);
+    expect(selected.detection.reason).toContain(hostname);
+  });
+
+  it('does not mistake a lookalike domain for the real vendor', () => {
+    body('<main><form><input name="q" /></form></main>');
+    for (const hostname of [
+      'icims.com.attacker.example',
+      'noticims.com',
+      'myicims.com',
+      'taleo.net.evil.example',
+    ]) {
+      const selected = selectAdapter({
+        url: `https://${hostname}/apply`,
+        hostname,
+        title: '',
+        bodyText: '',
+        document,
+      });
+      expect(selected.adapter.id, hostname).toBe('generic');
+    }
+  });
+});
