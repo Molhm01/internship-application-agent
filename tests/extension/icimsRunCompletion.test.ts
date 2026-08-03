@@ -80,11 +80,18 @@ interface Harness {
  * `plan()` counts its calls, because one call per pass is what made the model
  * be asked five times for the same page.
  */
-async function runAgainstFixture(profile = applicant()): Promise<Harness> {
-  document.documentElement.innerHTML = readFileSync(FIXTURE, 'utf8').replace(
-    /<!doctype html>/i,
-    '',
-  );
+async function runAgainstFixture(
+  profile = applicant(),
+  options: { reload?: boolean } = {},
+): Promise<Harness> {
+  // Callers that have already staged the document — to wire up a dependent
+  // control, say — keep it.
+  if (options.reload !== false) {
+    document.documentElement.innerHTML = readFileSync(FIXTURE, 'utf8').replace(
+      /<!doctype html>/i,
+      '',
+    );
+  }
 
   let scans = 0;
   let plans = 0;
@@ -222,6 +229,65 @@ describe('the run changes the page', () => {
   it('never ticks the policy agreement', async () => {
     await runAgainstFixture();
     expect((document.getElementById('policyAgreement') as HTMLInputElement).checked).toBe(false);
+  });
+});
+
+describe('Country before State, in one run', () => {
+  /**
+   * The fixture repopulates State from a `change` listener, and jsdom does not
+   * run scripts injected through innerHTML. So the page's own effect is wired
+   * up here — what is under test is the *run*: it must fill Country, notice
+   * that State's options changed, and come back for it without being asked
+   * twice.
+   */
+  function wireDependency(): void {
+    const country = document.getElementById('country') as HTMLSelectElement;
+    country.addEventListener('change', () => {
+      const state = document.getElementById('stateProvince') as HTMLSelectElement;
+      const rows =
+        country.value === 'US'
+          ? ([
+              ['NJ', 'New Jersey'],
+              ['NY', 'New York'],
+              ['PA', 'Pennsylvania'],
+            ] as const)
+          : ([] as const);
+      state.replaceChildren();
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = rows.length ? 'Please select' : 'Select a country first';
+      state.append(placeholder);
+      for (const [value, label] of rows) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        state.append(option);
+      }
+    });
+  }
+
+  it('fills State after Country, in the same click', async () => {
+    document.documentElement.innerHTML = readFileSync(FIXTURE, 'utf8').replace(
+      /<!doctype html>/i,
+      '',
+    );
+    wireDependency();
+    // Re-runs the orchestrator against the document this test already prepared.
+    await runAgainstFixture(applicant(), { reload: false });
+
+    expect(value('country')).toBe('US');
+    expect(value('stateProvince')).toBe('NJ');
+  });
+
+  it('does not report the dependent control as an unmatched option', async () => {
+    document.documentElement.innerHTML = readFileSync(FIXTURE, 'utf8').replace(
+      /<!doctype html>/i,
+      '',
+    );
+    wireDependency();
+    const harness = await runAgainstFixture(applicant(), { reload: false });
+    const reasons = harness.report.results.map((result) => result.reason).join(' ');
+    expect(reasons).not.toMatch(/no option on the page matched ['"]?new jersey/i);
   });
 });
 

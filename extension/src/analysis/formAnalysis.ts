@@ -5,6 +5,9 @@ import {
   allowsRegionSuffix,
   resolveSemanticOption,
   isDeclinePhrasing,
+  contractViolation,
+  isTextFieldType,
+  repairActionFor,
   type ApplicationBundle,
   type ApplicationScanResult,
   type ApprovedAnswer,
@@ -529,7 +532,17 @@ function actionFromAnswer(
       const options = field.options ?? question.options ?? [];
       const wanted = answer.selectedOption ?? answer.value ?? '';
       if (options.length === 0) {
-        // A combobox that has not opened yet has no list to check against. The
+        // A native `<select>` with no options is not a list waiting to open —
+        // it is a *dependent* control whose choices another field has not
+        // produced yet. State/Province before Country is exactly this. Guessing
+        // at it produced "No option on the page matched New Jersey"; the right
+        // answer is to let the run fill Country, rescan, and come back.
+        if (field.fieldType === 'select' || field.fieldType === 'radio') {
+          return {
+            discarded: `"${question.questionText}" has no options yet; it is filled after the control it depends on.`,
+          };
+        }
+        // A custom combobox genuinely does hide its list until opened. The
         // executor reads the real list and refuses anything not on it.
         return {
           ...base,
@@ -644,6 +657,34 @@ export function applyAnalysisToPlan(
       const produced = actionFromAnswer(existing, field, question, answer, bundle, knownFactIds);
       if ('discarded' in produced) {
         discarded.push({ questionId: answer.questionId, reason: produced.discarded });
+        continue;
+      }
+      // The same control-type contract the deterministic planner obeys.
+      //
+      // This was the release blocker. Asked about "First Name", the model
+      // answered `SELECT_OPTION`; the branch above turned that into a
+      // `select_suggested_option` on a text input because the field had no
+      // options, and nothing checked. The executor then searched a list that
+      // does not exist and reported "No option on the page matched Molhm".
+      // State failed identically — its options are empty until Country is
+      // chosen. Model output is proposed data, never a strategy to trust.
+      const violation = contractViolation(field.fieldType, produced.action);
+      if (violation) {
+        const repaired = repairActionFor(field.fieldType);
+        if (
+          repaired &&
+          typeof produced.proposedValue === 'string' &&
+          produced.proposedValue.length > 0
+        ) {
+          replacements.set(target.id, {
+            ...produced,
+            action: repaired,
+            ...(isTextFieldType(field.fieldType) ? { matchedOption: undefined } : {}),
+            warnings: [...produced.warnings, violation.reason],
+          });
+        } else {
+          discarded.push({ questionId: answer.questionId, reason: violation.reason });
+        }
         continue;
       }
       replacements.set(target.id, produced);

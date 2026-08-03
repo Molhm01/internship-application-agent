@@ -149,6 +149,36 @@ function countSource(results: readonly AutofillFieldResult[], source: string): n
 }
 
 /**
+ * How long each stage took, and how much work it did.
+ *
+ * Counts and durations only — never a field value, a password, a document, or a
+ * model prompt. The question this answers is "where did the run stop, and how
+ * many actions actually reached the executor?", which was previously
+ * unanswerable without attaching a debugger to the service worker.
+ */
+export interface StageTiming {
+  stage: 'scan' | 'plan' | 'execute';
+  pass: number;
+  durationMs: number;
+  /** Fields scanned, actions planned, or actions executed, per stage. */
+  count: number;
+}
+
+function timed<T>(
+  stage: StageTiming['stage'],
+  pass: number,
+  timings: StageTiming[],
+  work: () => Promise<T>,
+  size: (value: T) => number,
+): Promise<T> {
+  const started = Date.now();
+  return work().then((value) => {
+    timings.push({ stage, pass, durationMs: Date.now() - started, count: size(value) });
+    return value;
+  });
+}
+
+/**
  * Fills an application from saved data in one pass, repeating while the form
  * keeps revealing new questions.
  *
@@ -164,6 +194,8 @@ export async function runApplicationAutofill(
   const startedAtMs = Date.now();
   const scanIds: string[] = [];
   const warnings: string[] = [];
+  /** Per-stage durations and counts. Never a value, only how much and how long. */
+  const timings: StageTiming[] = [];
   const resultsByField = new Map<string, AutofillFieldResult>();
   /** How to find each field again when the marks are drawn. */
   const selectorsByField = new Map<string, string>();
@@ -281,7 +313,13 @@ export async function runApplicationAutofill(
       iterations === 1 ? 'scanning' : 'rescanning',
       iterations === 1 ? 'Scanning' : 'Rescanning',
     );
-    const scanned = await dependencies.scan();
+    const scanned = await timed(
+      'scan',
+      pass,
+      timings,
+      () => dependencies.scan(),
+      (value) => (value.scan ? value.scan.fields.length : 0),
+    );
     if (scanned.error || !scanned.scan) {
       terminal = scanned.error ?? agentError('SCAN_FAILED', 'The application could not be read.');
       break;
@@ -320,7 +358,13 @@ export async function runApplicationAutofill(
 
     emit('discovering_options', 'Inspecting answer choices');
     emit('resolving', 'Matching profile information');
-    const planned = await dependencies.plan(scan.id);
+    const planned = await timed(
+      'plan',
+      pass,
+      timings,
+      () => dependencies.plan(scan.id),
+      (value) => (value.plan ? value.plan.actions.length : 0),
+    );
     if (planned.error || !planned.plan) {
       terminal =
         planned.error ?? agentError('RESOLUTION_FAILED', 'The saved answers could not be matched.');
@@ -380,7 +424,13 @@ export async function runApplicationAutofill(
         break;
       }
       emit('filling', 'Filling fields');
-      const executed = await dependencies.execute();
+      const executed = await timed(
+        'execute',
+        pass,
+        timings,
+        () => dependencies.execute(),
+        (value) => (value.report ? value.report.results.length : 0),
+      );
       if (executed.error) {
         warnings.push(`Some fields could not be filled: ${executed.error.message}`);
       }
@@ -545,6 +595,23 @@ export async function runApplicationAutofill(
     return report('failed', terminal);
   }
   if (terminal) warnings.push(terminal.message);
+
+  // The one line that answers "did the executor run, and on how much?".
+  // Counts and durations only — no field values, no credentials, no prompts.
+  console.info('[agent] autofill stages', {
+    runId,
+    passes: iterations,
+    totalMs: Date.now() - startedAtMs,
+    stages: timings.map(
+      (entry) => `${entry.stage}#${entry.pass}:${entry.durationMs}ms/${entry.count}`,
+    ),
+    planned: [...resultsByField.values()].length,
+    executed: [...resultsByField.values()].filter(
+      (result) => result.verification === 'verified' || result.verification === 'failed',
+    ).length,
+    verified: [...resultsByField.values()].filter((result) => result.verification === 'verified')
+      .length,
+  });
 
   const status = needingReview.length > 0 ? 'completed_with_review' : 'completed';
   emit(

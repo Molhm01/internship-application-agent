@@ -13,7 +13,10 @@ import { join, relative } from 'node:path';
  * against the built artefact, where the user actually meets them.
  */
 
-const DIST = new URL('../extension/dist/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const DIST = new URL('../extension/dist/', import.meta.url).pathname.replace(
+  /^\/([A-Za-z]:)/,
+  '$1',
+);
 
 /** Every emitted script, including lazily-loaded chunks. */
 async function scripts(directory) {

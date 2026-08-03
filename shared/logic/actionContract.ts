@@ -124,6 +124,32 @@ export function textActionFor(fieldType: FieldType): ControlAction | null {
   return isTextFieldType(fieldType) ? 'fill_text' : null;
 }
 
+/**
+ * The repair for an action that does not suit its control, or null when there
+ * is none.
+ *
+ * Both planners call this. The deterministic one always did; the *model* one
+ * did not, and that is the whole of the release blocker: asked about "First
+ * Name", the model answered `SELECT_OPTION`, and `applyAnalysisToPlan` built a
+ * `select_suggested_option` for a text input without anyone checking. The
+ * executor then searched a non-existent list and reported
+ * "No option on the page matched Molhm". The same branch produced the identical
+ * failure for State, whose options are empty until Country is chosen.
+ *
+ * Returns the action kind to use instead, so a plan is corrected rather than
+ * merely rejected — the value is usually right and only the strategy is wrong.
+ * `set_password` is never returned to a plan: it exists solely on the
+ * credential path.
+ */
+export function repairActionFor(
+  fieldType: FieldType,
+): Exclude<ControlAction, 'set_password'> | null {
+  const candidate = isTextFieldType(fieldType)
+    ? textActionFor(fieldType)
+    : optionActionFor(fieldType);
+  return candidate === 'set_password' ? null : candidate;
+}
+
 /** The option action a choice control should have received instead. */
 export function optionActionFor(fieldType: FieldType): ControlAction | null {
   if (fieldType === 'radio') return 'choose_radio';

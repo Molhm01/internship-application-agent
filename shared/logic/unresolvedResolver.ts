@@ -8,6 +8,7 @@ import {
   type UnresolvedFieldResolution,
 } from '../schemas/fill.js';
 import { allowsRegionSuffix, matchOption } from './optionMatcher.js';
+import { degreeAnswersFor } from './degreeLevel.js';
 
 /**
  * Questions the resolver may never propose a value for, whatever the model
@@ -37,10 +38,15 @@ export const AI_PROHIBITED_QUESTIONS: readonly CanonicalQuestion[] = [
   'years_of_experience',
   'school',
   'gpa',
+  // `highest_degree_awarded` is deliberately *not* here. It is derivable from
+  // the education the user already saved — an entry marked completed, or one
+  // whose graduation date has passed — so refusing it told someone with a full
+  // education section that their own highest qualification was "a fact only you
+  // can confirm". What must never happen is *inventing* one, and
+  // `degreeAnswersFor` cannot: with no evidence of completion it yields nothing.
   'graduation_date',
   'graduation_month',
   'graduation_year',
-  'highest_degree_awarded',
   // Who vouches for the applicant, and how.
   'referral',
   'referral_name',
@@ -210,6 +216,14 @@ export function structuredProfileValue(
     how_did_you_hear: {
       reference: 'profile.preferences.discoverySource',
       value: profile.preferences.discoverySource,
+    },
+    // The credential actually awarded — never the one being studied for, which
+    // is what `degree` above answers. Derived from the saved education when
+    // Internship Pilot has not set the field explicitly, and absent when
+    // nothing establishes it.
+    highest_degree_awarded: {
+      reference: 'profile.highestCompletedDegree',
+      value: degreeAnswersFor(profile).highestCompletedDegree,
     },
   };
 

@@ -5,8 +5,7 @@ import {
   mayReasonAbout,
   contractViolation,
   isTextFieldType,
-  optionActionFor,
-  textActionFor,
+  repairActionFor,
   deterministicFillPlanSchema,
   isDeclinePhrasing,
   isLocationQuestion,
@@ -82,6 +81,32 @@ function optionalBlankReason(field: DetectedField): string {
   return 'Optional, and nothing saved answers it, so it is correctly left blank.';
 }
 
+/** True when an option is a prompt rather than something a person can pick. */
+function isPlaceholderOption(option: { label: string; value: string }): boolean {
+  const label = option.label.trim().toLowerCase();
+  if (option.value === '' || label.length === 0) return true;
+  return /^(please )?(select|choose)\b/.test(label) || label === '--' || label === 'n/a';
+}
+
+/**
+ * Controls whose choices are produced by another field on the page.
+ *
+ * Recognized structurally — a choice control offering nothing but prompts — so
+ * this is not a list of vendor quirks to maintain. A dependent control is never
+ * a failure; it is a control that has not had its turn yet.
+ */
+export function isDependentControl(field: DetectedField): boolean {
+  if (field.fieldType !== 'select' && field.fieldType !== 'radio') return false;
+  const options = field.options ?? [];
+  if (options.length === 0) return true;
+  return options.every(isPlaceholderOption);
+}
+
+/** The field a dependent control is waiting on, in the user's words. */
+function dependsOnLabel(field: DetectedField): string {
+  return field.canonicalKey === 'state' ? 'Country' : 'the field it depends on';
+}
+
 function locationOf(profile: Profile): LocationTarget {
   const address = profile.personal.address;
   return {
@@ -145,13 +170,7 @@ function enforceContract(
   const violation = contractViolation(field.fieldType, action.action);
   if (!violation) return action;
 
-  const candidate = isTextFieldType(field.fieldType)
-    ? textActionFor(field.fieldType)
-    : optionActionFor(field.fieldType);
-  // A password is never repaired into a plan. `set_password` exists only on the
-  // credential path, and a deterministic plan is stored, sent to the popup, and
-  // rendered on a review screen — the three places a secret must never reach.
-  const repaired = candidate === 'set_password' ? null : candidate;
+  const repaired = repairActionFor(field.fieldType);
   if (repaired && typeof action.proposedValue === 'string' && action.proposedValue.length > 0) {
     return {
       ...action,
@@ -398,6 +417,24 @@ function planAction(
             ? ('select_resolved_option' as const)
             : ('select_suggested_option' as const)
           : ('select_option' as const);
+
+    // A control whose choices another field has not produced yet.
+    //
+    // "State/Province" before "Country" is chosen offers exactly one option —
+    // "Select a country first" — which is a prompt, not a choice. Matching the
+    // saved state against it fails, and the failure was reported as
+    // "No option on the page matched 'New Jersey'", which blames the profile
+    // for the page's ordering. It is a dependency, so it is reported as one and
+    // filled on the pass after Country lands.
+    if (isDependentControl(field)) {
+      return {
+        ...base,
+        action: 'missing_information',
+        requiresReview: false,
+        reason: `"${field.question}" has no choices yet — it fills once ${dependsOnLabel(field)} is set.`,
+        warnings: [...base.warnings, 'Its options are read again after the field it depends on.'],
+      };
+    }
 
     // A custom combobox often renders its list only once opened, so the scanner
     // may have seen no options. The executor reads the real list at fill time and
