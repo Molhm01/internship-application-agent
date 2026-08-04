@@ -9,6 +9,7 @@ import {
   type DeterministicFillPlan,
   type FillRunReport,
   type Profile,
+  pendingResults,
 } from '@internship-agent/shared';
 import { scanDom } from '../../extension/src/scanner/domScanner.js';
 import {
@@ -384,6 +385,24 @@ describe('the completion summary is truthful', () => {
   it('reports a total duration', async () => {
     const harness = await runAgainstFixture();
     expect(harness.report.totalDurationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('finishes with no pending stage markers anywhere', async () => {
+    const harness = await runAgainstFixture();
+    // The release blocker: eighteen fields ended a run still reading
+    // "waiting on the page analysis", which is a stage and not an outcome.
+    expect(pendingResults(harness.report.results)).toEqual([]);
+    const reasons = harness.report.results.map((result) => result.reason).join(' ');
+    expect(reasons).not.toMatch(/waiting on the page analysis/i);
+  });
+
+  it('gives every unresolved field a reason naming why, not a stage', async () => {
+    const harness = await runAgainstFixture();
+    for (const result of harness.report.results) {
+      if (!result.reviewReason) continue;
+      expect(result.reason.length, `${result.question} had no reason`).toBeGreaterThan(0);
+      expect(result.reason).not.toMatch(/waiting on/i);
+    }
   });
 
   it('never records a submission', async () => {

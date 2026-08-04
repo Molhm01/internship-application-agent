@@ -236,6 +236,25 @@ export function AutofillPanel({
   // the progress bar, the timer and the primary button all read it, so the
   // invalid combination the user saw cannot be constructed.
   const active = ACTIVE_RUN_STATES.includes(state.runState);
+  /**
+   * Everything left for the user, counted once across both sources.
+   *
+   * A required field that produced no action at all appears in the audit and
+   * not in the results, and a reviewed suggestion appears in the results and
+   * not in the audit. Counting either alone under-reports, which is how the
+   * summary claimed nothing needed confirmation beside eighteen fields that
+   * did.
+   */
+  const needsUser = report
+    ? new Set([
+        ...report.requiredFields
+          .filter((verdict) => verdict.outcome === 'USER_CONFIRMATION_REQUIRED')
+          .map((verdict) => verdict.fieldId),
+        ...report.results
+          .filter((result) => result.reviewReason && !result.reviewed)
+          .map((result) => result.fieldId),
+      ]).size
+    : 0;
   // A page that is asking for credentials or that has ended the application is
   // not one to fill: the button would do nothing useful and implying otherwise
   // is worse than saying so.
@@ -359,6 +378,15 @@ export function AutofillPanel({
       {report && !active ? (
         <section className="result" role="status">
           {/*
+            Warnings first. "Almost nothing could be answered from saved data"
+            is the one sentence that explains a page of unanswered questions,
+            and burying it under the counts made twenty-six identical cards
+            look like twenty-six separate problems.
+          */}
+          {report.warnings.length > 0 ? (
+            <p className="autofill__never-submits">{report.warnings[0]}</p>
+          ) : null}
+          {/*
             The five numbers the user actually wants after a run, named rather
             than abbreviated. "Needs confirmation" is the only one that asks
             anything of them, and the list below it holds exactly those fields —
@@ -378,10 +406,16 @@ export function AutofillPanel({
               the summary used to read "Could not fill: 0" above a list of
               fields the user still had to answer.
             */}
-            <li>Required fields still needing you: {report.userInputRequired}</li>
-            <li>Needs confirmation: {report.uncertainSuggestions + report.manualBlockers}</li>
+            {/*
+              Everything the run left for the user, counted once. The two lines
+              this replaces could read "Needs confirmation: 0 / Could not fill:
+              0" above a list of eighteen unanswered required fields, because
+              each counted a different subset and neither counted the fields
+              that produced no action at all.
+            */}
+            <li>Needs your answer: {needsUser}</li>
             <li>Could not fill: {report.failedFields}</li>
-            <li>Total time: {Math.round(report.totalDurationMs / 1000)}s</li>
+            <li>Total time: {formatElapsed(report.totalDurationMs)}</li>
           </ul>
           <p className="autofill__never-submits">
             The final Submit button was never clicked. Review the application and submit it

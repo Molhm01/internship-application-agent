@@ -18,6 +18,7 @@ import {
   type FillRunReport,
   type ReviewReason,
 } from '@internship-agent/shared';
+import { finalizePendingResult, pendingResults } from '@internship-agent/shared';
 import { decideApproval, type ApprovalDecision } from './approvalPolicy.js';
 import { buildCoverage, describeCoverage } from './coverage.js';
 import { isFinalSubmitControl } from '../scanner/adapters.js';
@@ -204,6 +205,15 @@ export async function runApplicationAutofill(
   let url = '';
   let ats: ApplicationAutofillReport['ats'] = 'unknown';
   let terminal: AgentError | null = null;
+  /** The last plan built, for the closing coverage diagnostic. */
+  let lastPlan: DeterministicFillPlan | null = null;
+  /**
+   * Whether the batched analysis actually ran. A field left pending means
+   * something different depending on this, and the user needs the difference:
+   * "the analysis had nothing to offer" is a dead end, "the analysis never ran"
+   * is fixable by starting the local agent.
+   */
+  let analysisRan = false;
   /**
    * The fields as the last scan saw them, for the closing required-field audit.
    * The *last* scan specifically: a field revealed by an earlier answer only
@@ -211,8 +221,6 @@ export async function runApplicationAutofill(
    * required field as absent rather than as unanswered.
    */
   let lastFields: readonly DetectedField[] = [];
-  /** The last plan built, for the closing coverage diagnostic. */
-  let lastPlan: DeterministicFillPlan | null = null;
   /**
    * What this run has already tried, keyed by an identity that survives a
    * rerender. This is what makes the loop converge instead of re-attempting the
@@ -224,7 +232,34 @@ export async function runApplicationAutofill(
     status: ApplicationAutofillReport['status'],
     error?: AgentError,
   ): ApplicationAutofillReport => {
+    // A run may not complete holding stage markers.
+    //
+    // The deterministic pass marks a field it could not settle as pending and
+    // hands it to the batched analysis. When that analysis does not run, the
+    // marker used to be rendered verbatim: eighteen cards reading "<question>
+    // is waiting on the page analysis", beside a summary claiming nothing
+    // needed confirmation and nothing had failed. The marker is a stage, never
+    // a verdict, so every one left is resolved into a truthful outcome here —
+    // naming the stage that did not happen rather than blaming the question.
+    for (const stale of pendingResults([...resultsByField.values()])) {
+      resultsByField.set(
+        stale.fieldId,
+        finalizePendingResult(stale, analysisRan ? 'analysis_no_answer' : 'analysis_unavailable'),
+      );
+    }
     const results = [...resultsByField.values()];
+    // When almost nothing resolved, say why once, at the top — rather than
+    // leaving the user to infer it from twenty-six identical cards. An empty
+    // synchronised profile and a page nobody understood produce the same list
+    // of unanswered questions and need completely different responses.
+    const grounded = results.filter(
+      (result) => result.source === 'profile' || result.source === 'approved_answer',
+    ).length;
+    if (results.length >= 5 && grounded <= 2) {
+      warnings.push(
+        'Almost nothing could be answered from saved data. Open the extension settings and check that your Internship Pilot profile has synchronised — a page this size should resolve most of its fields without asking you anything.',
+      );
+    }
     const reviewing = results.filter((result) => result.reviewReason && !result.reviewed);
     // Every required field ends in exactly one of three states. A field the run
     // never reached is not omitted — it is reported as needing the user, which
@@ -375,6 +410,13 @@ export async function runApplicationAutofill(
     }
     let plan = planned.plan;
     lastPlan = plan;
+    // The batched analysis lives inside `plan()`. A pass in which no action
+    // still carries a pending marker is one where it either ran or had nothing
+    // left to do — either way the markers below are genuine dead ends rather
+    // than a stage that never happened.
+    if (!plan.actions.some((action) => /waiting on the page analysis/i.test(action.reason))) {
+      analysisRan = true;
+    }
 
     if (dependencies.generate && settings.autoFillValidatedAiAnswers) {
       emit('generating', 'Generating written answers');

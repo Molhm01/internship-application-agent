@@ -186,7 +186,9 @@ describe('standalone popup autofill', () => {
     await waitFor(() => expect(screen.getByText('Automatically filled: 1')).toBeDefined());
     expect(screen.getByText('Fields detected: 2')).toBeDefined();
     expect(screen.getByText('Documents uploaded: 1')).toBeDefined();
-    expect(screen.getByText('Needs confirmation: 1')).toBeDefined();
+    // One line, counting the audit and the review list together — the two
+    // used to be separate and each under-reported.
+    expect(screen.getByText('Needs your answer: 1')).toBeDefined();
     expect(screen.getByText('Could not fill: 0')).toBeDefined();
     expect(screen.getByText(/final Submit button was never clicked/i)).toBeDefined();
     // The unresolved question is offered as something the user can jump to.
