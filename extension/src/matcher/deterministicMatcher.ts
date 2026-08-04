@@ -179,6 +179,7 @@ function profileValue(
 ): { reference: string; value: string | boolean | number } | null {
   const personal = profile.personal;
   const education = profile.education[0];
+  const experience = profile.experience[0];
   const dialCode = dialCodeForCountry(personal.address.country);
   const direct: Partial<
     Record<CanonicalQuestion, { reference: string; value: string | boolean | number | undefined }>
@@ -234,6 +235,45 @@ function profileValue(
         ? { reference: site.reference, value: site.value }
         : { reference: 'profile.personal.personalWebsite', value: undefined };
     })(),
+    // ---- Experience -----------------------------------------------------
+    //
+    // Absent entirely until now, which is the bulk of the "extremely low
+    // coverage" report: on a page with a work-history section, every one of
+    // these fell through to "no saved value" while the profile held all of
+    // them. The most recent role is used, because that is the one an
+    // application's first experience block asks about.
+    employer: { reference: 'profile.experience[0].employer', value: experience?.employer },
+    job_title: { reference: 'profile.experience[0].title', value: experience?.title },
+    // The job's location, never the applicant's address.
+    experience_location: {
+      reference: 'profile.experience[0].location',
+      value: experience?.location,
+    },
+    employment_start_date: {
+      reference: 'profile.experience[0].startDate',
+      value: experience?.startDate,
+    },
+    employment_end_date: {
+      reference: 'profile.experience[0].endDate',
+      // A current role has no end date, and inventing one would misstate the
+      // applicant's history.
+      value: experience?.current ? undefined : experience?.endDate,
+    },
+    currently_employed: {
+      reference: 'profile.experience[0].current',
+      value: experience?.current,
+    },
+    responsibilities: {
+      reference: 'profile.experience[0].responsibilities',
+      value: experience?.responsibilities.length
+        ? experience.responsibilities.join('\n')
+        : undefined,
+    },
+    // `account_username` is deliberately absent. It is classified so the page
+    // can be recognized as a login or a registration, but it is filled by the
+    // account executor alongside the password — never by the ordinary plan.
+    // Routing it through here would type an identifier into every *sign-in*
+    // form the agent lands on, which is the one page it must leave alone.
     school: {
       reference: 'profile.education[0].institution',
       value: education?.institution,

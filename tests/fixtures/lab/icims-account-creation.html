@@ -197,6 +197,83 @@
           </div>
         </fieldset>
 
+        <!--
+          Education. The live page has this section and the fixture did not,
+          which is why coverage looked healthy here while the real run filled
+          almost nothing.
+        -->
+        <fieldset>
+          <legend>Education (1)</legend>
+          <div class="iCIMS_InfoField">
+            <label for="school">School <span class="required">*</span></label>
+            <input type="text" id="school" name="school" required />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="degreeType">Degree currently pursuing</label>
+            <select id="degreeType" name="degreeType">
+              <option value="">Please select</option>
+              <option value="hs">High School</option>
+              <option value="associate">Associate Degree</option>
+              <option value="bachelor">Bachelor's Degree</option>
+              <option value="master">Master's Degree</option>
+            </select>
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="major">Major</label>
+            <input type="text" id="major" name="major" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="minor">Minor</label>
+            <input type="text" id="minor" name="minor" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="gpa">GPA</label>
+            <input type="text" id="gpa" name="gpa" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="gradMonth">Graduation Month</label>
+            <input type="text" id="gradMonth" name="graduationMonth" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="gradYear">Graduation Year</label>
+            <input type="text" id="gradYear" name="graduationYear" />
+          </div>
+        </fieldset>
+
+        <!--
+          Work history. Its "Location" is the job's, not the applicant's — and
+          filling the home address into it was the single thing an entire live
+          run managed to write.
+        -->
+        <fieldset>
+          <legend>Work Experience (1)</legend>
+          <div class="iCIMS_InfoField">
+            <label for="expEmployer">Employer</label>
+            <input type="text" id="expEmployer" name="employer" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="expTitle">Position</label>
+            <input type="text" id="expTitle" name="positionTitle" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="expLocation">Employer Location</label>
+            <input type="text" id="expLocation" name="employerLocation" />
+          </div>
+
+          <div class="iCIMS_InfoField">
+            <label for="expResponsibilities">Responsibilities</label>
+            <textarea id="expResponsibilities" name="responsibilities" rows="3"></textarea>
+          </div>
+        </fieldset>
+
         <fieldset>
           <legend>Application details</legend>
 

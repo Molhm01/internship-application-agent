@@ -19,6 +19,7 @@ import {
   type ReviewReason,
 } from '@internship-agent/shared';
 import { decideApproval, type ApprovalDecision } from './approvalPolicy.js';
+import { buildCoverage, describeCoverage } from './coverage.js';
 import { isFinalSubmitControl } from '../scanner/adapters.js';
 
 /**
@@ -210,6 +211,8 @@ export async function runApplicationAutofill(
    * required field as absent rather than as unanswered.
    */
   let lastFields: readonly DetectedField[] = [];
+  /** The last plan built, for the closing coverage diagnostic. */
+  let lastPlan: DeterministicFillPlan | null = null;
   /**
    * What this run has already tried, keyed by an identity that survives a
    * rerender. This is what makes the loop converge instead of re-attempting the
@@ -371,6 +374,7 @@ export async function runApplicationAutofill(
       break;
     }
     let plan = planned.plan;
+    lastPlan = plan;
 
     if (dependencies.generate && settings.autoFillValidatedAiAnswers) {
       emit('generating', 'Generating written answers');
@@ -595,6 +599,27 @@ export async function runApplicationAutofill(
     return report('failed', terminal);
   }
   if (terminal) warnings.push(terminal.message);
+
+  // Where each field was lost, in one line. This is what turns "twenty-six
+  // fields said 'needs information'" into a diagnosis: a missing profile value,
+  // a missing mapping, a rejected action and a refused write are four different
+  // problems that used to look identical from outside.
+  if (lastPlan && lastFields.length > 0) {
+    console.info(
+      '[agent] autofill coverage',
+      describeCoverage(
+        buildCoverage(
+          lastFields,
+          lastPlan,
+          new Set(
+            [...resultsByField.values()]
+              .filter((result) => result.verification === 'verified')
+              .map((result) => result.fieldId),
+          ),
+        ),
+      ),
+    );
+  }
 
   // The one line that answers "did the executor run, and on how much?".
   // Counts and durations only — no field values, no credentials, no prompts.

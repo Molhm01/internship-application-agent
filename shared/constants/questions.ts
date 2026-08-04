@@ -37,6 +37,8 @@ export const CANONICAL_QUESTIONS = [
   // meaningless without the section they sit under.
   'phone_type',
   'address_type',
+  /** The employer-portal account identifier, distinct from the email. */
+  'account_username',
   // Links
   'linkedin',
   'github',
@@ -61,6 +63,12 @@ export const CANONICAL_QUESTIONS = [
   // Experience
   'employer',
   'job_title',
+  // Where a *past job* was, which is not where the applicant lives. Filling the
+  // saved home address into it is how "Work-experience location = Clifton, NJ"
+  // became the only thing an entire run managed to write.
+  'experience_location',
+  'currently_employed',
+  'responsibilities',
   'employment_start_date',
   'employment_end_date',
   'years_of_experience',
@@ -200,6 +208,7 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   current_location: 'contact_information',
   phone_country_code: 'contact_information',
   phone_type: 'contact_information',
+  account_username: 'personal_information',
   address_type: 'contact_information',
 
   linkedin: 'contact_information',
@@ -221,6 +230,9 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   highest_degree_awarded: 'education',
 
   employer: 'experience',
+  experience_location: 'experience',
+  currently_employed: 'experience',
+  responsibilities: 'experience',
   job_title: 'experience',
   employment_start_date: 'experience',
   employment_end_date: 'experience',

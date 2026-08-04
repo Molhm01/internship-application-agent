@@ -37,8 +37,36 @@ export function profileFixture(overrides: Record<string, unknown> = {}): Profile
         institution: 'Rutgers University',
         degree: "Bachelor's Degree",
         major: 'Computer Science',
+        minor: 'Mathematics',
         gpa: 3.7,
         graduationDate: '2027-05',
+        status: 'in_progress',
+      },
+      {
+        id: 'education-2',
+        institution: 'Clifton High School',
+        degree: 'High School',
+        status: 'completed',
+      },
+    ],
+    // The awarded credential and the one being studied for, stated rather than
+    // derived, so a test asserting the distinction is testing the mapping and
+    // not the derivation.
+    highestCompletedDegree: 'High School',
+    currentDegreeInProgress: "Bachelor's Degree",
+    experience: [
+      {
+        id: 'experience-1',
+        employer: 'Northwind Robotics',
+        title: 'Engineering Intern',
+        // Deliberately not the applicant's own city: a test that used the same
+        // place could not tell the two mappings apart.
+        location: 'Newark, New Jersey',
+        startDate: '2026-06',
+        endDate: '2026-08',
+        current: false,
+        responsibilities: ['Built test rigs for actuator assemblies.'],
+        achievements: [],
       },
     ],
     eligibility: {

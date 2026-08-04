@@ -209,6 +209,33 @@ describe('the run changes the page', () => {
     expect(value('educationLevel')).toBe('hs');
   });
 
+  it('fills the education section from the saved profile', async () => {
+    await runAgainstFixture();
+    expect(value('school')).toBe('Rutgers University');
+    expect(value('major')).toBe('Computer Science');
+    expect(value('minor')).toBe('Mathematics');
+    expect(value('gpa')).toBe('3.7');
+    expect(value('gradMonth')).toBe('05');
+    expect(value('gradYear')).toBe('2027');
+    // The degree being studied for — the other question from the one above.
+    expect(value('degreeType')).toBe('bachelor');
+  });
+
+  it('fills the work-experience section from the saved profile', async () => {
+    await runAgainstFixture();
+    expect(value('expEmployer')).toBe('Northwind Robotics');
+    expect(value('expTitle')).toBe('Engineering Intern');
+    expect(value('expResponsibilities')).toContain('actuator');
+  });
+
+  it('fills the employer location with the job’s location, not the applicant’s', async () => {
+    await runAgainstFixture();
+    // The live run's single filled field was this one, holding the applicant's
+    // home address. It is the employer's location and nothing else.
+    expect(value('expLocation')).toBe('Newark, New Jersey');
+    expect(value('expLocation')).not.toContain('Clifton');
+  });
+
   it('leaves the optional fields it should leave alone', async () => {
     await runAgainstFixture();
     expect(value('middleName')).toBe('');

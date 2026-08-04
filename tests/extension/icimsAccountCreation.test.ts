@@ -56,6 +56,17 @@ const EXPECTED_QUESTIONS = [
   'State/Province',
   'Zip/Postal Code',
   'Country',
+  'School',
+  'Degree currently pursuing',
+  'Major',
+  'Minor',
+  'GPA',
+  'Graduation Month',
+  'Graduation Year',
+  'Employer',
+  'Position',
+  'Employer Location',
+  'Responsibilities',
   'Resume',
   'Website',
   'Highest Level of Education',
@@ -146,8 +157,8 @@ describe('scanning the account-creation form', () => {
 
   it('finds every one of them and nothing more', async () => {
     const fields = await scanFields();
-    // 24, not 27: the list above names "Type" once, and the page asks it twice
-    // — once under Phones and once under Addresses. The three accordion
+    // One more than the list above, because it names "Type" once and the page
+    // asks it twice — under Phones and under Addresses. The three accordion
     // headers, the validation summary, and the extension's own panel are not
     // questions, so this count is an upper bound as well as a lower one.
     expect(fields).toHaveLength(EXPECTED_QUESTIONS.length + 1);

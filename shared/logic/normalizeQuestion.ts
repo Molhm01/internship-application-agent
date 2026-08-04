@@ -141,6 +141,18 @@ const RULES: readonly Rule[] = [
     question: 'referral_email',
     patterns: [/\brefer(rer|ral|rals)?\b.*\be ?mail\b/, /\be ?mail\b.*\brefer(rer|ral)\b/],
   },
+  // The portal account identifier. Before `email`, because plenty of sites
+  // label it "Login / Email" and the account name is the more specific reading.
+  {
+    question: 'account_username',
+    patterns: [
+      /^login$/,
+      /\buser ?name\b/,
+      /\buser id\b/,
+      /\blogin (id|name)\b/,
+      /\baccount name\b/,
+    ],
+  },
   { question: 'email', patterns: [/\be ?mail\b/] },
   // Before both `phone` and `country`: a "Phone country code" control is neither
   // the phone number nor the address country, and matching it as either fills
@@ -169,6 +181,24 @@ const RULES: readonly Rule[] = [
   {
     question: 'address_line1',
     patterns: [/\baddress (line )?1\b/, /\bstreet address\b/, /^address$/, /\bmailing address\b/],
+  },
+  // Where a past job was. Before every personal-location rule, because those
+  // contain the same word and one of them won: on the live page a work-history
+  // "Location" matched `current_location` and was filled with the applicant's
+  // home address — the single field an entire twenty-seven-field run managed to
+  // write, and wrongly.
+  {
+    question: 'experience_location',
+    patterns: [
+      // Anchored to the employer, not to the word "job". "Job Location" on
+      // Taleo is a multi-select of the locations the applicant *wants*, and
+      // "Would you consider moving to the job location?" is a relocation
+      // question — both must keep reaching their own rules, so neither
+      // "job" nor a relocation phrasing may trigger this one.
+      /^(?!.*\b(relocat|willing|prefer|desired|interested|consider|moving)\b).*\b(employer|company|workplace|office)\b.*\blocation\b/,
+      /^(?!.*\b(relocat|willing|prefer|desired|interested|consider|moving)\b).*\blocation\b.*\b(employer|company)\b/,
+      /\b(employment|work) (city|location)\b/,
+    ],
   },
   // A single combined location control ("Location (City)", "Current location")
   // wants "Clifton, New Jersey, United States", not the bare city. It must beat
@@ -236,7 +266,18 @@ const RULES: readonly Rule[] = [
 
   // Experience
   { question: 'employer', patterns: [/\b(employer|company name|organization)\b/] },
-  { question: 'job_title', patterns: [/\b(job|position|role)\s?title\b/, /^title$/] },
+  { question: 'job_title', patterns: [/\b(job|position|role)\s?title\b/, /^title$/, /^position$/] },
+  {
+    question: 'currently_employed',
+    patterns: [/\bcurrently (employed|work(ing)? here)\b/, /\bi currently work\b/, /\bpresent\b$/],
+  },
+  {
+    question: 'responsibilities',
+    patterns: [
+      /\b(responsibilities|duties|describe your role|job description)\b/,
+      /\bwhat did you do\b/,
+    ],
+  },
   { question: 'years_of_experience', patterns: [/\byears? of (relevant )?experience\b/] },
   {
     question: 'employment_start_date',
