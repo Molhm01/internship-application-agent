@@ -115,8 +115,99 @@ real scanner, real planner, and real DOM executor over the iCIMS fixture and
 asserts on the fixture's own DOM values. What it did not have was any way to
 prove the browser was running that code. That is the first thing repaired.
 
-## 5. What this diagnostic does not claim
+## 5. What was repaired, and what it measures
+
+### The second root cause, found while building the gates
+
+The stale bundle explains why earlier fixes appeared to do nothing. It does not
+explain the twenty-seven-second wait, and that had a separate cause: **the one
+batched model call lived inside `plan()`**. Nothing at all was written until the
+model answered — including the two dozen fields the saved profile could fill in
+under a second. When the analysis then failed or timed out, the page was still
+blank and the run reported eighteen unresolved questions, which reads as "it
+could not answer anything" rather than "it never tried".
+
+The pass is now two stages: `plan()` is deterministic only, and `analyze()` runs
+after those answers are written and verified on the page. An analysis that fails
+now costs the user nothing they had already been given, and a run with no local
+model at all fills the same profile fields it always could.
+
+### Measured on the fixture, one click, no second click
+
+| Measure                          | Value            |
+| -------------------------------- | ---------------- |
+| Raw controls matched             | 40               |
+| Rejected as not questions        | 5                |
+| Collapsed as duplicates          | 0                |
+| Normalized questions             | 35 (15 required) |
+| Filled and verified              | 26               |
+| Correctly left blank (optional)  | 2                |
+| Failed execution                 | 0                |
+| Actions rejected by the contract | 0                |
+| Grounded fields with no mapping  | 0                |
+| Outstanding, by policy           | 5                |
+| Passes                           | 3                |
+| Wall clock                       | ~2.5 s           |
+
+The five outstanding fields are outstanding **on purpose**, and each now says so
+in its own words rather than blaming a stage that did not run:
+
+- `Login`, `Password`, `Password Re-enter` — credentials never enter a stored,
+  popup-rendered plan. The account path writes them from the vault, and only
+  with explicit permission.
+- `Resume` — an upload is never attached without approval.
+- `I Agree to the Policies` — a consent is never ticked on anyone's behalf.
+
+## 6. What this diagnostic does not claim
 
 It does not claim the live iCIMS page is fixed. A local fixture passing is not
-evidence about a third-party page behind authentication. The manual smoke test
-and the run-trace export exist for exactly that reason.
+evidence about a third-party page behind authentication, and the live page could
+not be driven here: reaching it needs a real account, and the account-creation
+step is exactly the one gated behind credentials and a policy agreement that the
+agent will not supply on its own.
+
+What replaces that evidence is the build gate and the run trace. The first makes
+it impossible to repeat the mistake of testing one build and running another;
+the second makes one live click self-describing.
+
+### Clean reinstall
+
+```bash
+git pull
+npm ci
+npm run validate          # format, lint, typecheck, 1270 tests, full build
+npm run verify:extension-runtime
+```
+
+`npm run build:extension` deletes `extension/dist` before every build, so a
+stale chunk cannot survive one. Then, in Chrome:
+
+1. `chrome://extensions` → Developer mode on.
+2. **Remove** any existing copy of Internship Application Agent. This matters:
+   the original failure involved an unpacked extension loaded from a _sibling_
+   copy of the repository.
+3. **Load unpacked** → `C:\Users\Molhm\Desktop\Internship-Agent\extension\dist`.
+4. Open the popup and read the footer. It shows `Build <sha>.s<schema>.<time>`
+   and the folder it was built from. Both must match this checkout.
+5. **Reload any employer tab that was already open.** A tab open across an
+   extension reload keeps the old content script; the run will now refuse rather
+   than half-work, but reloading avoids the refusal entirely.
+
+### Manual smoke test, and how to collect the evidence
+
+1. Start the agent server (`npm run start:server`) and confirm the popup reports
+   the agent and model as connected.
+2. Open the employer application page and click **Autofill Application** once.
+3. Watch the stage label. Within the first few seconds it must pass through
+   _Filling saved answers_ and _Verifying saved answers_ — **before** it reaches
+   _Analyzing custom questions_. Fields should be visibly changing during that
+   first stage. If the form is still untouched when the analysis label appears,
+   the ordering fix is not in the build being run: check the footer build id.
+4. Let it finish. Read the summary, then open **Settings → Diagnostics**.
+5. Press **Export run traces**. That file is the whole diagnosis: raw controls
+   versus normalized questions, what was removed as not a question, what
+   collapsed as a duplicate, what the contract accepted or repaired or rejected,
+   what the executor was actually invoked for, what verified, how many analysis
+   requests were made, and how long each stage took. It contains no field
+   values, no credentials, no document contents, and no profile data — a test
+   asserts that, and the schema is strict, so it is safe to attach to a report.
