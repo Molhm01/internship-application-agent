@@ -145,10 +145,35 @@ beforeAll(async () => {
       const { fields } = await scanDom(document, 'page-icims', new AbortController().signal);
       const byId = new Map(fields.map((entry) => [entry.id, entry]));
       const results: FillRunReport['results'] = [];
+      // One result per action, exactly as the content script produces them —
+      // including the passive ones. An action that is not approved comes back
+      // `skipped`, a `manual_review` action comes back `needs_review`. This
+      // harness used to return results only for the actions it executed, which
+      // is why a real run could downgrade twenty-four verified fields on the
+      // following pass and this suite stayed green.
       for (const action of plan.actions) {
-        if (!action.approved) continue;
         const field = byId.get(action.fieldId);
         if (!field) continue;
+        if (action.action === 'manual_review' || action.action === 'unsupported') {
+          results.push({
+            actionId: action.id,
+            fieldId: action.fieldId,
+            status: action.action === 'unsupported' ? 'unsupported' : 'needs_review',
+            attempts: 0,
+            durationMs: 0,
+          });
+          continue;
+        }
+        if (!action.approved || action.action === 'skip') {
+          results.push({
+            actionId: action.id,
+            fieldId: action.fieldId,
+            status: 'skipped',
+            attempts: 0,
+            durationMs: 0,
+          });
+          continue;
+        }
         results.push(
           await executeDomAction(document, field, action, new AbortController().signal, []),
         );
@@ -267,6 +292,32 @@ describe('GATE C — the counts', () => {
     const verified = trace.fields.filter((field) => field.verification === 'verified');
     expect(verified.every((field) => field.executorAttempted)).toBe(true);
     expect(verified.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it('never lets a later refusal overwrite what an earlier pass verified', () => {
+    // The failure this pins: on the pass that re-approved only the one control
+    // the page had just revealed, every other action came back `skipped`, which
+    // was read as "executed, not verified". Twenty-five verified fields were
+    // reported as one, over a page that was correctly filled the whole time.
+    const filled = report.results.filter((result) => result.verification === 'verified');
+    expect(filled.length).toBeGreaterThanOrEqual(20);
+    expect(report.fieldsVerified).toBe(filled.length);
+    // And no field the executor refused may claim it was attempted.
+    for (const field of trace.fields) {
+      if (field.plannedAction !== 'manual_review') continue;
+      expect(field.executorAttempted, `${field.fieldId} claimed an attempt`).toBe(false);
+    }
+  });
+
+  it('counts the documents it actually attached', () => {
+    // Read off the verified results rather than left at its default. The popup
+    // renders this as "Documents uploaded", and it said 0 beside two files
+    // sitting in the employer's own upload controls.
+    expect(report.documentsAttached).toBe(
+      report.results.filter(
+        (result) => result.action === 'upload_file' && result.verification === 'verified',
+      ).length,
+    );
   });
 
   it('gives every required field a valid final outcome', () => {

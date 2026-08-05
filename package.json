@@ -41,6 +41,8 @@
     "test": "npm run build:shared && vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:autofill:acceptance": "npm run build:shared && vitest run tests/extension/acceptanceGates.test.ts && playwright test tests/e2e/autofill-acceptance.spec.ts",
+    "autofill:diagnose": "node scripts/autofill-diagnose.mjs",
     "validate": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
     "verify:enums": "node scripts/find-stale-enums.mjs"
   },

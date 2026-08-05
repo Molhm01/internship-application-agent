@@ -158,7 +158,73 @@ in its own words rather than blaming a stage that did not run:
 - `Resume` — an upload is never attached without approval.
 - `I Agree to the Policies` — a consent is never ticked on anyone's behalf.
 
-## 6. What this diagnostic does not claim
+## 6. The second pass: what a real browser said that jsdom could not
+
+Everything above was measured in jsdom, against the source. Section 5 closed by
+saying a local fixture passing is not evidence about the browser. So the
+acceptance gates were re-stated as a Playwright suite that loads
+`extension/dist` in Chromium, opens the employer fixture, clicks the popup's own
+**Autofill Application** button once, and reads the employer page's DOM —
+`tests/e2e/autofill-acceptance.spec.ts`. Nothing in it imports from
+`extension/src`.
+
+The first real-browser run filled the page correctly and **reported one field
+verified out of twenty-eight**. Three defects, all invisible from jsdom:
+
+### A. A refusal was counted as an attempt
+
+The content script returns one result per action in the plan, including the ones
+it deliberately did nothing about: an unapproved action comes back `skipped`, a
+`manual_review` action `needs_review`, an undriveable control `unsupported`. The
+orchestrator treated any result as an execution outcome.
+
+So: pass 1 filled and verified twenty-five fields. Pass 2 re-approved only the
+one dependent control the page had just revealed; every other action came back
+`skipped`, which read as *executed and not verified* — downgrading twenty-four
+verified fields to failed. Pass 3 executed nothing, and rewrote those to
+unverified. The page was correctly filled the entire time and the summary said
+otherwise. `executorAttempted` was wrong for the same reason: the run trace
+claimed the executor had been invoked on both password boxes, which it never
+touches.
+
+Fixed in `wasExecuted` in `autofill/orchestrator.ts`: only `verified`,
+`filled_unverified`, and `failed` are attempts. The jsdom harness in
+`acceptanceGates.test.ts` now returns a result for every action exactly as the
+content script does — it previously returned results only for what it executed,
+which is why the suite stayed green over this.
+
+### B. "Documents uploaded: 0" beside two attached files
+
+`documentsAttached` was in the report schema with a default of `0` and was never
+assigned. The popup rendered that default under a heading claiming to count
+uploads. It is now counted from the results that verified.
+
+### C. The popup opened as a tab described itself
+
+`readActiveTab` asked for the active tab in the current window. That is right for
+a real popup, which floats over the page; opened as a tab it returns the popup's
+own `chrome-extension://` page, and the panel read "No supported application form
+detected on this page" about itself. It now falls back to the most recently
+accessed http(s) tab when — and only when — the active tab is this extension's
+own page.
+
+### Measured in Chromium, one click, no second click
+
+| Measure                              | Value                                    |
+| ------------------------------------ | ---------------------------------------- |
+| Raw controls matched                 | 41                                       |
+| Rejected as not questions            | 5                                        |
+| Normalized questions                 | 36 (15 required)                         |
+| Filled and verified                  | 28                                       |
+| Documents attached                   | 2 (tailored résumé and cover letter)     |
+| Correctly left blank (optional)      | 2                                        |
+| Failed execution                     | 0                                        |
+| Outstanding, by policy               | 4 — login, both passwords, policy consent |
+| Analysis requests                    | 1                                        |
+| First saved value visible on the page| 451 ms                                   |
+| Whole run, click to terminal state   | 3.8 s                                    |
+
+## 7. What this diagnostic does not claim
 
 It does not claim the live iCIMS page is fixed. A local fixture passing is not
 evidence about a third-party page behind authentication, and the live page could

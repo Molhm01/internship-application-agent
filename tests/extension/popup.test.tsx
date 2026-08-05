@@ -230,3 +230,43 @@ describe('popup connection status', () => {
     expect(screen.queryByText(/reinstall/i)).toBeNull();
   });
 });
+
+describe('the popup opened as a tab', () => {
+  it('reports on the employer page rather than on itself', async () => {
+    // A real popup floats over the page, so the active tab is the application.
+    // Opened as a tab — which a user can do, and which is how an automated run
+    // reaches the popup at all — the active tab is the popup's own extension
+    // page, and every panel described `chrome-extension://…`: "No supported
+    // application form detected on this page", about itself.
+    const chromeMock = installChromeMock();
+    const status = {
+      health: health(),
+      latencyMs: 7,
+      serverUrl: 'http://127.0.0.1:4317',
+      tokenConfigured: true,
+    } satisfies AgentStatusResult;
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'ENSURE_CONTENT_SCRIPT')
+        return Promise.resolve({ reachable: true, injected: false });
+      if (message.type === 'GET_PORTAL_ROUTE')
+        return Promise.resolve({ decision: 'none', reason: 'no routes' });
+      if (message.type === 'GET_LAST_SCAN')
+        return Promise.resolve({ scan: emptyApplicationScan('https://boards.example.com/apply') });
+      if (message.type === 'GET_FILL_PLAN') return Promise.resolve({ plan: null, report: null });
+      return Promise.resolve(status);
+    });
+    chromeMock.tabs.query.mockImplementation((query: { url?: string[] }) =>
+      Promise.resolve(
+        query.url
+          ? [{ id: 4, url: 'https://boards.example.com/apply', lastAccessed: 20 }]
+          : [{ id: 9, url: 'chrome-extension://test/popup.html' }],
+      ),
+    );
+    chromeMock.tabs.sendMessage.mockResolvedValue({ present: true, fieldsDetected: null });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText('boards.example.com')).toBeDefined());
+    expect(screen.queryByText('chrome-extension')).toBeNull();
+  });
+});

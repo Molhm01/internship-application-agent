@@ -68,6 +68,7 @@ const EXPECTED_QUESTIONS = [
   'Employer Location',
   'Responsibilities',
   'Resume',
+  'Cover Letter',
   'Website',
   'Highest Level of Education',
   'How did you hear about us?',

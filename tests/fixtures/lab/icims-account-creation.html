@@ -283,6 +283,11 @@
           </div>
 
           <div class="iCIMS_InfoField">
+            <label for="coverLetter">Cover Letter</label>
+            <input type="file" id="coverLetter" name="coverLetter" accept=".pdf,.doc,.docx" />
+          </div>
+
+          <div class="iCIMS_InfoField">
             <label for="website">Website</label>
             <input type="url" id="website" name="website" />
           </div>
@@ -352,10 +357,28 @@
         </fieldset>
 
         <button type="button" id="createAccount">Create Account</button>
+
+        <!--
+          The control that ends the application. No code path in this repository
+          may click it; the listener below records a click so a test can assert
+          the absence rather than assume it.
+        -->
+        <button type="submit" id="submitApplication">Submit Application</button>
       </form>
     </div>
 
     <script>
+      // Records what the page was asked to do, so a test can assert that the
+      // final submit was never clicked rather than infer it from a report.
+      window.fixtureState = { submitted: false, createAccountClicked: false };
+      document.getElementById('icims_account_form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.fixtureState.submitted = true;
+      });
+      document.getElementById('createAccount').addEventListener('click', () => {
+        window.fixtureState.createAccountClicked = true;
+      });
+
       // The dependent State control: its options exist only once a country is
       // chosen, so anything filling State has to select Country first and then
       // read the list again.

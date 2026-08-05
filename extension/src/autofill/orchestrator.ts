@@ -16,6 +16,7 @@ import {
   type DeterministicFillAction,
   type DeterministicFillPlan,
   type DetectedField,
+  type FillExecutionResult,
   type FillRunReport,
   type ReviewReason,
   type FieldTrace,
@@ -188,6 +189,27 @@ function countSource(results: readonly AutofillFieldResult[], source: string): n
 }
 
 /**
+ * Whether an executor result means the page was actually touched.
+ *
+ * The content script returns one result per action in the plan, including the
+ * ones it deliberately did nothing about: an action that is not approved comes
+ * back `skipped`, a `manual_review` action comes back `needs_review`, a control
+ * it cannot drive comes back `unsupported`. Those are refusals, not attempts.
+ *
+ * Reading them as attempts is what made a run that filled and verified
+ * twenty-five fields report one. The deterministic pass verified twenty-five;
+ * the next pass re-approved only the single dependent control the page had just
+ * revealed, and every other action came back `skipped` — which the orchestrator
+ * read as "executed, and not verified", downgrading twenty-four verified fields
+ * to failed. The pass after that, which executed nothing at all, rewrote those
+ * to unverified. The page was correctly filled the whole time and the report
+ * said otherwise.
+ */
+function wasExecuted(status: FillExecutionResult['status']): boolean {
+  return status === 'verified' || status === 'filled_unverified' || status === 'failed';
+}
+
+/**
  * How long each stage took, and how much work it did.
  *
  * Counts and durations only — never a field value, a password, a document, or a
@@ -347,6 +369,13 @@ export async function runApplicationAutofill(
           result.action === 'select_option',
       ).length,
       generatedAnswers: results.filter((result) => result.action === 'fill_generated_text').length,
+      // Counted from what verified on the page, not from what was planned. The
+      // popup shows this line as "Documents uploaded", and it read 0 beside two
+      // files that were sitting in the employer's upload controls, because
+      // nothing ever set it.
+      documentsAttached: results.filter(
+        (result) => result.action === 'upload_file' && result.verification === 'verified',
+      ).length,
       exactProfileMatches: countSource(results, 'profile'),
       approvedAnswerMatches: countSource(results, 'approved_answer'),
       uncertainSuggestions: reviewing.filter((result) => result.reviewReason === 'ai_suggestion')
@@ -539,7 +568,10 @@ export async function runApplicationAutofill(
           approved: false,
           reason: 'No decision was recorded for this action.',
         };
-        const outcome = run?.results.find((result) => result.actionId === action.id);
+        const reported = run?.results.find((result) => result.actionId === action.id);
+        // A result the executor produced without touching the page is not an
+        // attempt, and must not overwrite what an earlier pass verified.
+        const outcome = reported && wasExecuted(reported.status) ? reported : undefined;
         if (outcome) executorAttempted.add(action.fieldId);
         const executed = outcome
           ? { verified: outcome.status === 'verified', failed: outcome.status === 'failed' }

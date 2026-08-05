@@ -120,6 +120,26 @@ test('settings page exposes every profile area and loads without error', async (
 
   // The developer's real local profile may contain any valid saved policy. The
   // page must render that policy rather than getting stuck or inventing a value.
+  //
+  // Reachable only with a token: without one the server answers 401 and the
+  // page correctly shows "Could not load your profile" instead of the sections.
+  // The sibling connection test skips on the same condition; this one used to
+  // assert straight through it, so a checkout with no `local-data` — which is
+  // every fresh clone — failed here for a reason that is not a defect.
+  if (existsSync(TOKEN_PATH)) {
+    await page.evaluate(async (token) => {
+      const current = ((await chrome.storage.local.get('settings')).settings ?? {}) as Record<
+        string,
+        unknown
+      >;
+      await chrome.storage.local.set({ settings: { ...current, authToken: token } });
+    }, readFileSync(TOKEN_PATH, 'utf8').trim());
+    await page.reload();
+  } else {
+    await page.close();
+    test.skip(true, 'agent-token.txt not present; start the server once first');
+    return;
+  }
   await page.getByRole('button', { name: 'Sensitive answers' }).click();
   await expect(page.getByText('These questions are never guessed', { exact: false })).toBeVisible();
   expect(await page.getByLabel('Race').inputValue()).toMatch(

@@ -195,6 +195,9 @@ Detailed fixture and real-ATS checks are in [docs/MANUAL_TESTING.md](docs/MANUAL
 | `npm run test`             | Vitest: server, integration, and extension projects.             |
 | `npm run test:e2e`         | Playwright, loading the built extension in Chromium.             |
 | `npm run validate`         | format:check → lint → typecheck → test → build.                  |
+| `npm run test:autofill:acceptance` | The acceptance gates: jsdom, then the built extension in Chromium. |
+| `npm run autofill:diagnose` | Runs that acceptance click and writes `AUTOFILL_RUN_DIAGNOSTIC.md`. |
+| `npm run verify:extension-runtime` | Proves every bundle in `extension/dist` carries the same, current build id. |
 | `npm run clean`            | Removes build output.                                            |
 | `npm run check:ollama`     | Confirms the configured model exists and honours a JSON schema.  |
 | `npm run db:check`         | Checks SQLite integrity and reports the schema version.          |
@@ -203,6 +206,9 @@ Detailed fixture and real-ATS checks are in [docs/MANUAL_TESTING.md](docs/MANUAL
 | `npm run backup:verify`    | Verifies source, build, database, and document recovery inputs.  |
 
 `npm run test:e2e` needs `npm run build` first and starts the agent server itself.
+So does `npm run test:autofill:acceptance`, which is the subset of it that drives one
+click of the popup over the iCIMS fixture and asserts every acceptance gate on the
+employer page's own DOM.
 
 ---
 

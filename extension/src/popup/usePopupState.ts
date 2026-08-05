@@ -67,8 +67,35 @@ const EMPTY_TAB: TabInfo = {
   fieldsDetected: null,
 };
 
+/**
+ * The tab this popup is about.
+ *
+ * Normally the popup floats over the page, so the active tab in the current
+ * window *is* the application and the first query answers it. When `popup.html`
+ * is opened as an ordinary tab — which a user can do, and which is the only way
+ * an automated run can reach the real popup UI — the active tab is the popup
+ * itself, and every panel below reported on `chrome-extension://…`: "No
+ * supported application form detected on this page", about its own page.
+ *
+ * The fallback answers the question that was actually asked. It is deliberately
+ * narrow: it only runs when the active tab is not a web page at all, and it only
+ * ever returns a real http(s) tab.
+ */
+async function resolveApplicationTab(): Promise<chrome.tabs.Tab | undefined> {
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (active?.url && /^https?:/i.test(active.url)) return active;
+  if (!active?.url?.startsWith(chrome.runtime.getURL(''))) return active;
+  const candidates = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+  if (candidates.length === 0) return active;
+  // The one the user was last looking at. `lastAccessed` is not in every
+  // Chromium build, so document order is the fallback for the fallback.
+  return [...candidates].sort(
+    (left, right) => (right.lastAccessed ?? 0) - (left.lastAccessed ?? 0),
+  )[0];
+}
+
 async function readActiveTab(): Promise<TabInfo> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await resolveApplicationTab();
   if (!tab?.url) return EMPTY_TAB;
   let domain: string | null = null;
   try {
