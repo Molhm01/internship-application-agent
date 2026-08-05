@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   CURRENT_BUNDLE_VERSION,
@@ -259,5 +262,43 @@ describe('bundle versioning', () => {
     });
     expect(parsed.accountPreferences?.portalStrategy).toBe('create_when_required');
     expect(JSON.stringify(parsed.accountPreferences)).not.toContain('hunter2');
+  });
+});
+
+/**
+ * The other half of the contract: is the transcription above still current?
+ *
+ * Everything before this asserts that *this* repository reads a v2 snapshot
+ * correctly. None of it can notice the website moving to v3 — the two live in
+ * separate repositories, and the first sign would be a real applicant getting a
+ * silently stripped profile that looks exactly like an empty one.
+ *
+ * So when the sibling checkout is present, its declared version is read off
+ * disk and compared. Skipped rather than failed when it is absent, because a
+ * standalone clone of this repository is a legitimate way to work on it and
+ * must not have a red suite for a directory it was never given.
+ */
+describe('the website and this extension agree on the bundle version', () => {
+  const WEBSITE_SNAPSHOT = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '..',
+    '..',
+    '..',
+    'Internship-AI',
+    'src',
+    'lib',
+    'applications',
+    'profileSnapshot.ts',
+  );
+
+  it.skipIf(!existsSync(WEBSITE_SNAPSHOT))('reads the same version the website declares', () => {
+    const source = readFileSync(WEBSITE_SNAPSHOT, 'utf8');
+    const declared = /PROFILE_SNAPSHOT_VERSION\s*=\s*(\d+)/.exec(source)?.[1];
+    expect(declared, 'the website no longer declares PROFILE_SNAPSHOT_VERSION').toBeDefined();
+    expect(
+      Number(declared),
+      `Internship-AI emits snapshot v${declared} but this extension reads up to v${CURRENT_BUNDLE_VERSION}. ` +
+        'Teach the schema the new shape and update WEBSITE_SNAPSHOT_V2 above before bumping.',
+    ).toBe(CURRENT_BUNDLE_VERSION);
   });
 });
