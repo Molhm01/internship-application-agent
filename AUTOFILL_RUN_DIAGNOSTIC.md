@@ -1,15 +1,15 @@
 # Autofill run diagnostic
 
-Collected 2026-08-05T09:01:17.094Z from a single click on the built extension.
+Collected 2026-08-05T09:01:54.157Z from a single click on the built extension.
 
 ## Runtime identity
 
 | Component | Build id |
 | --------- | -------- |
-| popup | `3131f2a.s3.20260805090050` |
-| worker | `3131f2a.s3.20260805090050` |
-| content | `3131f2a.s3.20260805090050` |
-| run trace | `3131f2a.s3.20260805090050` |
+| popup | `e771ae3.s3.20260805090136` |
+| worker | `e771ae3.s3.20260805090136` |
+| content | `e771ae3.s3.20260805090136` |
+| run trace | `e771ae3.s3.20260805090136` |
 
 ## What the page offered, and what became a question
 
@@ -32,13 +32,13 @@ Collected 2026-08-05T09:01:17.094Z from a single click on the built extension.
 
 | Stage | Duration |
 | ----- | -------- |
-| Scan | 426 ms |
-| Plan (deterministic) | 43 ms |
-| Execute and verify (deterministic) | 1414 ms |
-| Analysis (one batched request) | 127 ms |
+| Scan | 433 ms |
+| Plan (deterministic) | 57 ms |
+| Execute and verify (deterministic) | 1346 ms |
+| Analysis (one batched request) | 139 ms |
 | Execute and verify (analyzed) | 0 ms |
-| First saved value visible on the page | 374 ms |
-| Whole run, click to terminal state | 3248 ms |
+| First saved value visible on the page | 381 ms |
+| Whole run, click to terminal state | 3236 ms |
 | Analysis requests | 1 |
 | Dependent controls re-read | 0 |
 
