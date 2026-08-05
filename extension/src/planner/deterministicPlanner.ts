@@ -9,6 +9,9 @@ import {
   deterministicFillPlanSchema,
   isDeclinePhrasing,
   isLocationQuestion,
+  isPasswordConfirmationField,
+  isPasswordField,
+  isUsernameField,
   locationSearchText,
   matchLocationOption,
   matchOption,
@@ -262,6 +265,33 @@ function planAction(
         ...base.warnings,
         'Choose a resume in settings, or pick one here, then approve the upload.',
       ],
+    };
+  }
+  // Credentials never enter a deterministic plan, and the reason must say so.
+  //
+  // A `DeterministicFillPlan` is stored, sent to the popup, and rendered on a
+  // review screen, so an employer-site password may not be in one. The account
+  // form is filled by a separate path that writes straight to the page and
+  // keeps the value in the credential vault.
+  //
+  // What was wrong was not the exclusion but the explanation: these fields fell
+  // through to the generic unmatched branch and were reported as "the page
+  // analysis could not run, so this question was never interpreted" — which
+  // tells the user to start a local model to fix something a local model has
+  // nothing to do with.
+  if (isUsernameField(field) || isPasswordField(field)) {
+    const confirmation = isPasswordConfirmationField(field);
+    return {
+      ...base,
+      action: 'manual_review',
+      requiresReview: true,
+      sensitive: true,
+      reason: isUsernameField(field)
+        ? 'Sign-in details are never put in a stored plan. Turn on employer account creation in settings, or type it yourself.'
+        : confirmation
+          ? 'Password confirmation is written straight to the page from the credential vault, never through a plan. Turn on employer account creation in settings, or type it yourself.'
+          : 'A password is written straight to the page from the credential vault, never through a plan. Turn on employer account creation in settings, or type it yourself.',
+      warnings: [...base.warnings, 'No credential is ever stored in, or shown by, a fill plan.'],
     };
   }
   // `combobox` is handled below, alongside `select`: its options were read off

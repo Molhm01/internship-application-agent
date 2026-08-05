@@ -1,9 +1,13 @@
 import {
   applicationScanResultSchema,
+  classifyPage,
   type ApplicationScanResult,
   type DetectedField,
 } from '@internship-agent/shared';
-import { censusForPage } from '../../extension/src/scanner/domScanner.js';
+import {
+  censusForPage,
+  collectNavigationControls,
+} from '../../extension/src/scanner/domScanner.js';
 
 /**
  * Wraps scanned iCIMS fields in a valid `ApplicationScanResult`.
@@ -31,6 +35,17 @@ export function icimsScan(fields: readonly DetectedField[]): ApplicationScanResu
     },
     jobContext: {},
     fields,
+    // Classified the same way the content script classifies it, rather than
+    // omitted. Leaving it out made every test using this helper see a page of
+    // kind `unknown`, which silently skipped the account-creation branch of the
+    // run — so the credential fill was never exercised by anything.
+    navigation: classifyPage({
+      url: 'https://careers2-quanta.icims.com/jobs/12345/candidate',
+      title: 'Create an Account',
+      bodyText: document.body?.textContent?.slice(0, 20_000) ?? '',
+      fields,
+      controls: collectNavigationControls(document),
+    }),
     warnings: [],
     statistics: {
       total: fields.length,
