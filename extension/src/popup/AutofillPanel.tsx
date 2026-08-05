@@ -19,10 +19,14 @@ import type { AutofillRunPhaseState } from '../storage/runState.js';
 /** The states in which a run is still working, and Cancel means something. */
 const ACTIVE_RUN_STATES: readonly AutofillRunPhaseState[] = [
   'SCANNING',
+  'NORMALIZING',
   'RESOLVING_DETERMINISTIC',
+  'EXECUTING_DETERMINISTIC',
+  'VERIFYING_DETERMINISTIC',
   'ANALYZING_AI',
-  'EXECUTING',
-  'VERIFYING',
+  'EXECUTING_AI',
+  'VERIFYING_AI',
+  'RESCANNING_DEPENDENCIES',
 ];
 
 /**
@@ -40,10 +44,16 @@ export function formatElapsed(milliseconds: number): string {
 const RUN_STATE_LABELS: Record<AutofillRunPhaseState, string> = {
   IDLE: 'Ready',
   SCANNING: 'Scanning page…',
+  NORMALIZING: 'Reading the questions…',
   RESOLVING_DETERMINISTIC: 'Matching saved profile…',
+  // The saved answers are written and confirmed before anything is asked of the
+  // model, so these two run in the first seconds and the AI states after them.
+  EXECUTING_DETERMINISTIC: 'Filling saved answers…',
+  VERIFYING_DETERMINISTIC: 'Verifying saved answers…',
   ANALYZING_AI: 'Analyzing custom questions…',
-  EXECUTING: 'Filling fields…',
-  VERIFYING: 'Verifying answers…',
+  EXECUTING_AI: 'Filling analyzed answers…',
+  VERIFYING_AI: 'Verifying analyzed answers…',
+  RESCANNING_DEPENDENCIES: 'Reading choices the page just produced…',
   WAITING_FOR_USER: 'Waiting for your answers',
   COMPLETED: 'Autofill complete',
   FAILED: 'Autofill failed',

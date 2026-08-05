@@ -105,7 +105,7 @@ describe('1–6. one click, one run', () => {
     // written. It must not put the run back into an active state — that is a
     // silent restart, and the button would re-disable itself forever.
     await recordProgress('run-1', progress('filling'));
-    expect((await loadRun())?.state).toBe('EXECUTING');
+    expect((await loadRun())?.state).toBe('EXECUTING_DETERMINISTIC');
     // …but the status stays terminal, so the lock is not retaken.
     expect((await loadRun())?.status).toBe('completed');
     expect(await activeRun()).toBeNull();
@@ -113,7 +113,7 @@ describe('1–6. one click, one run', () => {
 
   it('ignores updates addressed to a different run', async () => {
     await startRun('run-1', 'https://example.com/apply');
-    await recordState('run-2', 'EXECUTING');
+    await recordState('run-2', 'EXECUTING_DETERMINISTIC');
     expect((await loadRun())?.state).toBe('SCANNING');
   });
 
@@ -140,12 +140,17 @@ describe('every phase maps onto exactly one run state', () => {
     ['preparing', 'SCANNING'],
     ['scanning', 'SCANNING'],
     ['rescanning', 'SCANNING'],
+    ['normalizing', 'NORMALIZING'],
+    ['rescanning_dependencies', 'RESCANNING_DEPENDENCIES'],
     ['discovering_options', 'RESOLVING_DETERMINISTIC'],
     ['resolving', 'RESOLVING_DETERMINISTIC'],
+    ['analyzing', 'ANALYZING_AI'],
     ['generating', 'ANALYZING_AI'],
-    ['planning', 'EXECUTING'],
-    ['filling', 'EXECUTING'],
-    ['verifying', 'VERIFYING'],
+    ['planning', 'EXECUTING_DETERMINISTIC'],
+    ['filling', 'EXECUTING_DETERMINISTIC'],
+    ['verifying', 'VERIFYING_DETERMINISTIC'],
+    ['filling_ai', 'EXECUTING_AI'],
+    ['verifying_ai', 'VERIFYING_AI'],
     ['completed', 'COMPLETED'],
     ['completed_with_review', 'COMPLETED'],
     ['failed', 'FAILED'],
@@ -158,10 +163,17 @@ describe('every phase maps onto exactly one run state', () => {
     const required: AutofillRunPhaseState[] = [
       'IDLE',
       'SCANNING',
+      'NORMALIZING',
       'RESOLVING_DETERMINISTIC',
+      // Deterministic execution and verification come before the AI states,
+      // because that is the order the run works in: the saved profile is
+      // written and confirmed on the page before the model is asked anything.
+      'EXECUTING_DETERMINISTIC',
+      'VERIFYING_DETERMINISTIC',
       'ANALYZING_AI',
-      'EXECUTING',
-      'VERIFYING',
+      'EXECUTING_AI',
+      'VERIFYING_AI',
+      'RESCANNING_DEPENDENCIES',
       'WAITING_FOR_USER',
       'COMPLETED',
       'FAILED',

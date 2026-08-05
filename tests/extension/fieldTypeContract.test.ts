@@ -363,11 +363,21 @@ describe.skipIf(!built)('the generated runtime accepts what the scanner emits', 
     expect(BUILD_INFO.sourceRoot).toBe(ROOT);
     expect(BUILD_INFO.commit).toMatch(/^[0-9a-f]{7,}$|^unknown$/);
     // Present in the popup bundle, so it is visible without opening devtools.
-    const popup = readFileSync(join(DIST, 'popup.js'), 'utf8');
+    // Reachable from the popup entry, which is what matters — Vite hoists a
+    // constant several entries share into a common chunk, so the stamp lives in
+    // `chunks/` rather than inside `popup.js` itself. `verify:extension-runtime`
+    // walks that closure properly; here it is enough that exactly one bundle in
+    // the folder carries it and the popup can reach it.
     // The stamp is embedded as a JSON string literal, so a Windows path arrives
     // with its separators doubled. `JSON.stringify` reproduces that exactly,
     // and works unchanged on a platform where there is nothing to escape.
     const embedded = JSON.stringify(BUILD_INFO.sourceRoot).slice(1, -1);
-    expect(popup).toContain(embedded);
+    const bundles = [
+      readFileSync(join(DIST, 'popup.js'), 'utf8'),
+      ...readdirSync(join(DIST, 'chunks'))
+        .filter((name) => name.endsWith('.js'))
+        .map((name) => readFileSync(join(DIST, 'chunks', name), 'utf8')),
+    ];
+    expect(bundles.some((bundle) => bundle.includes(embedded))).toBe(true);
   });
 });

@@ -22,7 +22,7 @@ function runState(overrides: Partial<AutofillRunState> = {}): AutofillRunState {
   return {
     runId: 'autofill-1',
     status: 'running',
-    state: 'EXECUTING',
+    state: 'EXECUTING_DETERMINISTIC',
     url: 'https://careers2-quanta.icims.com/connect',
     startedAt: NOW - 30_000,
     updatedAt: NOW,
@@ -189,8 +189,9 @@ describe('3 & 5. the clock uses the worker’s timestamps', () => {
     for (const state of [
       'SCANNING',
       'RESOLVING_DETERMINISTIC',
+      'EXECUTING_DETERMINISTIC',
       'ANALYZING_AI',
-      'EXECUTING',
+      'EXECUTING_AI',
     ] as const) {
       cleanup();
       installMessaging(runState({ state }));

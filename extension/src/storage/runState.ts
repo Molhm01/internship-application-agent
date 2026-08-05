@@ -42,10 +42,25 @@ const STALE_AFTER_MS = 10 * 60 * 1000;
 export const AUTOFILL_RUN_STATES = [
   'IDLE',
   'SCANNING',
+  'NORMALIZING',
   'RESOLVING_DETERMINISTIC',
+  /**
+   * The deterministic answers being written and confirmed — before the model is
+   * asked anything.
+   *
+   * Split from the AI states below because the order is the fix: the saved
+   * profile used to wait behind a batched model call, so a form that could have
+   * filled in a second sat untouched for twenty. A user watching these two
+   * states go by in the first few seconds is watching the thing that was
+   * broken, working.
+   */
+  'EXECUTING_DETERMINISTIC',
+  'VERIFYING_DETERMINISTIC',
   'ANALYZING_AI',
-  'EXECUTING',
-  'VERIFYING',
+  'EXECUTING_AI',
+  'VERIFYING_AI',
+  /** Re-reading a control whose choices another field had to produce first. */
+  'RESCANNING_DEPENDENCIES',
   'WAITING_FOR_USER',
   'COMPLETED',
   'FAILED',
@@ -57,10 +72,14 @@ export type AutofillRunPhaseState = (typeof AUTOFILL_RUN_STATES)[number];
 /** The states in which a run still owns the lock. */
 const ACTIVE_STATES: readonly AutofillRunPhaseState[] = [
   'SCANNING',
+  'NORMALIZING',
   'RESOLVING_DETERMINISTIC',
+  'EXECUTING_DETERMINISTIC',
+  'VERIFYING_DETERMINISTIC',
   'ANALYZING_AI',
-  'EXECUTING',
-  'VERIFYING',
+  'EXECUTING_AI',
+  'VERIFYING_AI',
+  'RESCANNING_DEPENDENCIES',
 ];
 
 /** Maps a progress phase onto the run state it represents. */
@@ -70,16 +89,25 @@ export function stateForPhase(phase: AutofillProgress['phase']): AutofillRunPhas
     case 'scanning':
     case 'rescanning':
       return 'SCANNING';
+    case 'normalizing':
+      return 'NORMALIZING';
+    case 'rescanning_dependencies':
+      return 'RESCANNING_DEPENDENCIES';
     case 'discovering_options':
     case 'resolving':
       return 'RESOLVING_DETERMINISTIC';
+    case 'analyzing':
     case 'generating':
       return 'ANALYZING_AI';
     case 'planning':
     case 'filling':
-      return 'EXECUTING';
+      return 'EXECUTING_DETERMINISTIC';
     case 'verifying':
-      return 'VERIFYING';
+      return 'VERIFYING_DETERMINISTIC';
+    case 'filling_ai':
+      return 'EXECUTING_AI';
+    case 'verifying_ai':
+      return 'VERIFYING_AI';
     case 'completed':
     case 'completed_with_review':
       return 'COMPLETED';

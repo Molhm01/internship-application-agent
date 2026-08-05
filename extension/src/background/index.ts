@@ -357,7 +357,18 @@ function fillFailure(
   };
 }
 
-async function buildPlan(scanId?: string): Promise<unknown> {
+/**
+ * Builds the plan for a scan.
+ *
+ * `analyze` decides whether the one batched model call is part of this call or
+ * a separate stage. The orchestrator passes `false` and calls `analyzePlan`
+ * afterwards, so the profile's own answers are written and verified on the page
+ * before the model is asked anything — the fix for a form that sat untouched
+ * for the twenty-plus seconds a model call takes. Every other caller (the
+ * review screen, a manual rebuild) wants the finished plan in one step and
+ * leaves it defaulted.
+ */
+async function buildPlan(scanId?: string, options: { analyze?: boolean } = {}): Promise<unknown> {
   const scan = await loadLastScan();
   if (!scan || (scanId && scan.id !== scanId)) {
     return { error: fillFailure('INVALID_FILL_PLAN', 'No matching completed scan exists.').error };
@@ -409,13 +420,59 @@ async function buildPlan(scanId?: string): Promise<unknown> {
 
   // One batched analysis for everything the deterministic pass could not
   // settle. A fully resolved page makes no model call at all.
-  const analysisNote = await analyzePage(plan, scan, profile, answers, bundle, settings);
-  if (analysisNote.plan) plan = analysisNote.plan;
-  warnings.push(...analysisNote.warnings);
+  if (options.analyze !== false) {
+    const analysisNote = await analyzePage(plan, scan, profile, answers, bundle, settings);
+    if (analysisNote.plan) plan = analysisNote.plan;
+    warnings.push(...analysisNote.warnings);
+  }
 
   await persistPlan(plan);
   await clearAnswerGenerationStore();
   return { plan, ...(warnings.length ? { warnings } : {}) };
+}
+
+/**
+ * Runs the batched analysis over the plan already stored for this scan.
+ *
+ * The second half of what `buildPlan` used to do in one step. Reads the stored
+ * plan rather than rebuilding it, so the deterministic answers that are by now
+ * written and verified on the page are the ones the analysis is layered onto —
+ * rebuilding would discard the executor's record of them.
+ */
+async function analyzePlan(
+  scanId?: string,
+): Promise<{ plan?: DeterministicFillPlan; ran: boolean; error?: AgentError }> {
+  const [scan, stored, settings] = await Promise.all([
+    loadLastScan(),
+    loadFillPlan(),
+    loadSettings(),
+  ]);
+  if (!scan || (scanId && scan.id !== scanId) || !stored || stored.scanId !== scan.id) {
+    return {
+      ran: false,
+      error: fillFailure('INVALID_FILL_PLAN', 'No matching current plan exists to analyze.').error,
+    };
+  }
+  const bundle = await bundleForUrl(scan.url);
+  const [profileResult, answersResult] = await Promise.all([getProfile(), listAnswers()]);
+  const profile = bundle?.profile ?? profileResult.data?.profile;
+  if (!profile) return { ran: false };
+
+  const answers = [...(bundle?.approvedAnswers ?? []), ...(answersResult.data?.answers ?? [])];
+  const note = await analyzePage(stored, scan, profile, answers, bundle, settings);
+  if (note.plan) {
+    await persistPlan(note.plan);
+    return { plan: note.plan, ran: true };
+  }
+  // No plan came back. Either the analysis was switched off, the agent was
+  // unreachable, or the request failed — each of which the note names, and none
+  // of which may be reported as "the analysis found nothing".
+  return {
+    ran: false,
+    ...(note.warnings.length
+      ? { error: answerFailure('ANALYSIS_FAILED', note.warnings.join(' ')) }
+      : {}),
+  };
 }
 
 /**
@@ -1446,12 +1503,15 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
           : { error: parsed.data.error };
       },
       plan: async (scanId) => {
-        const built = (await buildPlan(scanId)) as {
+        // Deterministic only. The analysis is the separate stage below, so the
+        // profile's answers reach the page before any model call is made.
+        const built = (await buildPlan(scanId, { analyze: false })) as {
           plan?: DeterministicFillPlan;
           error?: AgentError;
         };
         return built.plan ? { plan: built.plan } : { error: built.error };
       },
+      analyze: (scanId) => analyzePlan(scanId),
       fillAccountForm: async (scan) => {
         const [settings, bundle, profileResult] = await Promise.all([
           loadSettings(),

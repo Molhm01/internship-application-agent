@@ -70,8 +70,28 @@ export interface AutofillDependencies {
   loadSettings(): Promise<AutofillSettings>;
   /** Runs the existing scanner against the live page. */
   scan(): Promise<{ scan?: ApplicationScanResult; error?: AgentError }>;
-  /** Runs the existing deterministic planner over the latest scan. */
+  /**
+   * Runs the deterministic planner over the latest scan.
+   *
+   * Deterministic only. The batched analysis used to live inside this call,
+   * which meant nothing at all was written until the model answered — a page
+   * whose profile fields could fill in under a second showed an untouched form
+   * for twenty-plus seconds. It is `analyze` below now, and it runs after these
+   * answers are already on the page.
+   */
   plan(scanId: string): Promise<{ plan?: DeterministicFillPlan; error?: AgentError }>;
+  /**
+   * One batched analysis of whatever the deterministic pass could not settle,
+   * returning the plan it produced. Optional: a run with no local model, or a
+   * page the profile fully answered, never calls it.
+   *
+   * `ran` distinguishes "the analysis happened and had nothing to add" from
+   * "the analysis never happened" — two states that leave a field looking
+   * identical and need completely different responses from the user.
+   */
+  analyze?(
+    scanId: string,
+  ): Promise<{ plan?: DeterministicFillPlan; ran: boolean; error?: AgentError }>;
   /** Generates written answers for eligible fields. Optional. */
   generate?(plan: DeterministicFillPlan): Promise<{ error?: AgentError }>;
   /**
@@ -176,7 +196,7 @@ function countSource(results: readonly AutofillFieldResult[], source: string): n
  * unanswerable without attaching a debugger to the service worker.
  */
 export interface StageTiming {
-  stage: 'scan' | 'plan' | 'execute';
+  stage: 'scan' | 'plan' | 'execute' | 'analyze' | 'execute_ai';
   pass: number;
   durationMs: number;
   /** Fields scanned, actions planned, or actions executed, per stage. */
@@ -415,12 +435,17 @@ export async function runApplicationAutofill(
       break;
     }
 
+    emit('normalizing', 'Reading the questions');
     lastFields = scan.fields;
     lastScan = scan;
     // A control still offering nothing but prompts on a pass after the first is
     // one this run came back for because another field produced its choices.
     if (pass > 1) {
-      dependentRescans += scan.fields.filter((field) => isDependentControl(field)).length;
+      const dependent = scan.fields.filter((field) => isDependentControl(field)).length;
+      if (dependent > 0) {
+        dependentRescans += dependent;
+        emit('rescanning_dependencies', 'Reading choices the page just produced');
+      }
     }
     const fieldsById = new Map<string, DetectedField>(
       scan.fields.map((field) => [field.id, field]),
@@ -434,6 +459,154 @@ export async function runApplicationAutofill(
       if (!account.filled && account.reason) warnings.push(account.reason);
     }
 
+    /**
+     * Approves what this run has not settled, executes it, and records what
+     * really happened to each field.
+     *
+     * Extracted so it can run twice per pass — once for the deterministic plan
+     * and once for whatever the analysis added. That split is the point: the
+     * deterministic answers used to wait behind a model call inside `plan()`,
+     * so a page whose profile fields could have filled in under a second showed
+     * nothing at all for the twenty-plus seconds the analysis took. Now they are
+     * written, verified, and visible before the analysis is even requested, and
+     * an analysis that fails or times out leaves every one of them in place.
+     *
+     * Returns how many actions were attempted, which is what the convergence
+     * check below reads.
+     */
+    const applyPlan = async (
+      plan: DeterministicFillPlan,
+      stage: 'deterministic' | 'ai',
+    ): Promise<{ attempted: number; error?: AgentError }> => {
+      const decisions = new Map<string, ApprovalDecision>();
+      const approvals = new Map<string, boolean>();
+      for (const action of plan.actions) {
+        const decision = decideApproval(action, settings, fieldsById.get(action.fieldId));
+        decisions.set(action.id, decision);
+        approvals.set(action.id, decision.approved);
+      }
+
+      // Only questions this run has not already settled.
+      //
+      // This used to read "approved and not yet verified", which never
+      // converges: a field that is approved, written, and then fails
+      // verification is not verified, forever. Every pass re-approved and
+      // re-executed the identical failing set, learned nothing, and burned all
+      // five passes. The ledger answers "have I tried this already, and has
+      // anything about it changed since?" using an identity that survives a
+      // rerender, so a question is retried only when it is genuinely different.
+      const newlyApproved = [...approvals.entries()].filter(([actionId, approved]) => {
+        if (!approved) return false;
+        const action = plan.actions.find((candidate) => candidate.id === actionId);
+        const field = action ? fieldsById.get(action.fieldId) : undefined;
+        if (!field) return false;
+        return ledger.shouldAttempt(field);
+      });
+
+      let run: FillRunReport | undefined;
+      if (newlyApproved.length > 0) {
+        const approved = await dependencies.approve(new Map(newlyApproved));
+        if (approved.error) return { attempted: 0, error: approved.error };
+        if (dependencies.isCancelled()) {
+          return { attempted: 0, error: agentError('AUTOFILL_CANCELLED', 'Cancelled.') };
+        }
+        emit(
+          stage === 'deterministic' ? 'filling' : 'filling_ai',
+          stage === 'deterministic' ? 'Filling saved answers' : 'Filling analyzed answers',
+        );
+        const executed = await timed(
+          stage === 'deterministic' ? 'execute' : 'execute_ai',
+          pass,
+          timings,
+          () => dependencies.execute(),
+          (value) => (value.report ? value.report.results.length : 0),
+        );
+        if (executed.error) {
+          // One failed stage does not stop the rest. Whatever filled stays
+          // filled, and the fields it could not reach are reported as such.
+          warnings.push(`Some fields could not be filled: ${executed.error.message}`);
+        }
+        run = executed.report;
+        emit(
+          stage === 'deterministic' ? 'verifying' : 'verifying_ai',
+          stage === 'deterministic' ? 'Verifying saved answers' : 'Verifying analyzed answers',
+        );
+      }
+
+      for (const action of plan.actions) {
+        const field = fieldsById.get(action.fieldId);
+        const decision: ApprovalDecision = decisions.get(action.id) ?? {
+          approved: false,
+          reason: 'No decision was recorded for this action.',
+        };
+        const outcome = run?.results.find((result) => result.actionId === action.id);
+        if (outcome) executorAttempted.add(action.fieldId);
+        const executed = outcome
+          ? { verified: outcome.status === 'verified', failed: outcome.status === 'failed' }
+          : undefined;
+        const previous = resultsByField.get(action.fieldId);
+        // Never downgrade a field that already verified. This is what protects
+        // the deterministic results from being overwritten by the AI stage's
+        // view of a field it had nothing to say about.
+        if (previous?.verification === 'verified' && !executed) continue;
+        // The planner skips an optional question whose correct answer is
+        // silence. Nothing was attempted, and nothing should have been.
+        const optionalLeftBlank =
+          action.action === 'skip' && field !== undefined && !field.required && !executed;
+
+        resultsByField.set(
+          action.fieldId,
+          autofillFieldResultSchema.parse({
+            fieldId: action.fieldId,
+            question: action.question,
+            ...(field?.canonicalKey ? { canonicalQuestion: field.canonicalKey } : {}),
+            action: action.action,
+            source: action.source,
+            confidence: action.confidence,
+            sensitive: action.sensitive,
+            ...(outcome?.actualValue !== undefined
+              ? { actualValue: String(outcome.actualValue).slice(0, 2000) }
+              : {}),
+            verification: executed
+              ? executed.verified
+                ? 'verified'
+                : 'failed'
+              : decision.approved
+                ? 'unverified'
+                : optionalLeftBlank
+                  ? 'optional_left_blank'
+                  : 'not_attempted',
+            // An optional field the planner deliberately left empty is settled,
+            // not outstanding. Giving it a review reason is what put "Middle
+            // Name" and "Address 2" on a list of things needing the user.
+            ...(!optionalLeftBlank && reviewReasonFor(action, decision, executed)
+              ? { reviewReason: reviewReasonFor(action, decision, executed) }
+              : {}),
+            reviewed: false,
+            attemptedAction: action.action,
+            ...(outcome?.durationMs !== undefined ? { durationMs: outcome.durationMs } : {}),
+            ...(outcome?.error?.code ? { failureCode: outcome.error.code } : {}),
+            // The executor's own words when it failed, the policy's when it
+            // declined to act, and the planner's otherwise.
+            reason:
+              outcome?.error?.message ?? (decision.approved ? action.reason : decision.reason),
+          }),
+        );
+        if (field) {
+          selectorsByField.set(action.fieldId, field.selector);
+          // Recorded whatever happened. An attempt that failed verification is
+          // still an attempt, and forgetting that is what made the loop spin.
+          if (executed || decision.approved) {
+            ledger.record(field, executed?.verified ? 'verified' : 'unverified');
+          } else {
+            ledger.observe(field);
+          }
+        }
+      }
+      return { attempted: newlyApproved.length };
+    };
+
+    // ---- Deterministic: everything the saved profile can answer, first. ----
     emit('discovering_options', 'Inspecting answer choices');
     emit('resolving', 'Matching profile information');
     const planned = await timed(
@@ -450,12 +623,45 @@ export async function runApplicationAutofill(
     }
     let plan = planned.plan;
     lastPlan = plan;
-    // The batched analysis lives inside `plan()`. A pass in which no action
-    // still carries a pending marker is one where it either ran or had nothing
-    // left to do — either way the markers below are genuine dead ends rather
-    // than a stage that never happened.
-    if (!plan.actions.some((action) => /waiting on the page analysis/i.test(action.reason))) {
-      analysisRan = true;
+
+    emit('planning', 'Preparing answers');
+    const deterministic = await applyPlan(plan, 'deterministic');
+    if (deterministic.error) {
+      terminal = deterministic.error;
+      break;
+    }
+    let attemptedCount = deterministic.attempted;
+
+    // ---- Analysis: one batched request, for what is genuinely left. ----
+    //
+    // After the writes above, never before them. An analysis that fails, times
+    // out, or has nothing to offer now costs the user nothing they had already
+    // been given.
+    if (dependencies.analyze) {
+      emit('analyzing', 'Analyzing the remaining questions');
+      const analyzed = await timed(
+        'analyze',
+        pass,
+        timings,
+        () => dependencies.analyze!(scan.id),
+        (value) => (value.plan ? value.plan.actions.length : 0),
+      );
+      if (analyzed.error) {
+        warnings.push(
+          `Page analysis did not run: ${analyzed.error.message} Everything your profile could answer was still filled.`,
+        );
+      }
+      if (analyzed.ran) analysisRan = true;
+      if (analyzed.plan) {
+        plan = analyzed.plan;
+        lastPlan = plan;
+        const aiStage = await applyPlan(plan, 'ai');
+        if (aiStage.error) {
+          terminal = aiStage.error;
+          break;
+        }
+        attemptedCount += aiStage.attempted;
+      }
     }
 
     if (dependencies.generate && settings.autoFillValidatedAiAnswers) {
@@ -467,127 +673,15 @@ export async function runApplicationAutofill(
         warnings.push(`Written answers could not be generated: ${generated.error.message}`);
       } else {
         const refreshed = await dependencies.plan(scan.id);
-        if (refreshed.plan) plan = refreshed.plan;
-      }
-    }
-
-    emit('planning', 'Preparing answers');
-    const decisions = new Map<string, ApprovalDecision>();
-    const approvals = new Map<string, boolean>();
-    for (const action of plan.actions) {
-      const decision = decideApproval(action, settings, fieldsById.get(action.fieldId));
-      decisions.set(action.id, decision);
-      approvals.set(action.id, decision.approved);
-    }
-
-    // Only questions this run has not already settled.
-    //
-    // This used to read "approved and not yet verified", which never converges:
-    // a field that is approved, written, and then fails verification is not
-    // verified, forever. Every pass re-approved and re-executed the identical
-    // failing set, learned nothing, and burned all five passes — the whole of
-    // the MAX_ITERATIONS_REACHED report. The ledger answers "have I tried this
-    // already, and has anything about it changed since?" using an identity that
-    // survives a rerender, so a question is retried only when it is genuinely
-    // different.
-    const newlyApproved = [...approvals.entries()].filter(([actionId, approved]) => {
-      if (!approved) return false;
-      const action = plan.actions.find((candidate) => candidate.id === actionId);
-      const field = action ? fieldsById.get(action.fieldId) : undefined;
-      if (!field) return false;
-      return ledger.shouldAttempt(field);
-    });
-
-    let run: FillRunReport | undefined;
-    if (newlyApproved.length > 0) {
-      const approved = await dependencies.approve(new Map(newlyApproved));
-      if (approved.error) {
-        terminal = approved.error;
-        break;
-      }
-      if (dependencies.isCancelled()) {
-        terminal = agentError('AUTOFILL_CANCELLED', 'Cancelled.');
-        break;
-      }
-      emit('filling', 'Filling fields');
-      const executed = await timed(
-        'execute',
-        pass,
-        timings,
-        () => dependencies.execute(),
-        (value) => (value.report ? value.report.results.length : 0),
-      );
-      if (executed.error) {
-        warnings.push(`Some fields could not be filled: ${executed.error.message}`);
-      }
-      run = executed.report;
-      emit('verifying', 'Verifying answers');
-    }
-
-    for (const action of plan.actions) {
-      const field = fieldsById.get(action.fieldId);
-      const decision: ApprovalDecision = decisions.get(action.id) ?? {
-        approved: false,
-        reason: 'No decision was recorded for this action.',
-      };
-      const outcome = run?.results.find((result) => result.actionId === action.id);
-      if (outcome) executorAttempted.add(action.fieldId);
-      const executed = outcome
-        ? { verified: outcome.status === 'verified', failed: outcome.status === 'failed' }
-        : undefined;
-      const previous = resultsByField.get(action.fieldId);
-      // Never downgrade a field that already verified in an earlier iteration.
-      if (previous?.verification === 'verified' && !executed) continue;
-      // The planner skips an optional question whose correct answer is silence.
-      // Nothing was attempted, and nothing should have been.
-      const optionalLeftBlank =
-        action.action === 'skip' && field !== undefined && !field.required && !executed;
-
-      resultsByField.set(
-        action.fieldId,
-        autofillFieldResultSchema.parse({
-          fieldId: action.fieldId,
-          question: action.question,
-          ...(field?.canonicalKey ? { canonicalQuestion: field.canonicalKey } : {}),
-          action: action.action,
-          source: action.source,
-          confidence: action.confidence,
-          sensitive: action.sensitive,
-          ...(outcome?.actualValue !== undefined
-            ? { actualValue: String(outcome.actualValue).slice(0, 2000) }
-            : {}),
-          verification: executed
-            ? executed.verified
-              ? 'verified'
-              : 'failed'
-            : decision.approved
-              ? 'unverified'
-              : optionalLeftBlank
-                ? 'optional_left_blank'
-                : 'not_attempted',
-          // An optional field the planner deliberately left empty is settled,
-          // not outstanding. Giving it a review reason is what put "Middle
-          // Name" and "Address 2" on a list of things needing the user.
-          ...(!optionalLeftBlank && reviewReasonFor(action, decision, executed)
-            ? { reviewReason: reviewReasonFor(action, decision, executed) }
-            : {}),
-          reviewed: false,
-          attemptedAction: action.action,
-          ...(outcome?.durationMs !== undefined ? { durationMs: outcome.durationMs } : {}),
-          ...(outcome?.error?.code ? { failureCode: outcome.error.code } : {}),
-          // The executor's own words when it failed, the policy's when it
-          // declined to act, and the planner's otherwise.
-          reason: outcome?.error?.message ?? (decision.approved ? action.reason : decision.reason),
-        }),
-      );
-      if (field) {
-        selectorsByField.set(action.fieldId, field.selector);
-        // Recorded whatever happened. An attempt that failed verification is
-        // still an attempt, and forgetting that is what made the loop spin.
-        if (executed || decision.approved) {
-          ledger.record(field, executed?.verified ? 'verified' : 'unverified');
-        } else {
-          ledger.observe(field);
+        if (refreshed.plan) {
+          plan = refreshed.plan;
+          lastPlan = plan;
+          const generatedStage = await applyPlan(plan, 'ai');
+          if (generatedStage.error) {
+            terminal = generatedStage.error;
+            break;
+          }
+          attemptedCount += generatedStage.attempted;
         }
       }
     }
@@ -597,8 +691,7 @@ export async function runApplicationAutofill(
     // loop is actually waiting for, and the one the old check never expressed.
     const revealed = ledger.unseen(scan.fields);
     for (const field of revealed) ledger.observe(field);
-    const attempted = newlyApproved.length > 0;
-    if (!attempted && revealed.length === 0) break;
+    if (attemptedCount === 0 && revealed.length === 0) break;
 
     await dependencies.waitForStability();
     if (dependencies.isCancelled()) {

@@ -74,11 +74,33 @@ export const autofillPhaseSchema = z.enum([
   'scanning',
   'discovering_options',
   'resolving',
+  /**
+   * The one batched analysis of what the profile could not answer.
+   *
+   * Distinct from `generating`, which drafts written answers for individual
+   * questions. Naming this separately is what lets the popup say "analyzing the
+   * remaining questions" instead of showing "Matching profile information" for
+   * the twenty seconds a model call actually takes.
+   */
+  'analyzing',
   'generating',
   'planning',
+  'normalizing',
   'filling',
   'verifying',
+  /**
+   * Writing and confirming what the analysis produced.
+   *
+   * Kept apart from `filling` and `verifying` so the popup — and the durable
+   * run state behind it — can say which half of the run is in progress. The two
+   * halves have different failure modes and different remedies: the first stage
+   * failing means the profile or the page is wrong, the second means the local
+   * model is.
+   */
+  'filling_ai',
+  'verifying_ai',
   'rescanning',
+  'rescanning_dependencies',
   'completed',
   'completed_with_review',
   'failed',
@@ -93,11 +115,16 @@ export const AUTOFILL_PHASE_LABELS: Record<AutofillPhase, string> = {
   scanning: 'Scanning application',
   discovering_options: 'Inspecting answer choices',
   resolving: 'Matching profile information',
+  analyzing: 'Analyzing the remaining questions',
   generating: 'Generating written answers',
   planning: 'Preparing answers',
-  filling: 'Filling fields',
-  verifying: 'Verifying answers',
+  normalizing: 'Reading the questions',
+  filling: 'Filling saved answers',
+  verifying: 'Verifying saved answers',
+  filling_ai: 'Filling analyzed answers',
+  verifying_ai: 'Verifying analyzed answers',
   rescanning: 'Rescanning dynamic fields',
+  rescanning_dependencies: 'Reading choices the page just produced',
   completed: 'Autofill complete',
   completed_with_review: 'Autofill complete — some fields need review',
   failed: 'Autofill failed',
