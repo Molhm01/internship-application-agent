@@ -6,7 +6,12 @@ import {
   type ScanProgress,
   type ScanStatistics,
 } from '@internship-agent/shared';
-import { collectNavigationControls, isSupportedField } from './domScanner.js';
+import {
+  censusForPage,
+  collectNavigationControls,
+  isSupportedField,
+  type ScanCensus,
+} from './domScanner.js';
 import { selectAdapter, type BrowserScanContext } from './adapters.js';
 
 export interface ScanApplicationOptions {
@@ -25,6 +30,7 @@ function pageId(url: string): string {
 function statistics(
   fields: ApplicationScanResult['fields'],
   navigationActions: number,
+  census: ScanCensus,
 ): ScanStatistics {
   const bySection = Object.fromEntries(FIELD_SECTIONS.map((section) => [section, 0])) as Record<
     (typeof FIELD_SECTIONS)[number],
@@ -48,6 +54,7 @@ function statistics(
     file: count('file'),
     credentialFields: count('password'),
     navigationActions,
+    ...census,
     bySection,
   };
 }
@@ -135,7 +142,7 @@ export async function scanApplication({
     fields,
     navigation,
     warnings: uniqueWarnings,
-    statistics: statistics(fields, navigation.actions.length),
+    statistics: statistics(fields, navigation.actions.length, censusForPage(context.pageId)),
     durationMs: Math.round(performance.now() - started),
     status: uniqueWarnings.length ? 'completed_with_warnings' : 'completed',
     readOnly: true,

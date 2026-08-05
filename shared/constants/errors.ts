@@ -94,6 +94,16 @@ export const ERROR_CODES = [
    * `sendMessage` with `undefined` when no listener handles a message type.
    */
   'EXTENSION_RELOAD_REQUIRED',
+  /**
+   * The popup, the worker, and the content script are not from the same build.
+   *
+   * Distinct from `EXTENSION_RELOAD_REQUIRED`, which means a component did not
+   * answer at all. This one means every component answered and they disagree —
+   * the failure that produced a run against a bundle two commits behind its own
+   * source, with a green test suite and no way to see it from inside the
+   * browser. A mixed-version run is refused rather than attempted.
+   */
+  'BUILD_MISMATCH',
   'ACTIVE_TAB_UNAVAILABLE',
   'CONTENT_SCRIPT_UNAVAILABLE',
   'UNSUPPORTED_PAGE',
@@ -253,6 +263,8 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
   REVIEW_REQUIRED: 'This answer needs your approval before it can be filled.',
   EXTENSION_RELOAD_REQUIRED:
     'Open chrome://extensions, press Reload on Internship Application Agent, then reopen this page. The background worker is out of date.',
+  BUILD_MISMATCH:
+    'Open chrome://extensions, press Reload on Internship Application Agent, then reload this page so every part of the extension comes from the same build.',
   ACTIVE_TAB_UNAVAILABLE: 'Open an HTTP or HTTPS application page, then try the scan again.',
   CONTENT_SCRIPT_UNAVAILABLE: RECONNECT_MESSAGE,
   UNSUPPORTED_PAGE: 'Open a normal HTTP or HTTPS job application page and retry.',

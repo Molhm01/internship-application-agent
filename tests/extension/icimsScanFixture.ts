@@ -3,6 +3,7 @@ import {
   type ApplicationScanResult,
   type DetectedField,
 } from '@internship-agent/shared';
+import { censusForPage } from '../../extension/src/scanner/domScanner.js';
 
 /**
  * Wraps scanned iCIMS fields in a valid `ApplicationScanResult`.
@@ -46,6 +47,9 @@ export function icimsScan(fields: readonly DetectedField[]): ApplicationScanResu
       file: count('file'),
       credentialFields: count('password'),
       navigationActions: 0,
+      // Read back from the scanner rather than invented, so a test asserting on
+      // what the scan discarded is asserting on what it really discarded.
+      ...censusForPage('page-icims'),
     },
     durationMs: 4,
     status: 'completed',

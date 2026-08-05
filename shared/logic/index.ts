@@ -29,3 +29,4 @@ export * from './pendingResolution.js';
 export * from './actionContract.js';
 export * from './degreeLevel.js';
 export * from './discoverySource.js';
+export * from './buildProvenance.js';

@@ -5,9 +5,12 @@ import type {
   DeterministicFillPlan,
   FillRunReport,
   HealthResponse,
+  RunTrace,
 } from '@internship-agent/shared';
+import { describeRunTrace } from '@internship-agent/shared';
 import { sendMessage } from '../../messaging/messages.js';
 import { loadSettings } from '../../storage/settings.js';
+import { BUILD_ID, BUILD_INFO } from '../../generated/buildInfo.js';
 
 interface Diagnostics {
   extensionVersion: string;
@@ -30,6 +33,41 @@ export function DiagnosticsSection(): JSX.Element {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [traces, setTraces] = useState<RunTrace[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    void sendMessage({ type: 'GET_RUN_TRACES' }).then((result) => {
+      if (active) setTraces(result.traces);
+    });
+    return () => {
+      active = false;
+    };
+  }, [refresh]);
+
+  /**
+   * Writes the traces to a file the user chooses.
+   *
+   * A download rather than a copy-to-clipboard: a trace over a large form is
+   * several hundred lines, and the point of it is to be attachable to a bug
+   * report intact.
+   */
+  const exportTraces = (): void => {
+    const blob = new Blob([JSON.stringify(traces, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `autofill-run-traces-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.json`;
+    anchor.click();
+    // Revoked immediately: the click has already handed the blob to the
+    // download, and leaving the URL alive pins the data in memory.
+    URL.revokeObjectURL(url);
+  };
+
+  const clearTraces = async (): Promise<void> => {
+    await sendMessage({ type: 'CLEAR_RUN_TRACES' });
+    setTraces([]);
+  };
 
   useEffect(() => {
     let active = true;
@@ -140,14 +178,58 @@ export function DiagnosticsSection(): JSX.Element {
             <dd>{value(latestGenerationError?.code)}</dd>
           </div>
           <div>
-            <dt>Git build hash</dt>
-            <dd>Not embedded in this local build</dd>
+            <dt>Build</dt>
+            {/* It is embedded now, and it is the first thing to check when the
+                extension behaves like code that is not in the repository. */}
+            <dd>{BUILD_ID}</dd>
+          </div>
+          <div>
+            <dt>Built at</dt>
+            <dd>{new Date(BUILD_INFO.builtAt).toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt>Built from</dt>
+            <dd>{BUILD_INFO.sourceRoot}</dd>
           </div>
           <div>
             <dt>Latest migration</dt>
             <dd>{value(diagnostics.server?.database.schemaVersion)}</dd>
           </div>
         </dl>
+      )}
+      <h3>Autofill run traces</h3>
+      {/*
+        Counts and outcomes only — no field values, no passwords, no document
+        contents, no profile data, no model prompts. `runTraceSchema` is strict,
+        so nothing else can be in here even if a future caller tries.
+      */}
+      <p className="muted">
+        The last {traces.length === 1 ? 'run' : `${traces.length} runs`}, in counts only. No field
+        values, documents, or profile data are recorded.
+      </p>
+      <button type="button" onClick={exportTraces} disabled={traces.length === 0}>
+        Export run traces
+      </button>
+      <button type="button" onClick={() => void clearTraces()} disabled={traces.length === 0}>
+        Clear run traces
+      </button>
+      {traces.length === 0 ? (
+        <p className="muted">No autofill run has been recorded yet.</p>
+      ) : (
+        <ul className="diagnostics-traces">
+          {traces.map((trace) => (
+            <li key={trace.runId}>
+              <strong>{trace.origin}</strong> · {trace.normalizedQuestions} questions ·{' '}
+              {trace.deterministicVerified} verified · {trace.aiRequests} AI request
+              {trace.aiRequests === 1 ? '' : 's'} · {Math.round(trace.totalDurationMs / 100) / 10}s
+              <ul>
+                {describeRunTrace(trace).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { ATS_DISPLAY_NAMES, RECONNECT_MESSAGE } from '@internship-agent/shared';
-import { BUILD_INFO } from '../generated/buildInfo.js';
+import { BUILD_ID, BUILD_INFO } from '../generated/buildInfo.js';
+import { useBuildAgreement } from './useBuildAgreement.js';
 import { StatusRow, type StatusTone } from './StatusRow.js';
 import { usePopupState } from './usePopupState.js';
 import { useAutofillState } from './useAutofillState.js';
@@ -42,6 +43,11 @@ export function App(): JSX.Element {
   const { status, tab, loading, refresh, scanState, scan, progress, scanError, cancel } =
     usePopupState();
   const autofill = useAutofillState(tab.url);
+  // Asked before anything is offered. The worker performs the same comparison
+  // against the content script when a run is accepted; between them the three
+  // components are covered, and neither can reach a different verdict because
+  // both call `compareBuilds`.
+  const buildAgreement = useBuildAgreement();
   // Development detail goes to the console only, and carries no field values —
   // a scan holds whatever the user typed, which can be a password.
   useEffect(() => {
@@ -281,7 +287,17 @@ export function App(): JSX.Element {
           {RECOVERABLE_SCAN_MESSAGE}
         </section>
       ) : null}
-      {disconnected ? (
+      {/*
+        Nothing below this is offered while the bundles disagree. A
+        mixed-version run does not fail honestly — it fails somewhere downstream
+        with a message about a value, which is how a browser came to run a build
+        two commits behind a green test suite.
+      */}
+      {buildAgreement && !buildAgreement.agreed ? (
+        <section aria-label="Application" className="panel result result--bad" role="alert">
+          <p>{buildAgreement.message}</p>
+        </section>
+      ) : disconnected ? (
         <section aria-label="Application" className="panel">
           <p role="alert">{RECONNECT_MESSAGE}</p>
         </section>
@@ -329,7 +345,7 @@ export function App(): JSX.Element {
           the scanner that feeds it.
         */}
         <p className="popup__build" title={BUILD_INFO.sourceRoot}>
-          Build {BUILD_INFO.commit} · {new Date(BUILD_INFO.builtAt).toLocaleString()}
+          Build {BUILD_ID} · {new Date(BUILD_INFO.builtAt).toLocaleString()}
         </p>
         <p className="popup__build popup__build--path">{BUILD_INFO.sourceRoot}</p>
       </footer>

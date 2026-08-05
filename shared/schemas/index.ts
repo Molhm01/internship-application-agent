@@ -20,3 +20,4 @@ export * from './autofill.js';
 export * from './applicationBundle.js';
 export * from './formAnalysis.js';
 export * from './employerAccounts.js';
+export * from './runTrace.js';

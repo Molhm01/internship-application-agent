@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,9 +30,43 @@ function git(...args) {
   }
 }
 
+/**
+ * The schema version, read from the one file that declares it.
+ *
+ * Parsed rather than imported because this script runs before `shared/` is
+ * compiled — and duplicating the number here is exactly the drift the constant
+ * exists to prevent, so a missing match is a hard failure rather than a default.
+ */
+function schemaVersion() {
+  const source = readFileSync(join(ROOT, 'shared', 'constants', 'runtime.ts'), 'utf8');
+  const found = /RUNTIME_SCHEMA_VERSION\s*=\s*(\d+)/.exec(source);
+  if (!found) {
+    throw new Error('shared/constants/runtime.ts no longer declares RUNTIME_SCHEMA_VERSION.');
+  }
+  return Number(found[1]);
+}
+
+const builtAt = new Date().toISOString();
+const commit = git('rev-parse', '--short', 'HEAD');
+const schema = schemaVersion();
+/** True when the build was made from a tree with uncommitted changes. */
+const dirty = git('status', '--porcelain') !== '';
+
 const info = {
-  builtAt: new Date().toISOString(),
-  commit: git('rev-parse', '--short', 'HEAD'),
+  /**
+   * The single string every component announces itself with.
+   *
+   * Commit, schema generation, and build time, in that order — so two bundles
+   * can be compared by equality alone, and an unequal pair says *why* it is
+   * unequal without anything having to interpret it. The `+dirty` marker exists
+   * so a build made from a modified tree is never mistaken for the commit it
+   * claims to be.
+   */
+  buildId: `${commit}${dirty ? '+dirty' : ''}.s${schema}.${builtAt.replace(/[-:.TZ]/g, '').slice(0, 14)}`,
+  builtAt,
+  commit,
+  schemaVersion: schema,
+  dirty,
   branch: git('rev-parse', '--abbrev-ref', 'HEAD'),
   /** The absolute folder this build was produced from. */
   sourceRoot: ROOT,
@@ -49,9 +83,21 @@ writeFileSync(
  */
 export const BUILD_INFO = ${JSON.stringify(info, null, 2)} as const;
 
+/**
+ * The one identity the popup, the worker, and the content script each announce.
+ *
+ * They are separate bundles loaded independently by Chrome, and nothing else in
+ * the extension can tell whether they came from the same build. When these three
+ * strings are not identical the run is refused rather than attempted.
+ */
+export const BUILD_ID = BUILD_INFO.buildId;
+
 export type BuildInfo = typeof BUILD_INFO;
 `,
   'utf8',
 );
 
-console.log(`Build stamp: ${info.commit} (${info.branch}) from ${info.sourceRoot}`);
+console.log(`Build stamp: ${info.buildId} (${info.branch}) from ${info.sourceRoot}`);
+if (info.dirty) {
+  console.log('  note: built from a tree with uncommitted changes (marked +dirty).');
+}

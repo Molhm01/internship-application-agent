@@ -31,6 +31,11 @@ export interface ContentScriptConnection {
   reason?: string;
   /** The ATS the page reported on the successful ping, when it named one. */
   ats?: ContentPingResult['ats'];
+  /**
+   * The build the page's content script came from. Absent when the script
+   * predates build stamping, which is itself a mismatch.
+   */
+  buildId?: string;
 }
 
 /** A page the browser will never let a content script run on. */
@@ -64,7 +69,14 @@ export async function ensureContentScript(
   url?: string,
 ): Promise<ContentScriptConnection> {
   const first = await ping(tabId);
-  if (first) return { reachable: true, injected: false, ...(first.ats ? { ats: first.ats } : {}) };
+  if (first) {
+    return {
+      reachable: true,
+      injected: false,
+      ...(first.ats ? { ats: first.ats } : {}),
+      ...(first.buildId ? { buildId: first.buildId } : {}),
+    };
+  }
 
   if (!isInjectablePage(url)) {
     return {
@@ -93,7 +105,12 @@ export async function ensureContentScript(
   const second = await ping(tabId);
   if (second) {
     console.info('[agent] content script reinjected', { tabId });
-    return { reachable: true, injected: true, ...(second.ats ? { ats: second.ats } : {}) };
+    return {
+      reachable: true,
+      injected: true,
+      ...(second.ats ? { ats: second.ats } : {}),
+      ...(second.buildId ? { buildId: second.buildId } : {}),
+    };
   }
   return { reachable: false, injected: true, reason: RECONNECT_MESSAGE };
 }

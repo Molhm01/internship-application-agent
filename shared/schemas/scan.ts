@@ -39,6 +39,18 @@ export const scanStatisticsSchema = z.object({
   credentialFields: z.number().int().nonnegative().default(0),
   /** Buttons and links that navigate. Never counted as questions. */
   navigationActions: z.number().int().nonnegative().default(0),
+  /**
+   * What the scan discarded on the way to `total`.
+   *
+   * Defaulted so a scan stored by an earlier build still parses. Without these,
+   * "27 fields detected" cannot be distinguished from "20 questions, 4 headings
+   * and 3 controls counted twice", which is exactly the ambiguity that made the
+   * duplicate "Highest Level of Education" and the "Addresses (1)* required."
+   * heading impossible to see from a report.
+   */
+  rawControls: z.number().int().nonnegative().default(0),
+  falseControlsRemoved: z.number().int().nonnegative().default(0),
+  duplicateControlsRemoved: z.number().int().nonnegative().default(0),
   bySection: z.record(fieldSectionSchema, z.number().int().nonnegative()).default({}),
 });
 

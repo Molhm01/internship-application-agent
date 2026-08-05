@@ -4,6 +4,7 @@ import {
   applicationAutofillReportSchema,
   QuestionLedger,
   auditRequiredFields,
+  contractViolation,
   autofillFieldResultSchema,
   type AgentError,
   type ApplicationAutofillReport,
@@ -17,11 +18,16 @@ import {
   type DetectedField,
   type FillRunReport,
   type ReviewReason,
+  type FieldTrace,
+  type RunTrace,
+  runTraceSchema,
+  traceOrigin,
 } from '@internship-agent/shared';
 import { finalizePendingResult, pendingResults } from '@internship-agent/shared';
 import { decideApproval, type ApprovalDecision } from './approvalPolicy.js';
 import { buildCoverage, describeCoverage } from './coverage.js';
 import { isFinalSubmitControl } from '../scanner/adapters.js';
+import { isDependentControl } from '../planner/deterministicPlanner.js';
 
 /**
  * One-button autofill.
@@ -50,6 +56,17 @@ const MFA =
   /\b(verification code|two[- ]factor|2fa|authenticator|one[- ]time (code|password)|multi[- ]factor)\b/i;
 
 export interface AutofillDependencies {
+  /**
+   * The build this run is executing as. Recorded in the trace so a report can
+   * never be attributed to the wrong bundle — the failure that made three
+   * rounds of repairs look ineffective.
+   */
+  buildId?: string;
+  /**
+   * Receives the finished run trace. Optional: the trace is a diagnostic, and a
+   * caller that does not want one must not have to fabricate a sink for it.
+   */
+  onTrace?(trace: RunTrace): void;
   loadSettings(): Promise<AutofillSettings>;
   /** Runs the existing scanner against the live page. */
   scan(): Promise<{ scan?: ApplicationScanResult; error?: AgentError }>;
@@ -227,6 +244,21 @@ export async function runApplicationAutofill(
    * same failing fields until it hits the pass limit.
    */
   const ledger = new QuestionLedger();
+  /**
+   * Fields the executor was actually invoked for.
+   *
+   * "The planner produced an action" and "the executor was asked to apply it"
+   * are different claims, and conflating them is how a run could report work it
+   * never attempted. This set records only the second.
+   */
+  const executorAttempted = new Set<string>();
+  /** When the first scan started and the last one finished, for the trace. */
+  let scanStartedAt = startedAt;
+  let scanCompletedAt = startedAt;
+  /** The scan that produced `lastFields`, for its census. */
+  let lastScan: ApplicationScanResult | null = null;
+  /** How many passes re-read a control whose choices another field produces. */
+  let dependentRescans = 0;
 
   const report = (
     status: ApplicationAutofillReport['status'],
@@ -351,6 +383,7 @@ export async function runApplicationAutofill(
       iterations === 1 ? 'scanning' : 'rescanning',
       iterations === 1 ? 'Scanning' : 'Rescanning',
     );
+    if (pass === 1) scanStartedAt = dependencies.now();
     const scanned = await timed(
       'scan',
       pass,
@@ -358,6 +391,7 @@ export async function runApplicationAutofill(
       () => dependencies.scan(),
       (value) => (value.scan ? value.scan.fields.length : 0),
     );
+    scanCompletedAt = dependencies.now();
     if (scanned.error || !scanned.scan) {
       terminal = scanned.error ?? agentError('SCAN_FAILED', 'The application could not be read.');
       break;
@@ -382,6 +416,12 @@ export async function runApplicationAutofill(
     }
 
     lastFields = scan.fields;
+    lastScan = scan;
+    // A control still offering nothing but prompts on a pass after the first is
+    // one this run came back for because another field produced its choices.
+    if (pass > 1) {
+      dependentRescans += scan.fields.filter((field) => isDependentControl(field)).length;
+    }
     const fieldsById = new Map<string, DetectedField>(
       scan.fields.map((field) => [field.id, field]),
     );
@@ -491,6 +531,7 @@ export async function runApplicationAutofill(
         reason: 'No decision was recorded for this action.',
       };
       const outcome = run?.results.find((result) => result.actionId === action.id);
+      if (outcome) executorAttempted.add(action.fieldId);
       const executed = outcome
         ? { verified: outcome.status === 'verified', failed: outcome.status === 'failed' }
         : undefined;
@@ -685,5 +726,183 @@ export async function runApplicationAutofill(
     status === 'completed' ? 'completed' : 'completed_with_review',
     'Autofill complete. Review highlighted fields and submit manually.',
   );
-  return report(status, terminal ?? undefined);
+  const finished = report(status, terminal ?? undefined);
+
+  // A run may not complete holding a stage marker.
+  //
+  // `report()` resolves every pending marker into a truthful outcome before it
+  // returns, so this can only fire if a future change adds a path around that.
+  // It is an assertion rather than a repair on purpose: silently fixing it here
+  // would hide the bug, and the last time a stage was rendered as a verdict it
+  // produced eighteen cards reading "is waiting on the page analysis" beside a
+  // summary claiming nothing needed confirmation.
+  const stillPending = pendingResults(finished.results);
+  if (stillPending.length > 0) {
+    throw new Error(
+      `Autofill completed with ${stillPending.length} field(s) still in a temporary state. ` +
+        'A stage marker is not a final status.',
+    );
+  }
+
+  if (dependencies.onTrace) {
+    dependencies.onTrace(
+      buildRunTrace({
+        runId,
+        buildId: dependencies.buildId ?? 'unstamped',
+        report: finished,
+        fields: lastFields,
+        plan: lastPlan,
+        scan: lastScan,
+        executorAttempted,
+        timings,
+        dependentRescans,
+        analysisRan,
+        scanStartedAt,
+        scanCompletedAt,
+      }),
+    );
+  }
+  return finished;
+}
+
+/**
+ * Assembles the run trace from what the orchestrator actually observed.
+ *
+ * Deliberately derived rather than accumulated: a counter incremented at each
+ * stage can drift from the results it claims to describe, and a trace that
+ * disagrees with its own report is worse than no trace. Everything here is read
+ * back off the finished report, the last scan, and the last plan.
+ *
+ * Counts and outcomes only. No values, no prompts, no personal information —
+ * and `runTraceSchema` is strict, so a future caller cannot smuggle any in.
+ */
+function buildRunTrace(input: {
+  runId: string;
+  buildId: string;
+  report: ApplicationAutofillReport;
+  fields: readonly DetectedField[];
+  plan: DeterministicFillPlan | null;
+  scan: ApplicationScanResult | null;
+  executorAttempted: ReadonlySet<string>;
+  timings: readonly StageTiming[];
+  dependentRescans: number;
+  analysisRan: boolean;
+  scanStartedAt: string;
+  scanCompletedAt: string;
+}): RunTrace {
+  const actionsByField = new Map(
+    (input.plan?.actions ?? []).map((action) => [action.fieldId, action]),
+  );
+  const resultsByField = new Map(input.report.results.map((result) => [result.fieldId, result]));
+
+  const fieldTraces: FieldTrace[] = input.fields.map((field): FieldTrace => {
+    const action = actionsByField.get(field.id);
+    const result = resultsByField.get(field.id);
+    // The contract's verdict, read off the action rather than re-derived: the
+    // planner records a repair as a warning naming the mismatch, and a refusal
+    // as `manual_review` carrying the same reason.
+    const violation = action ? contractViolation(field.fieldType, action.action) : null;
+    const repaired = action?.warnings.some((warning) => /must be (typed|chosen)/i.test(warning));
+    return {
+      fieldId: field.id,
+      ...(field.canonicalKey ? { intent: field.canonicalKey } : {}),
+      controlType: field.fieldType,
+      required: field.required,
+      plannerSource: traceSource(result?.source ?? action?.source),
+      ...(action ? { plannedAction: action.action } : {}),
+      contractResult: !action
+        ? 'not_applicable'
+        : violation
+          ? 'rejected'
+          : repaired
+            ? 'repaired'
+            : 'accepted',
+      executorAttempted: input.executorAttempted.has(field.id),
+      verification: result?.verification ?? 'not_attempted',
+      ...(result?.failureCode ? { errorCode: result.failureCode } : {}),
+    };
+  });
+
+  const finalStatusCounts: Record<string, number> = {};
+  for (const verdict of input.report.requiredFields) {
+    finalStatusCounts[verdict.outcome] = (finalStatusCounts[verdict.outcome] ?? 0) + 1;
+  }
+  for (const result of input.report.results) {
+    const key = `verification:${result.verification}`;
+    finalStatusCounts[key] = (finalStatusCounts[key] ?? 0) + 1;
+  }
+
+  const aiResults = input.report.results.filter((result) => result.source === 'ai_suggestion');
+  // What the deterministic pass could not settle is what the analysis was asked
+  // about. Read off the plan, so it is the real question set rather than an
+  // intention recorded before the plan was built.
+  const unresolved = (input.plan?.actions ?? []).filter(
+    (action) => action.action === 'missing_information' || action.action === 'manual_review',
+  ).length;
+
+  return runTraceSchema.parse({
+    buildId: input.buildId,
+    runId: input.runId,
+    origin: traceOrigin(input.report.url),
+    pageClassification: input.scan?.navigation?.kind ?? 'unknown',
+    atsClassification: input.report.ats,
+    scanStartedAt: input.scanStartedAt,
+    scanCompletedAt: input.scanCompletedAt,
+    rawControls: input.scan?.statistics.rawControls ?? 0,
+    falseControlsRemoved: input.scan?.statistics.falseControlsRemoved ?? 0,
+    duplicateControlsRemoved: input.scan?.statistics.duplicateControlsRemoved ?? 0,
+    normalizedQuestions: input.fields.length,
+    requiredQuestions: input.fields.filter((field) => field.required).length,
+    deterministicPlanned: fieldTraces.filter(
+      (field) => field.plannedAction !== undefined && field.plannerSource !== 'ai',
+    ).length,
+    deterministicAccepted: fieldTraces.filter(
+      (field) => field.plannerSource !== 'ai' && field.contractResult !== 'rejected',
+    ).length,
+    deterministicExecuted: fieldTraces.filter(
+      (field) => field.plannerSource !== 'ai' && field.executorAttempted,
+    ).length,
+    deterministicVerified: fieldTraces.filter(
+      (field) => field.plannerSource !== 'ai' && field.verification === 'verified',
+    ).length,
+    questionsSentToAi: input.analysisRan ? unresolved : 0,
+    // One batched request per stable page, and none at all when the
+    // deterministic pass settled everything. The memo inside `buildPlan` is
+    // what makes this one rather than one per pass.
+    aiRequests: input.analysisRan && unresolved > 0 ? 1 : 0,
+    aiActionsReturned: aiResults.length,
+    aiActionsAccepted: aiResults.filter((result) => result.verification !== 'not_attempted').length,
+    aiActionsExecuted: aiResults.filter((result) => input.executorAttempted.has(result.fieldId))
+      .length,
+    aiActionsVerified: aiResults.filter((result) => result.verification === 'verified').length,
+    dependentFieldsRescanned: input.dependentRescans,
+    requiredFieldsRemaining: input.report.requiredFields.filter(
+      (verdict) => verdict.outcome !== 'FILLED_VERIFIED',
+    ).length,
+    finalStatusCounts,
+    stages: input.timings.map((entry) => ({
+      stage: entry.stage,
+      pass: entry.pass,
+      durationMs: entry.durationMs,
+      count: entry.count,
+    })),
+    fields: fieldTraces,
+    totalDurationMs: input.report.totalDurationMs,
+  });
+}
+
+/** Collapses the many `source` values onto the trace's coarser vocabulary. */
+function traceSource(source: string | undefined): FieldTrace['plannerSource'] {
+  switch (source) {
+    case 'profile':
+      return 'deterministic';
+    case 'approved_answer':
+      return 'approved_answer';
+    case 'document':
+      return 'document';
+    case 'ai_suggestion':
+      return 'ai';
+    default:
+      return 'none';
+  }
 }

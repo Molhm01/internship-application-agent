@@ -15,6 +15,7 @@ import {
   type FillExecutionResult,
   activateNavigationMessageSchema,
 } from '@internship-agent/shared';
+import { BUILD_ID } from '../generated/buildInfo.js';
 import { activateNavigation } from './navigate.js';
 import type { ContentPingResult, ExtensionMessage } from '../messaging/messages.js';
 import { scanApplication } from '../scanner/scanApplication.js';
@@ -90,6 +91,9 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
     const result: ContentPingResult = {
       present: true,
       url: window.location.href,
+      // Announced on every ping, so the worker learns which build is actually
+      // executing in the page *before* it asks that build to scan or fill.
+      buildId: BUILD_ID,
       fieldsDetected: null,
       // Detected here, in the page, on every ping. This is the same detector
       // the scan uses; answering it separately is what lets the popup name the

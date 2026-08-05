@@ -19,6 +19,25 @@ import {
 export interface DomScanResult {
   fields: DetectedField[];
   warnings: string[];
+  /**
+   * What the scan discarded, and why, in counts only.
+   *
+   * "Twenty-seven fields detected" was never enough to diagnose anything: it
+   * could not distinguish a page with twenty-seven questions from one with
+   * twenty questions, four section headings, and three controls counted twice.
+   * The three numbers below are what separate those, and they are the first
+   * three lines of the run trace.
+   */
+  census: ScanCensus;
+}
+
+export interface ScanCensus {
+  /** Every element matching the control selector, before any filtering. */
+  rawControls: number;
+  /** Controls rejected as not being questions — extension UI, headings, navigation. */
+  falseControlsRemoved: number;
+  /** Distinct controls that collapsed onto a question already recorded. */
+  duplicateControlsRemoved: number;
 }
 
 /**
@@ -913,11 +932,17 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
    * questions apart when they shared a label, which the identity can.
    */
   const byIdentity = new Map<string, DetectedField>();
+  const census: ScanCensus = {
+    rawControls: 0,
+    falseControlsRemoved: 0,
+    duplicateControlsRemoved: 0,
+  };
 
   for (const root of roots) {
-    const candidates = Array.from(root.querySelectorAll<HTMLElement>(CONTROL_SELECTOR)).filter(
-      (element) => !shouldIgnore(element),
-    );
+    const matched = Array.from(root.querySelectorAll<HTMLElement>(CONTROL_SELECTOR));
+    const candidates = matched.filter((element) => !shouldIgnore(element));
+    census.rawControls += matched.length;
+    census.falseControlsRemoved += matched.length - candidates.length;
     const groups = new Map<string, HTMLElement[]>();
 
     for (const candidate of candidates) {
@@ -942,9 +967,15 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
 
     for (const elements of groups.values()) {
       const field = fieldFromElements(elements, pageId);
-      if (!field) continue;
+      // A group that produced no field was matched by the selector but is not a
+      // question — a heading, a container, a control with nothing answerable.
+      if (!field) {
+        census.falseControlsRemoved += elements.length;
+        continue;
+      }
       const key = questionIdentity(field);
       const existing = byIdentity.get(key);
+      if (existing) census.duplicateControlsRemoved += 1;
       // The richer detection wins. Keeping the first would discard the version
       // that read the page's real choices whenever the poorer one was found
       // earlier in document order.
@@ -960,7 +991,7 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
   if (fields.some((field) => field.sourceSignals.includes('unlabelled'))) {
     warnings.push('One or more controls have no accessible label.');
   }
-  return { fields, warnings };
+  return { fields, warnings, census };
 }
 
 async function waitForDomSettled(
@@ -1004,6 +1035,45 @@ async function waitForDomSettled(
   });
 }
 
+/**
+ * The census of the most recent scan of each page.
+ *
+ * Kept here rather than returned through `AtsAdapter.scan`, whose contract is
+ * `DetectedField[]` and is implemented by every vendor adapter. Widening that
+ * signature would make eight adapters carry a diagnostic they have no part in
+ * producing — they all reach these numbers through `scanDom`, which is the one
+ * place the filtering and de-duplication actually happen.
+ *
+ * Keyed by page id so a stale entry can never be read as the current page's,
+ * and bounded so a long-lived content script cannot grow it without limit.
+ */
+const CENSUS_BY_PAGE = new Map<string, ScanCensus>();
+const CENSUS_LIMIT = 8;
+
+function rememberCensus(pageId: string, census: ScanCensus): void {
+  CENSUS_BY_PAGE.delete(pageId);
+  CENSUS_BY_PAGE.set(pageId, census);
+  while (CENSUS_BY_PAGE.size > CENSUS_LIMIT) {
+    const oldest = CENSUS_BY_PAGE.keys().next().value;
+    if (oldest === undefined) break;
+    CENSUS_BY_PAGE.delete(oldest);
+  }
+}
+
+/**
+ * What the last scan of this page discarded, or zeroes if it has not been
+ * scanned. Zeroes are honest here: nothing was discarded because nothing ran.
+ */
+export function censusForPage(pageId: string): ScanCensus {
+  return (
+    CENSUS_BY_PAGE.get(pageId) ?? {
+      rawControls: 0,
+      falseControlsRemoved: 0,
+      duplicateControlsRemoved: 0,
+    }
+  );
+}
+
 export async function scanDom(
   document: Document,
   pageId: string,
@@ -1011,13 +1081,20 @@ export async function scanDom(
 ): Promise<DomScanResult> {
   const first = scanOnce(document, pageId);
   const changed = await waitForDomSettled(document, signal);
-  if (!changed) return first;
+  if (!changed) {
+    rememberCensus(pageId, first.census);
+    return first;
+  }
   const next = scanOnce(document, pageId);
+  rememberCensus(pageId, next.census);
   return {
     fields: next.fields,
     warnings: [
       ...new Set([...first.warnings, 'Dynamic fields changed during the scan.', ...next.warnings]),
     ],
+    // The second census, because it describes the fields being returned. The
+    // first one described a page that no longer exists.
+    census: next.census,
   };
 }
 

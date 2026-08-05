@@ -1,6 +1,9 @@
 import {
+  BUILD_MISMATCH_MESSAGE,
   DEFAULT_ERROR_GUIDANCE,
   RECONNECT_MESSAGE,
+  compareBuilds,
+  describeRunTrace,
   applicationScanResultSchema,
   scanApplicationResponseSchema,
   scanMessageSchema,
@@ -116,6 +119,8 @@ import {
   updateManualAnswer,
 } from '../answers/generatedActions.js';
 import { runApplicationAutofill } from '../autofill/orchestrator.js';
+import { BUILD_ID } from '../generated/buildInfo.js';
+import { clearRunTraces, loadRunTraces, saveRunTrace } from '../storage/runTraces.js';
 import {
   agentAvailability,
   availabilityMessage,
@@ -1305,7 +1310,49 @@ let activeAutofill: { runId: string; cancelled: boolean; controller: AbortContro
  * detached, reporting through durable run state that survives the service
  * worker being suspended underneath it.
  */
+/**
+ * Refuses a run whose components are not all from the same build.
+ *
+ * The check is here, at the one entry point that starts work, rather than
+ * scattered through the stages that would each fail differently. A mixed-version
+ * run is not a degraded run — the scan, the plan, and the fill each cross a
+ * bundle boundary, and a disagreement anywhere produces an error naming a value
+ * rather than the build. Returns the refusal, or null when everything agrees.
+ */
+async function buildMismatchRefusal(targetUrl?: string): Promise<AgentError | null> {
+  const tab = await activeApplicationTab(targetUrl).catch(() => null);
+  if (!tab?.id) return null; // Reported later, by the stage that needs the tab.
+  const connection = await ensureContentScript(tab.id, tab.url);
+  // An unreachable content script is a different problem with a different
+  // remedy, and the stages below already name it.
+  if (!connection.reachable) return null;
+
+  const agreement = compareBuilds([
+    { component: 'worker', buildId: BUILD_ID },
+    { component: 'content', buildId: connection.buildId },
+  ]);
+  if (agreement.agreed) return null;
+  console.warn('[agent] refusing a mixed-build run', {
+    worker: BUILD_ID,
+    content: connection.buildId ?? 'unstamped',
+  });
+  return {
+    code: 'BUILD_MISMATCH',
+    message: agreement.message ?? BUILD_MISMATCH_MESSAGE,
+    recoverable: true,
+    suggestedAction: DEFAULT_ERROR_GUIDANCE.BUILD_MISMATCH,
+    // Build ids only. No page content, no profile, nothing about the user.
+    debugContext: { worker: BUILD_ID, content: connection.buildId ?? 'unstamped' },
+  };
+}
+
 async function acceptAutofillRun(targetUrl?: string): Promise<unknown> {
+  // Before anything else: are the parts of this extension the same extension?
+  // Every symptom this repair began from was produced by a browser running a
+  // bundle two commits behind the source it was tested against.
+  const mismatch = await buildMismatchRefusal(targetUrl);
+  if (mismatch) return { error: mismatch };
+
   // One click, one run. Without this a second click minted a second id,
   // overwrote the stored run, and left the first orchestrator running
   // invisibly — two passes over the same page, two batched model calls, and a
@@ -1368,6 +1415,25 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
   beginAnalysisScope();
   try {
     const report = await runApplicationAutofill({
+      buildId: BUILD_ID,
+      onTrace: (trace) => {
+        // Stored and logged, never sent anywhere. The one line below is what
+        // turns "it filled two of twenty-seven" into a diagnosis without a
+        // debugger attached to a worker Chrome keeps suspending.
+        console.info('[agent] run trace', {
+          runId: trace.runId,
+          buildId: trace.buildId,
+          scanned:
+            `${trace.rawControls} raw → ${trace.normalizedQuestions} questions ` +
+            `(−${trace.falseControlsRemoved} not questions, −${trace.duplicateControlsRemoved} duplicates)`,
+          deterministic: `${trace.deterministicPlanned} planned / ${trace.deterministicExecuted} executed / ${trace.deterministicVerified} verified`,
+          ai: `${trace.aiRequests} request(s), ${trace.aiActionsReturned} answers, ${trace.aiActionsVerified} verified`,
+          remaining: trace.requiredFieldsRemaining,
+          totalMs: trace.totalDurationMs,
+          why: describeRunTrace(trace),
+        });
+        void saveRunTrace(trace).catch(() => undefined);
+      },
       loadSettings: async () => (await loadSettings()).autofill,
       scan: async () => {
         const response = await startScan(undefined, targetUrl);
@@ -1530,7 +1596,13 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       // Answered before anything else could fail. This is how the popup tells
       // "the worker is gone" from "the worker is busy", instead of blaming a
       // timeout on a stale install and telling the user to reload.
-      return Promise.resolve({ ok: true as const, at: Date.now() });
+      // The build id rides along, so the popup can compare its own without a
+      // second round trip and without a message that exists only to ask.
+      return Promise.resolve({ ok: true as const, at: Date.now(), buildId: BUILD_ID });
+    case 'GET_RUN_TRACES':
+      return loadRunTraces().then((traces) => ({ traces }));
+    case 'CLEAR_RUN_TRACES':
+      return clearRunTraces().then(() => ({ cleared: true as const }));
     case 'RUN_APPLICATION_AUTOFILL':
       return acceptAutofillRun(message.targetUrl);
     case 'GET_AUTOFILL_RUN':
