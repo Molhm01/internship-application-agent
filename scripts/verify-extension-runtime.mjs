@@ -97,6 +97,40 @@ function buildIdsIn(source) {
   return [...new Set(found)];
 }
 
+/**
+ * Every chunk an entry bundle can reach, closed transitively.
+ *
+ * Chunks import each other, so a single pass over the entry file finds only the
+ * first level — and a constant hoisted two levels deep would look absent. The
+ * loop runs until nothing new is found, which terminates because the chunk list
+ * is finite and names are only ever added.
+ */
+async function reachableChunks(entrySource, chunkDir, chunks) {
+  const reachable = new Set();
+  const add = (source) => {
+    let found = false;
+    // Deliberately loose, because Vite's hashes are base64url and can end in
+    // `-` or `_`. A name that is not really a chunk is rejected by the
+    // `chunks.includes` test below rather than by the pattern.
+    for (const match of source.matchAll(/([A-Za-z0-9_.-]+\.js)/g)) {
+      if (chunks.includes(match[1]) && !reachable.has(match[1])) {
+        reachable.add(match[1]);
+        found = true;
+      }
+    }
+    return found;
+  };
+  add(entrySource);
+  for (let growing = true; growing;) {
+    growing = false;
+    for (const name of [...reachable]) {
+      const source = await readFile(join(chunkDir, name), 'utf8').catch(() => '');
+      if (add(source)) growing = true;
+    }
+  }
+  return reachable;
+}
+
 async function main() {
   const stamp = await sourceStamp();
   const schema = await declaredSchemaVersion();
@@ -145,28 +179,50 @@ async function main() {
     }
   }
 
-  // 2. Every entry bundle carries the source's build id, and only that one.
+  // 2. Every entry resolves to the source's build id, and to only one.
+  //
+  // Resolved transitively rather than read off the entry file, because Vite
+  // hoists a constant shared by several entries into a common chunk. `popup.js`
+  // and `background.js` therefore reach `BUILD_ID` through `chunks/`, while
+  // `content.js` — built by a separate config into a self-contained bundle —
+  // carries it inline. What matters is the id each entry resolves to at
+  // runtime, and that is what this walks.
+  const chunkDir = join(DIST, 'chunks');
+  const chunks = await readdir(chunkDir).catch(() => []);
   const seen = new Map();
+  /** Every chunk reached from any entry, for the orphan check below. */
+  const reachableFromAnyEntry = new Set();
+
   for (const [component, file] of Object.entries(ENTRIES)) {
     const source = await readFile(join(DIST, file), 'utf8').catch(() => null);
     if (source === null) {
       fail(`extension/dist/${file} is missing. The ${component} would not load.`);
       continue;
     }
-    const ids = buildIdsIn(source);
-    if (ids.length === 0) {
-      fail(`${file} carries no build id. It predates build stamping and must be rebuilt.`);
-      continue;
+    const closure = await reachableChunks(source, chunkDir, chunks);
+    for (const name of closure) reachableFromAnyEntry.add(name);
+
+    const ids = new Set(buildIdsIn(source));
+    for (const name of closure) {
+      const chunk = await readFile(join(chunkDir, name), 'utf8').catch(() => '');
+      for (const id of buildIdsIn(chunk)) ids.add(id);
     }
-    if (ids.length > 1) {
-      fail(`${file} carries ${ids.length} different build ids (${ids.join(', ')}).`);
-      continue;
-    }
-    seen.set(component, ids[0]);
-    if (stamp && ids[0] !== stamp.buildId) {
+
+    if (ids.size === 0) {
       fail(
-        `${file} is stamped ${ids[0]} but the source is ${stamp.buildId}. This bundle is stale.`,
+        `${file} reaches no build id, in itself or in any chunk it imports. ` +
+          'It predates build stamping and must be rebuilt.',
       );
+      continue;
+    }
+    if (ids.size > 1) {
+      fail(`${file} reaches ${ids.size} different build ids (${[...ids].join(', ')}).`);
+      continue;
+    }
+    const [id] = ids;
+    seen.set(component, id);
+    if (stamp && id !== stamp.buildId) {
+      fail(`${file} resolves to ${id} but the source is ${stamp.buildId}. This bundle is stale.`);
     }
   }
 
@@ -176,8 +232,8 @@ async function main() {
     fail(
       `The entry bundles disagree: ${[...seen].map(([name, id]) => `${name}=${id}`).join(', ')}.`,
     );
-  } else if (distinct.length === 1) {
-    notes.push(`All three entry bundles are ${distinct[0]}.`);
+  } else if (distinct.length === 1 && seen.size === Object.keys(ENTRIES).length) {
+    notes.push(`All three entry bundles resolve to ${distinct[0]}.`);
   }
 
   // 4. No leftover bundle from an older build is sitting in the folder.
@@ -186,28 +242,7 @@ async function main() {
   // hashed name, and a folder that was never emptied keeps every chunk from
   // every previous build. One of them being loaded instead is precisely the
   // class of failure this repair began from.
-  const chunkDir = join(DIST, 'chunks');
-  const chunks = await readdir(chunkDir).catch(() => []);
-  const reachable = new Set();
-  for (const file of Object.values(ENTRIES)) {
-    const source = await readFile(join(DIST, file), 'utf8').catch(() => '');
-    for (const match of source.matchAll(/chunks\/([\w.-]+\.js)/g)) reachable.add(match[1]);
-  }
-  // Chunks import each other, so the set is closed transitively before anything
-  // is called unreachable.
-  for (let added = true; added;) {
-    added = false;
-    for (const name of [...reachable]) {
-      const source = await readFile(join(chunkDir, name), 'utf8').catch(() => '');
-      for (const match of source.matchAll(/["'./]{0,3}([\w.-]+-\w{8}\.js)/g)) {
-        if (chunks.includes(match[1]) && !reachable.has(match[1])) {
-          reachable.add(match[1]);
-          added = true;
-        }
-      }
-    }
-  }
-  const orphans = chunks.filter((name) => name.endsWith('.js') && !reachable.has(name));
+  const orphans = chunks.filter((name) => name.endsWith('.js') && !reachableFromAnyEntry.has(name));
   if (orphans.length > 0) {
     fail(
       `extension/dist/chunks holds ${orphans.length} bundle(s) no entry point reaches ` +
