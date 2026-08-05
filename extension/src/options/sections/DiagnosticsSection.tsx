@@ -5,10 +5,11 @@ import type {
   DeterministicFillPlan,
   FillRunReport,
   HealthResponse,
+  ProfileFieldStatus,
   RunTrace,
 } from '@internship-agent/shared';
 import { describeRunTrace } from '@internship-agent/shared';
-import { sendMessage } from '../../messaging/messages.js';
+import { sendMessage, type ExtensionResponse } from '../../messaging/messages.js';
 import { loadSettings } from '../../storage/settings.js';
 import { BUILD_ID, BUILD_INFO } from '../../generated/buildInfo.js';
 
@@ -29,11 +30,42 @@ function value(value: string | number | boolean | null | undefined): string {
   return String(value);
 }
 
+/** The order statuses are listed in: what changed first, what is absent last. */
+const SYNC_STATUS_ORDER: readonly ProfileFieldStatus[] = [
+  'imported',
+  'updated',
+  'invalid',
+  'unmapped',
+  'present',
+  'missing',
+];
+
 export function DiagnosticsSection(): JSX.Element {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [traces, setTraces] = useState<RunTrace[]>([]);
+  const [sync, setSync] = useState<ExtensionResponse<'SYNC_PROFILE'> | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  /**
+   * Runs the profile import and shows what it did, key by key.
+   *
+   * This is the answer to "the extension is asking me for things I already
+   * entered": it names which keys came across, which were already here, and
+   * which nobody holds — without ever showing what any of them contain.
+   */
+  const syncProfile = async (): Promise<void> => {
+    setSyncing(true);
+    try {
+      setSync(await sendMessage({ type: 'SYNC_PROFILE' }));
+    } catch (cause) {
+      setSync(null);
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -197,6 +229,50 @@ export function DiagnosticsSection(): JSX.Element {
           </div>
         </dl>
       )}
+      <h3>Profile synchronization</h3>
+      {/*
+        Key names and statuses only. There is no code path here that can render
+        a profile value or a document byte: the worker returns
+        `profileSyncEntrySchema`, whose only fields are a key and a status.
+      */}
+      <p className="muted">
+        Imports the profile you maintain on Internship Pilot into this
+        extension. Nothing you have already entered here is overwritten, and no
+        value is shown below — only which keys were found.
+      </p>
+      <button type="button" onClick={() => void syncProfile()} disabled={syncing}>
+        {syncing ? 'Syncing profile…' : 'Sync profile now'}
+      </button>
+      {sync === null ? null : sync.ok ? (
+        <>
+          <p className={sync.changed ? 'result result--good' : 'muted'}>
+            {sync.changed
+              ? `Imported from ${sync.sources.join(', ')}.`
+              : `Already up to date with ${sync.sources.join(', ')}.`}
+            {sync.migratedFrom === null
+              ? ''
+              : ` The stored profile was migrated from format v${sync.migratedFrom}.`}
+          </p>
+          <ul className="diagnostics-sync">
+            {[...sync.report]
+              .sort(
+                (left, right) =>
+                  SYNC_STATUS_ORDER.indexOf(left.status) - SYNC_STATUS_ORDER.indexOf(right.status),
+              )
+              .map((entry) => (
+                <li key={entry.key}>
+                  <code>{entry.key}</code>: {entry.status}
+                </li>
+              ))}
+          </ul>
+        </>
+      ) : (
+        <p className="result result--bad" role="alert">
+          {sync.error?.message ?? 'The profile could not be synchronized.'}
+          {sync.error?.suggestedAction ? ` ${sync.error.suggestedAction}` : ''}
+        </p>
+      )}
+
       <h3>Autofill run traces</h3>
       {/*
         Counts and outcomes only — no field values, no passwords, no document

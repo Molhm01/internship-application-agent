@@ -113,14 +113,24 @@ describe('options page never stays on "Loading profile…"', () => {
 
   it('recovers on retry once the worker starts answering', async () => {
     const chromeMock = installChromeMock();
-    chromeMock.runtime.sendMessage.mockResolvedValueOnce(undefined).mockResolvedValue({
-      error: {
-        code: 'PROFILE_MISSING',
-        message: 'No profile has been created yet.',
-        recoverable: true,
-        suggestedAction: 'Open the extension settings.',
-        debugContext: {},
-      },
+    // Keyed on the message type rather than on call order. The settings page
+    // asks for a profile sync before it reads the profile, and a test that
+    // counts calls would be measuring that ordering instead of the retry.
+    let profileReads = 0;
+    chromeMock.runtime.sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type !== 'PROFILE_GET') return Promise.resolve(undefined);
+      profileReads += 1;
+      // The first read is the unanswered one this page used to hang on.
+      if (profileReads === 1) return Promise.resolve(undefined);
+      return Promise.resolve({
+        error: {
+          code: 'PROFILE_MISSING',
+          message: 'No profile has been created yet.',
+          recoverable: true,
+          suggestedAction: 'Open the extension settings.',
+          debugContext: {},
+        },
+      });
     });
 
     render(<OptionsApp />);

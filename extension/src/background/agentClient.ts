@@ -12,7 +12,10 @@ import {
   aiGenerationTestRequestSchema,
   aiGenerationTestResponseSchema,
   profileCompletenessSchema,
+  profileImportRequestSchema,
   profileSchema,
+  profileSyncEntrySchema,
+  type ProfileImportRequest,
   savedDocumentSchema,
   generateAnswerRequestSchema,
   generateAnswerResponseSchema,
@@ -68,6 +71,14 @@ const profilePayloadSchema = z.object({
   profile: profileSchema,
   completeness: profileCompletenessSchema,
 });
+
+const profileImportPayloadSchema = profilePayloadSchema.extend({
+  report: z.array(profileSyncEntrySchema),
+  changed: z.boolean(),
+  migratedFrom: z.number().int().positive().nullable(),
+});
+
+export type ProfileImportPayload = z.infer<typeof profileImportPayloadSchema>;
 
 const idOnlySchema = z.object({ id: z.string().min(1) });
 
@@ -280,6 +291,26 @@ export function saveProfile(profile: ProfileUpdate): Promise<AgentResult<Profile
     path: '/profile',
     schema: profilePayloadSchema,
     body: profile,
+    timeoutMs: TIMEOUTS.ollamaProbeMs,
+  });
+}
+
+/**
+ * Merges profiles held elsewhere into the agent server's stored one.
+ *
+ * The whole point of the profile-sync repair: the settings page reads the agent
+ * server, Internship Pilot's profile arrives in a bundle, and until this call
+ * existed nothing carried the second into the first — so the settings page kept
+ * asking for experience and education the user had already entered.
+ */
+export function importProfile(
+  sources: ProfileImportRequest['sources'],
+): Promise<AgentResult<ProfileImportPayload>> {
+  return request({
+    method: 'POST',
+    path: '/profile/import',
+    schema: profileImportPayloadSchema,
+    body: profileImportRequestSchema.parse({ sources }),
     timeoutMs: TIMEOUTS.ollamaProbeMs,
   });
 }

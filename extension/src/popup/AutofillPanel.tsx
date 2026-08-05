@@ -6,6 +6,7 @@ import {
   type NavigationState,
   type PortalRouteIntent,
   type PortalRouteResponse,
+  type Profile,
 } from '@internship-agent/shared';
 import type { AutofillState } from './useAutofillState.js';
 import type { AutofillRunPhaseState } from '../storage/runState.js';
@@ -96,6 +97,26 @@ interface AutofillPanelProps {
  * and it never asks its way past a CAPTCHA or a verification code, which are
  * reported as needing the person rather than as a choice.
  */
+/**
+ * Which profile sections arrived, by name and count.
+ *
+ * Counts only. Nothing here can render an employer, a school, or a phone
+ * number — the point is to tell the user *that* their work history came across
+ * without repeating it back to them on an employer's page.
+ */
+export function describeProfileSections(profile: Profile): string {
+  const sections: Array<[string, number]> = [
+    ['education', profile.education.length],
+    ['experience', profile.experience.length],
+    ['projects', profile.projects.length],
+    ['skills', profile.skills.technical.length + profile.skills.programmingLanguages.length],
+  ];
+  const present = sections.filter(([, count]) => count > 0);
+  return present.length === 0
+    ? 'contact details only'
+    : present.map(([name, count]) => `${count} ${name}`).join(', ');
+}
+
 function RouteChoices({
   route,
   following,
@@ -292,8 +313,17 @@ export function AutofillPanel({
               {bundle.coverLetter ? '✓' : '—'} Tailored cover letter
               {bundle.coverLetter ? ` (${bundle.coverLetter.filename})` : ' unavailable'}
             </li>
+            {/*
+              Which sections came across, by name and count only — never a
+              value. "Profile synchronized" on its own was true of a bundle
+              carrying nothing but a name and an email, which is exactly the
+              state that made the extension look like it had lost the
+              experience and education the user had already entered.
+            */}
             <li>
-              {bundle.profile ? '✓ Profile synchronized' : '— Profile not included in this bundle'}
+              {bundle.profile
+                ? `✓ Profile synchronized (${describeProfileSections(bundle.profile)})`
+                : '— Profile not included in this bundle'}
             </li>
           </ul>
           {/*

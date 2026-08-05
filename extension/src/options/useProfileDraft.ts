@@ -7,7 +7,7 @@ import {
   type ProfileCompleteness,
   type ProfileUpdate,
 } from '@internship-agent/shared';
-import { sendMessage } from '../messaging/messages.js';
+import { sendMessage, type ExtensionResponse } from '../messaging/messages.js';
 import { trace, traceFailure } from '../utils/trace.js';
 
 export type SaveState =
@@ -17,9 +17,18 @@ export type SaveState =
   | { kind: 'invalid'; fieldErrors: Record<string, string> }
   | { kind: 'error'; error: AgentError };
 
+/** What the last profile import did, at key level only. Never a value. */
+export type ProfileSyncResult = ExtensionResponse<'SYNC_PROFILE'>;
+
 export interface ProfileDraftController {
   draft: ProfileUpdate;
   completeness: ProfileCompleteness | null;
+  /**
+   * The import that ran before this profile was read, or null when none has.
+   * Shown so a user looking at a blank section can tell "Internship Pilot has
+   * not told us either" from "the import did not run".
+   */
+  syncReport: ProfileSyncResult | null;
   loading: boolean;
   /** Present when the profile could not be loaded at all. */
   loadError: AgentError | null;
@@ -78,6 +87,7 @@ export function useProfileDraft(): ProfileDraftController {
   const [loadError, setLoadError] = useState<AgentError | null>(null);
   const [isNew, setIsNew] = useState(true);
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
+  const [syncReport, setSyncReport] = useState<ProfileSyncResult | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
 
   useEffect(() => {
@@ -93,6 +103,24 @@ export function useProfileDraft(): ProfileDraftController {
      */
     const load = async (): Promise<void> => {
       try {
+        // Before reading: pull anything Internship Pilot holds that the agent
+        // server does not. The two stores were independent, so this page used
+        // to show blanks for experience and education the user had already
+        // entered on the website — and then ask them to enter it again.
+        //
+        // Non-destructive and best-effort: the merge cannot overwrite a
+        // populated value with an empty one, and a failure here is not a reason
+        // to refuse to show the profile that does exist.
+        const sync = await sendMessage({ type: 'SYNC_PROFILE' }).catch(() => null);
+        if (cancelled) return;
+        if (sync?.ok) {
+          trace('profile', 'imported the Internship Pilot profile before loading', {
+            changed: sync.changed,
+            imported: sync.report.filter((entry) => entry.status === 'imported').length,
+          });
+        }
+        setSyncReport(sync ?? null);
+
         const result = await sendMessage({ type: 'PROFILE_GET' });
         if (cancelled) return;
 
@@ -216,6 +244,7 @@ export function useProfileDraft(): ProfileDraftController {
   return {
     draft,
     completeness,
+    syncReport,
     loading,
     loadError,
     isNew,

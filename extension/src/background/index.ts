@@ -29,8 +29,12 @@ import {
   type ApplicationAutofillReport,
   type FillRunReport,
   type AgentError,
+  type ApplicationBundle,
   type DeterministicFillPlan,
   type DocumentContentResponse,
+  type ProfileImportRequest,
+  type ProfileSourceLabel,
+  type ProfileSyncEntry,
 } from '@internship-agent/shared';
 import type { ExtensionMessage } from '../messaging/messages.js';
 import { trace, traceFailure } from '../utils/trace.js';
@@ -41,6 +45,7 @@ import {
   deleteDocument,
   fetchAgentStatus,
   getProfile,
+  importProfile,
   listAnswers,
   listDocuments,
   saveProfile,
@@ -589,6 +594,90 @@ async function analyzePage(
  * resolves, so a failure here means the user never leaves Internship Pilot with
  * documents that were not saved.
  */
+/**
+ * What one profile-sync attempt did, at key level only.
+ *
+ * Never carries a profile value. This is what Diagnostics renders and what the
+ * worker logs, and both must be safe to read over someone's shoulder.
+ */
+export interface ProfileSyncOutcome {
+  ok: boolean;
+  report: ProfileSyncEntry[];
+  changed: boolean;
+  migratedFrom: number | null;
+  /** Present when the sync could not run at all. */
+  error?: AgentError;
+  /** Which stores contributed. Empty when there was nothing to import from. */
+  sources: ProfileSourceLabel[];
+}
+
+/**
+ * Copies the profile Internship Pilot sent into the agent server's own copy.
+ *
+ * Non-destructive: the server merges rather than overwrites, and cannot replace
+ * a populated value with an empty one. Never throws — a sync that could not run
+ * is reported as a sync that could not run, and the caller decides whether that
+ * matters. For the bundle handoff it does not; for the Diagnostics button it is
+ * the whole answer.
+ */
+async function syncProfileFromBundle(
+  bundle: ApplicationBundle | null,
+): Promise<ProfileSyncOutcome> {
+  const sources: ProfileImportRequest['sources'] = bundle?.profile
+    ? [{ label: 'internship_pilot', profile: bundle.profile }]
+    : [];
+
+  if (sources.length === 0) {
+    return {
+      ok: false,
+      report: [],
+      changed: false,
+      migratedFrom: null,
+      sources: [],
+      error: answerFailure(
+        'PROFILE_MISSING',
+        bundle
+          ? 'This application bundle carried no profile, so there was nothing to import from Internship Pilot.'
+          : 'No application bundle is stored, so there is no Internship Pilot profile to import. Open a job on Internship Pilot and click "Apply with Application Agent".',
+      ),
+    };
+  }
+
+  const result = await importProfile(sources);
+  if (result.error || !result.data) {
+    return {
+      ok: false,
+      report: [],
+      changed: false,
+      migratedFrom: null,
+      sources: sources.map((source) => source.label),
+      ...(result.error ? { error: result.error } : {}),
+    };
+  }
+
+  return {
+    ok: true,
+    report: result.data.report,
+    changed: result.data.changed,
+    migratedFrom: result.data.migratedFrom,
+    sources: sources.map((source) => source.label),
+  };
+}
+
+/**
+ * The Diagnostics "Sync profile now" action.
+ *
+ * Uses the bundle for the page the user is looking at when there is one, and
+ * otherwise the most recent bundle, so the button works on the settings page as
+ * well as on an employer form.
+ */
+async function syncProfileNow(url?: string): Promise<ProfileSyncOutcome> {
+  const bundle = url
+    ? ((await bundleForUrl(url).catch(() => null)) ?? (await loadActiveBundle().catch(() => null)))
+    : ((await loadActiveBundle().catch(() => null)) ?? (await listBundles().catch(() => []))[0] ?? null);
+  return syncProfileFromBundle(bundle);
+}
+
 async function storeApplicationBundle(transfer: unknown): Promise<unknown> {
   const parsed = applicationBundleTransferSchema.safeParse(transfer);
   if (!parsed.success) {
@@ -607,10 +696,21 @@ async function storeApplicationBundle(transfer: unknown): Promise<unknown> {
     // Arms this one origin. The employer tab the website is about to open will
     // start filling by itself, so "Apply with Agent" stays a single action.
     await armAutoStart(bundle);
+    // The profile travels onward into the agent server's own copy, so the
+    // settings page stops asking for experience and education the user already
+    // entered on Internship Pilot. Deliberately awaited *and* deliberately
+    // non-fatal: the acknowledgement is about the bytes landing, and a local
+    // server that happens to be down must not fail a handoff whose documents
+    // are already stored.
+    const sync = await syncProfileFromBundle(bundle);
     console.info('[agent] application bundle saved', {
       bundleId: bundle.id,
       company: bundle.company,
       documents: [bundle.resume?.kind, bundle.coverLetter?.kind].filter(Boolean),
+      profileSynced: sync.ok,
+      profileKeysImported: sync.ok
+        ? sync.report.filter((entry) => entry.status === 'imported').length
+        : 0,
     });
     return {
       result: {
@@ -1644,6 +1744,8 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return setActiveBundle(message.bundleId).then((bundle) => ({ data: bundle }));
     case 'DELETE_BUNDLE':
       return deleteBundle(message.bundleId).then(() => ({ ok: true as const }));
+    case 'SYNC_PROFILE':
+      return syncProfileNow(message.url);
     case 'ENSURE_CONTENT_SCRIPT':
       return ensureContentScript(message.tabId, message.url);
     case 'GET_PORTAL_ROUTE':

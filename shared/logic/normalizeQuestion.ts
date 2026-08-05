@@ -159,7 +159,26 @@ const RULES: readonly Rule[] = [
   // the wrong box.
   {
     question: 'phone_country_code',
-    patterns: [/\bcountry code\b/, /\bdial(l)?ing code\b/, /\bphone code\b/, /\bcalling code\b/],
+    patterns: [
+      /\bcountry code\b/,
+      /\bdial(l)?ing code\b/,
+      /\bphone code\b/,
+      /\bcalling code\b/,
+      /\bcountry\/region code\b/,
+      /\bintl?\.? code\b/,
+      /\binternational code\b/,
+      // Widget labels that name a country *beside* a phone control rather than
+      // an address one: intl-tel-input and its imitators label the flag button
+      // "Phone country", "Country for phone number", or just "Phone code".
+      /\bphone country\b/,
+      /\bcountry for (the )?phone\b/,
+      // A bare "Code" is only this question when the surrounding text has
+      // already established it is about a phone — the caller passes the label
+      // plus its section heading, so "Phone Number / Code" resolves here while
+      // an unrelated "Code" field stays unknown.
+      /\b(phone|mobile|cell|telephone)\b[^a-z]{0,12}\bcode\b/,
+      /\bcode\b[^a-z]{0,12}\b(phone|mobile|cell|telephone)\b/,
+    ],
   },
   // Which kind of phone this is, not the number. Before `phone`, whose words it
   // contains: classifying it as `phone` offered the phone *number* to a dropdown

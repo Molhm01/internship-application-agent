@@ -23,6 +23,30 @@ export function dialCodeForCountry(country: string | undefined): string | null {
   return canonical ? (DIAL_CODES[canonical] ?? null) : null;
 }
 
+/** A stored dialling code normalized to its "+NN" spelling, or null. */
+export function normalizeDialCode(stored: string | undefined): string | null {
+  const digits = (stored ?? '').replace(/\D+/g, '');
+  return digits.length > 0 && digits.length <= 4 ? `+${digits}` : null;
+}
+
+/**
+ * The dialling code to put in a country-code control.
+ *
+ * The applicant's stored code wins, because it is something they wrote down.
+ * The residence country is only a fallback — and it is a fallback that fails
+ * quietly on purpose: someone living abroad with a US number would otherwise
+ * have their number rewritten to a code they never gave.
+ *
+ * Returning null means "this control has no answer", which leaves it for the
+ * user rather than guessing +1 because most applicants are American.
+ */
+export function resolveDialCode(personal: {
+  phoneCountryCode?: string | undefined;
+  address: { country?: string | undefined };
+}): string | null {
+  return normalizeDialCode(personal.phoneCountryCode) ?? dialCodeForCountry(personal.address.country);
+}
+
 /** Digits only, so "+1 (929) 264-3117" and "9292643117" compare equal. */
 function digitsOf(value: string): string {
   return value.replace(/\D+/g, '');

@@ -286,7 +286,18 @@ export async function executeDomAction(
       started,
     );
   }
-  if (!isVisible(element)) {
+  // A file input the page hides on purpose and drives from a styled button is
+  // the standard upload control on every ATS worth naming. It is populated
+  // programmatically — `.files` is set, not typed into — so its visibility says
+  // nothing about whether it can be filled, and refusing it here is what left
+  // "Resume *" unattached on a page that plainly showed an upload button.
+  //
+  // Narrow deliberately: only file inputs, and only for an upload action.
+  const hiddenUploadControl =
+    action.action === 'upload_file' &&
+    element instanceof HTMLInputElement &&
+    element.type === 'file';
+  if (!hiddenUploadControl && !isVisible(element)) {
     return failure(
       action,
       'FIELD_NOT_VISIBLE',
@@ -385,7 +396,16 @@ export async function executeDomAction(
       if (action.action !== 'upload_file') applyValue(document, currentElement, action);
       await waitForFramework();
       const verification = verifyDomAction(document, field, action);
-      if (verification.verified) {
+      // For an upload, "the control holds a file" is not enough evidence: the
+      // applicant may have attached one themselves, and a bundle carries two
+      // documents that must not be swapped. The name the control reports has to
+      // be the name of the file this action just wrote — compared here rather
+      // than in the verifier, because only the executor knows what it attached
+      // (a stored document's filename on disk is routinely not the display name
+      // the plan carries).
+      const attachedWrongFile =
+        uploadedFileName !== undefined && verification.actualValue !== uploadedFileName;
+      if (verification.verified && !attachedWrongFile) {
         return fillExecutionResultSchema.parse({
           actionId: action.id,
           fieldId: field.id,
@@ -396,6 +416,22 @@ export async function executeDomAction(
           attempts,
           durationMs: Math.round(performance.now() - started),
         });
+      }
+      // A control now holding a *different* file is not a transient failure to
+      // retry past: something else owns that control, and writing over it again
+      // would be the wrong move. Reported immediately, naming what happened.
+      if (attachedWrongFile) {
+        return failure(
+          action,
+          'UPLOAD_FAILED',
+          `The upload control reports ${
+            typeof verification.actualValue === 'string' && verification.actualValue
+              ? `"${verification.actualValue}"`
+              : 'no file'
+          } rather than the document that was attached. Attach it yourself and check the form.`,
+          started,
+          attempts,
+        );
       }
       if (attempts === 2) {
         return failure(

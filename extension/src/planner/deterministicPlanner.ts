@@ -347,7 +347,13 @@ function planAction(
       ],
     };
   }
-  if (isOptionControl(field)) {
+  // Only when the applicant has not answered it themselves.
+  //
+  // The profile now stores `phoneType` and `address.type`, and a stored answer
+  // outranks anything inferred from the form's wording — the structural rules
+  // are a fallback for facts nobody wrote down, not a substitute for the ones
+  // that were.
+  if (isOptionControl(field) && (!match.matched || match.formattedValue === undefined)) {
     const structural = resolveStructuralField(field);
     if (structural) {
       return {
@@ -708,6 +714,45 @@ function withActions(
   });
 }
 
+/**
+ * Controls that must be written before the controls that depend on them.
+ *
+ * The executor walks the plan in order, and document order is *usually* right —
+ * but not always, and two pairs genuinely matter:
+ *
+ * - A phone country-code control reformats the number beside it when it
+ *   changes. A number written first is silently rewritten, or wiped, by a code
+ *   chosen afterwards.
+ * - A country control repopulates the state list. A state written first is
+ *   discarded when the country lands.
+ *
+ * Everything not named here keeps its document position exactly, so this cannot
+ * reorder a form into an order the applicant would not recognize.
+ */
+const EXECUTION_PRECEDENCE: Readonly<Record<string, number>> = {
+  phone_country_code: -2,
+  country: -1,
+};
+
+function orderForExecution(
+  fields: readonly DetectedField[],
+  actions: readonly DeterministicFillAction[],
+): DeterministicFillAction[] {
+  const canonicalOf = new Map(fields.map((field) => [field.id, field.canonicalKey]));
+  const precedence = (action: DeterministicFillAction): number =>
+    EXECUTION_PRECEDENCE[canonicalOf.get(action.fieldId) ?? ''] ?? 0;
+
+  // A stable sort, so fields sharing a precedence keep document order and the
+  // review screen still reads top to bottom the way the form does.
+  return [...actions]
+    .map((action, index) => ({ action, index }))
+    .sort((left, right) => {
+      const byPrecedence = precedence(left.action) - precedence(right.action);
+      return byPrecedence !== 0 ? byPrecedence : left.index - right.index;
+    })
+    .map((entry) => entry.action);
+}
+
 export function buildDeterministicPlan(
   scan: ApplicationScanResult,
   profile: Profile,
@@ -721,14 +766,17 @@ export function buildDeterministicPlan(
       ? { discoverySource: profile.preferences.discoverySource }
       : {}),
   };
-  const actions = scan.fields.map((field) =>
-    actionFor(
-      field,
-      matchField(field, profile, answers, undefined, {
-        ...(context.hasPhoneCountryCodeField ? { hasPhoneCountryCodeField: true } : {}),
-      }),
-      selectedDocument,
-      context,
+  const actions = orderForExecution(
+    scan.fields,
+    scan.fields.map((field) =>
+      actionFor(
+        field,
+        matchField(field, profile, answers, undefined, {
+          ...(context.hasPhoneCountryCodeField ? { hasPhoneCountryCodeField: true } : {}),
+        }),
+        selectedDocument,
+        context,
+      ),
     ),
   );
   const now = new Date().toISOString();

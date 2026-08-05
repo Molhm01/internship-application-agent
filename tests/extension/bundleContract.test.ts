@@ -120,11 +120,51 @@ const WEBSITE_SNAPSHOT_V2 = {
   updatedAt: '2026-08-02T09:00:00.000Z',
 };
 
+/**
+ * What v3 added, transcribed from the same file. Everything below is a field
+ * the website now emits and this schema must keep: `phoneType`, the address
+ * `type`, education `degreeLevel` and `status`, project dates and URL,
+ * `organizations`/`activities`, `documents`, and the standing portal strategy.
+ */
+const WEBSITE_SNAPSHOT_V3 = {
+  ...WEBSITE_SNAPSHOT_V2,
+  version: 3,
+  personal: {
+    ...WEBSITE_SNAPSHOT_V2.personal,
+    phoneType: 'mobile',
+    address: { ...WEBSITE_SNAPSHOT_V2.personal.address, type: 'home' },
+  },
+  education: [
+    { ...WEBSITE_SNAPSHOT_V2.education[0], degreeLevel: "Bachelor's", status: 'in_progress' },
+  ],
+  projects: [
+    {
+      ...WEBSITE_SNAPSHOT_V2.projects[0],
+      startDate: '2025-01',
+      endDate: '2025-05',
+      url: 'https://github.com/jordanellis/rover',
+    },
+  ],
+  organizations: ['IEEE Student Branch'],
+  activities: ['Robotics Club'],
+  preferences: { ...WEBSITE_SNAPSHOT_V2.preferences, employerPortalStrategy: 'prefer_guest' },
+  documents: {
+    defaultResume: {
+      documentId: 'doc-1',
+      filename: 'Jordan-Ellis-Resume.pdf',
+      origin: 'agent_server',
+    },
+  },
+};
+
 describe('the profile snapshot the website sends', () => {
   it('parses, and keeps every field rather than stripping one', () => {
     const parsed = profileSchema.parse(WEBSITE_SNAPSHOT_V2);
 
-    expect(parsed.version).toBe(CURRENT_PROFILE_VERSION);
+    // The fixture *is* a v2 snapshot, so it stays one. Asserting it equals the
+    // current version would only ever prove the two constants were edited
+    // together, which is exactly the check that cannot catch a dropped field.
+    expect(parsed.version).toBe(2);
     expect(parsed.personal.suffix).toBe('Jr.');
     expect(parsed.personal.phoneCountryCode).toBe('+1');
     expect(parsed.personal.preferredWebsiteField).toBe('github');
@@ -137,6 +177,37 @@ describe('the profile snapshot the website sends', () => {
     expect(parsed.preferences.marketingTextConsent).toBe(true);
     expect(parsed.experience[0]?.title).toBe('Engineering Intern');
     expect(parsed.projects[0]?.technologies).toEqual(['C++']);
+  });
+
+  it('keeps every field v3 added', () => {
+    const parsed = profileSchema.parse(WEBSITE_SNAPSHOT_V3);
+
+    expect(parsed.version).toBe(CURRENT_PROFILE_VERSION);
+    expect(parsed.personal.phoneType).toBe('mobile');
+    expect(parsed.personal.address.type).toBe('home');
+    expect(parsed.education[0]?.degreeLevel).toBe("Bachelor's");
+    expect(parsed.education[0]?.status).toBe('in_progress');
+    expect(parsed.projects[0]?.startDate).toBe('2025-01');
+    expect(parsed.projects[0]?.url).toBe('https://github.com/jordanellis/rover');
+    expect(parsed.organizations).toEqual(['IEEE Student Branch']);
+    expect(parsed.activities).toEqual(['Robotics Club']);
+    expect(parsed.preferences.employerPortalStrategy).toBe('prefer_guest');
+    expect(parsed.documents.defaultResume?.filename).toBe('Jordan-Ellis-Resume.pdf');
+  });
+
+  it('refuses a profile from a newer contract instead of silently stripping it', () => {
+    expect(
+      bundleVersionProblem({
+        bundleVersion: CURRENT_BUNDLE_VERSION,
+        profile: { version: CURRENT_PROFILE_VERSION + 1 },
+      }),
+    ).toMatch(/reads up to/);
+    expect(
+      bundleVersionProblem({
+        bundleVersion: CURRENT_BUNDLE_VERSION,
+        profile: { version: CURRENT_PROFILE_VERSION },
+      }),
+    ).toBeNull();
   });
 
   it('defaults an unversioned snapshot to v1 instead of rejecting it', () => {

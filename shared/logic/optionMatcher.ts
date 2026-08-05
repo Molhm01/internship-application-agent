@@ -80,10 +80,27 @@ const OPTION_ALIASES: ReadonlyArray<readonly string[]> = [
   ['associates', "associate's", "associate's degree", 'associate degree', 'aa', 'as'],
   ['high school', 'high school diploma', 'secondary school', 'ged'],
 
-  // Phone dialling codes seen beside a country name on split phone controls.
-  ['+1', '1', 'united states 1', 'us 1', 'usa 1', 'united states of america 1'],
-  ['+44', '44', 'united kingdom 44', 'uk 44'],
-  ['+91', '91', 'india 91'],
+  // Phone dialling codes as split phone controls actually spell them.
+  //
+  // `normalized` has already stripped punctuation and turned "+" into a space,
+  // so "United States (+1)", "US +1" and "+1 - United States" all arrive here as
+  // a country name and a number in one order or the other. Both orders are
+  // listed because both are common, and a dropdown entry that does not match
+  // leaves the applicant's country code unset rather than merely unstyled.
+  [
+    '+1',
+    '1',
+    'united states 1',
+    'us 1',
+    'usa 1',
+    'united states of america 1',
+    '1 united states',
+    '1 us',
+    '1 usa',
+    '1 united states of america',
+  ],
+  ['+44', '44', 'united kingdom 44', 'uk 44', '44 united kingdom', '44 uk'],
+  ['+91', '91', 'india 91', '91 india'],
 
   // Declining an answer. Sourced from the single canonical set so this matcher
   // and the semantic resolver can never disagree about what "decline" means.

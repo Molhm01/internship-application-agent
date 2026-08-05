@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { idSchema, isoDateTimeSchema } from './common.js';
-import { profileSchema } from './profile.js';
+import { profileSchema, profileVersionProblem } from './profile.js';
 import { approvedAnswerSchema } from './answers.js';
 import { portalStrategySchema } from './employerAccounts.js';
 
@@ -123,7 +123,7 @@ export type CompanyRelationship = z.infer<typeof companyRelationshipSchema>;
  * an unread field is indistinguishable from an unanswered question, which would
  * silently produce a half-filled application rather than a visible error.
  */
-export const CURRENT_BUNDLE_VERSION = 2;
+export const CURRENT_BUNDLE_VERSION = 3;
 
 /** What the page posts. Validated before a single byte is written. */
 export const applicationBundleTransferSchema = z.object({
@@ -156,9 +156,18 @@ export type ApplicationBundleTransfer = z.infer<typeof applicationBundleTransfer
  * version" is a different failure from "this is malformed", and the user needs
  * to be told to update the extension rather than that their data is broken.
  */
-export function bundleVersionProblem(bundle: { bundleVersion: number }): string | null {
-  if (bundle.bundleVersion <= CURRENT_BUNDLE_VERSION) return null;
-  return `Internship Pilot sent an application bundle in format v${bundle.bundleVersion}, but this extension reads up to v${CURRENT_BUNDLE_VERSION}. Update the extension and try again.`;
+export function bundleVersionProblem(bundle: {
+  bundleVersion: number;
+  profile?: { version: number } | undefined;
+}): string | null {
+  if (bundle.bundleVersion > CURRENT_BUNDLE_VERSION) {
+    return `Internship Pilot sent an application bundle in format v${bundle.bundleVersion}, but this extension reads up to v${CURRENT_BUNDLE_VERSION}. Update the extension and try again.`;
+  }
+  // The profile inside carries its own version, and a bundle this build can
+  // read may still hold a profile it cannot. Checked separately for the same
+  // reason the bundle is: Zod strips the keys it does not know, and a stripped
+  // fact looks exactly like a fact the applicant never entered.
+  return bundle.profile ? profileVersionProblem(bundle.profile.version) : null;
 }
 
 /**

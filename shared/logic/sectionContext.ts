@@ -42,6 +42,13 @@ const GENERIC_LABELS: Readonly<Record<string, Partial<Record<SectionDomain, stri
   type: { phone: 'phone type', address: 'address type', email: 'email type' },
   'phone type': { phone: 'phone type' },
   number: { phone: 'phone number' },
+  // A bare "Code" beside a phone number is the dialling code. Deliberately
+  // *only* under a phone heading: a "Code" under an address block is a postal
+  // code on some forms and a discount code on others, and guessing between
+  // them would put a dialling code where a postcode belongs.
+  code: { phone: 'phone country code' },
+  'country code': { phone: 'phone country code' },
+  country: { phone: 'phone country code' },
   'address 1': { address: 'address line 1' },
   'address 2': { address: 'address line 2' },
   'line 1': { address: 'address line 1' },

@@ -62,11 +62,16 @@ const RULES: readonly StructuralRule[] = [
     preferences: [/\be-?mail\b/i, /\bmobile\b|\bcell\b/i, /\bphone\b/i],
     reason: 'Email is the contact method on your profile.',
   },
-  {
-    matches: /\bcountry code\b/i,
-    preferences: [/\bunited states\b|\bu\.?s\.?a?\b|\+1\b/i],
-    reason: 'Matches the country on your saved address.',
-  },
+  // There is deliberately no rule for a phone country code.
+  //
+  // There was one. It preferred the first option matching
+  // /united states|u\.?s\.?a?|\+1\b/, which on a real list beginning
+  // "Australia (+61), Canada (+1), …" selects **Canada** — and which, even when
+  // it picked the right row, was asserting the applicant is American rather
+  // than reading what they told us. A dialling code is a fact about the person,
+  // not about the form's vocabulary, so it belongs to the profile
+  // (`personal.phoneCountryCode`) and is matched exactly, by
+  // `matchOption`, against the options the page actually offers.
 ];
 
 /** True when the option is a placeholder rather than a real answer. */

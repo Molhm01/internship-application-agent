@@ -15,6 +15,8 @@ import type {
   AiGenerationTestResponse,
   Profile,
   ProfileCompleteness,
+  ProfileSourceLabel,
+  ProfileSyncEntry,
   ProfileUpdate,
   SavedDocument,
   DocumentExtraction,
@@ -77,6 +79,14 @@ export type ExtensionMessage =
   | { type: 'LIST_BUNDLES' }
   | { type: 'SET_ACTIVE_BUNDLE'; bundleId: string }
   | { type: 'DELETE_BUNDLE'; bundleId: string }
+  /**
+   * Merge the Internship Pilot profile into the agent server's copy.
+   *
+   * Sent by the settings page on load and by the Diagnostics button. The reply
+   * names keys and statuses only — never a profile value — so it can be
+   * rendered and copied into a bug report as-is.
+   */
+  | { type: 'SYNC_PROFILE'; url?: string }
   // One-button autofill: the whole run, start to review summary.
   | { type: 'ENSURE_CONTENT_SCRIPT'; tabId: number; url?: string }
   | { type: 'GET_PORTAL_ROUTE'; targetUrl?: string }
@@ -216,8 +226,17 @@ export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends 'A
       ? AgentResult<ApplicationBundle | null>
       : M extends 'LIST_BUNDLES'
         ? AgentResult<{ bundles: ApplicationBundle[] }>
-        : M extends 'DELETE_BUNDLE'
-          ? { ok: true } | { ok: false; error: AgentError }
+        : M extends 'SYNC_PROFILE'
+          ? {
+              ok: boolean;
+              report: ProfileSyncEntry[];
+              changed: boolean;
+              migratedFrom: number | null;
+              sources: ProfileSourceLabel[];
+              error?: AgentError;
+            }
+          : M extends 'DELETE_BUNDLE'
+            ? { ok: true } | { ok: false; error: AgentError }
           : M extends 'RUN_APPLICATION_AUTOFILL'
             ? // `accepted: false` means a run already owns this page. It carries
               // that run's id so the caller can follow it instead of starting a

@@ -114,9 +114,29 @@ function isSelect(element: Element): element is HTMLSelectElement {
   return element.tagName === 'SELECT';
 }
 
+/**
+ * A file input the page hides on purpose and drives from a styled button.
+ *
+ * This is the standard upload control on every ATS worth naming: the real
+ * `<input type="file">` is `display:none`, and a button calls `.click()` on it.
+ * Treating it as invisible meant the scanner reported no upload field at all on
+ * a page that plainly showed two, so the run attached nothing and truthfully
+ * said it had nothing to attach.
+ *
+ * Narrow on purpose. A hidden *file* input is a control the user is expected to
+ * populate through some other affordance; a hidden text input is a form's own
+ * bookkeeping and is still ignored. `type="hidden"` is not a file input and is
+ * excluded before this is ever consulted.
+ */
+function isButtonDrivenFileInput(element: HTMLElement): boolean {
+  return isInput(element) && element.type.toLowerCase() === 'file' && !element.disabled;
+}
+
 export function isVisibleControl(element: HTMLElement): boolean {
   if (element.hidden || element.closest('[hidden], [aria-hidden="true"], template')) return false;
   if (isInput(element) && element.type.toLowerCase() === 'hidden') return false;
+  // Checked before the style rules below, and only for file inputs.
+  if (isButtonDrivenFileInput(element)) return true;
   const style = safeStyle(element);
   if (
     style &&
@@ -207,6 +227,24 @@ function isPageFurniture(element: HTMLElement): boolean {
   return false;
 }
 
+/**
+ * True when another control declares this element as its popup.
+ *
+ * Matched on the id, through `aria-controls` or `aria-owns`, because those are
+ * exactly how a combobox tells assistive technology "that list belongs to me".
+ * An element with no id cannot be referenced and is therefore never owned.
+ */
+function isOwnedPopup(element: HTMLElement): boolean {
+  const id = element.id;
+  if (!id) return false;
+  const escaped = cssEscape(id);
+  return (
+    element.ownerDocument.querySelector(
+      `[role="combobox"][aria-controls~="${escaped}"], [role="combobox"][aria-owns~="${escaped}"], [aria-haspopup="listbox"][aria-controls~="${escaped}"]`,
+    ) !== null
+  );
+}
+
 function shouldIgnore(element: HTMLElement): boolean {
   // Before every other test: an element the extension put on the page is not
   // part of the employer's form, however control-like it looks.
@@ -216,6 +254,14 @@ function shouldIgnore(element: HTMLElement): boolean {
   // A radiogroup is the container for its radios; scanning both would report
   // the same question twice, once with no options.
   if (CONTAINER_ROLES.has(element.getAttribute('role') ?? '')) return true;
+  // A listbox some combobox points at is that combobox's popup, not a second
+  // question. Without this, a searchable Country control is reported twice —
+  // once as the input the user types into and once as the list it opens — and
+  // the run then tries to fill "Country" in two places, verifying neither.
+  //
+  // A listbox nobody points at is still a control in its own right, which is
+  // why this is scoped to the reference rather than to the role.
+  if (element.getAttribute('role') === 'listbox' && isOwnedPopup(element)) return true;
   // React Select's inner text input is the search box of a control this scan
   // already found. The control root carries the label and the options.
   if (

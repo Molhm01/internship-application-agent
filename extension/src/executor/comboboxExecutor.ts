@@ -184,9 +184,19 @@ export async function selectComboboxOption(input: SelectComboboxInput): Promise<
   }
 
   const trigger = resolveTrigger(root);
-  // Search text is a saved value, never a pattern: a city the profile states, or
-  // the proposed answer itself.
-  const searchText = input.locationTarget?.city ?? input.searchText ?? input.proposedValue;
+  // Search text is a saved value, never a pattern: a city the profile states,
+  // the text the planner prepared, the label of the option that was matched,
+  // or — last — the proposed answer itself.
+  //
+  // `matchedLabel` sits ahead of `proposedValue` because a resolved option
+  // carries the page's *value*, which is routinely a machine code: a Country
+  // control whose "United States of America" option has `value="US"` was being
+  // sent the string "US" as its search query. No label contains it, the
+  // searchable list filtered itself down to nothing, and the run left "US"
+  // typed in the box with the menu open and no country chosen — which is
+  // exactly what "Country is not selected" looked like on the live site.
+  const searchText =
+    input.locationTarget?.city ?? input.searchText ?? input.matchedLabel ?? input.proposedValue;
 
   const field = input.field;
   let discovered: DiscoveredOptionSet | null = null;

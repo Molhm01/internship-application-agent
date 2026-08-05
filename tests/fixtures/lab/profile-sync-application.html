@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply - Quanta Robotics</title>
+    <style>
+      /* The visually-hidden file input pattern every real ATS uses. */
+      .file-hidden {
+        display: none;
+      }
+      .listbox[hidden] {
+        display: none;
+      }
+      .listbox {
+        border: 1px solid #ccc;
+        max-height: 12rem;
+        overflow: auto;
+      }
+      .listbox [role='option'] {
+        padding: 0.25rem 0.5rem;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      The acceptance fixture for the profile-sync recovery.
+
+      Every control here is one the extension failed on in a live run and did
+      not fail on in the committed lab fixtures. That is the whole point: the
+      old fixture filled Country and attached a résumé, the real page did not,
+      and the difference was the *shape* of the control rather than the value.
+
+      1. Country is an ARIA combobox with a searchable list — not a <select>.
+         Its options carry region suffixes, and the saved value is the alias
+         "USA" rather than any label on the list.
+      2. The phone country code is its own <select>, labelled "Code", whose
+         options spell the dialling code four different ways.
+      3. State/Province is empty until Country is chosen. It is a dependency,
+         not a failure, and it must fill on the pass after Country lands.
+      4. Résumé and cover letter are `display:none` file inputs behind styled
+         buttons. A scanner that skips invisible controls never sees them, and
+         the run reports "no upload field" on a page that plainly has two.
+      5. The submit control exists and must never be clicked.
+    -->
+    <main>
+      <h1>Software Engineering Intern — Quanta Robotics</h1>
+
+      <form id="application" novalidate>
+        <fieldset>
+          <legend>Your name</legend>
+          <div>
+            <label for="firstName">First Name *</label>
+            <input type="text" id="firstName" name="firstName" required />
+          </div>
+          <div>
+            <label for="lastName">Last Name *</label>
+            <input type="text" id="lastName" name="lastName" required />
+          </div>
+          <div>
+            <label for="email">Email Address *</label>
+            <input type="email" id="email" name="email" required />
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Phone</legend>
+          <!--
+            Labelled "Code", not "Country code". It resolves only because the
+            section heading says Phone; a bare "Code" elsewhere stays unknown.
+          -->
+          <div>
+            <label for="phoneCode">Code *</label>
+            <select id="phoneCode" name="phoneCountryCode" required>
+              <option value="">Select…</option>
+              <option value="+61">Australia (+61)</option>
+              <option value="+1ca">Canada (+1)</option>
+              <option value="+91">IN +91</option>
+              <option value="+44">United Kingdom (+44)</option>
+              <option value="+1">United States (+1)</option>
+            </select>
+          </div>
+          <div>
+            <label for="phoneNumber">Phone Number *</label>
+            <input type="tel" id="phoneNumber" name="phoneNumber" required />
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Address</legend>
+          <div>
+            <label for="street">Street Address *</label>
+            <input type="text" id="street" name="street" required />
+          </div>
+          <div>
+            <label for="city">City *</label>
+            <input type="text" id="city" name="city" required />
+          </div>
+
+          <!-- A searchable ARIA combobox, the Greenhouse/Ashby shape. -->
+          <div>
+            <span id="country-label">Country *</span>
+            <input
+              type="text"
+              id="country"
+              role="combobox"
+              aria-labelledby="country-label"
+              aria-expanded="false"
+              aria-controls="country-listbox"
+              aria-autocomplete="list"
+              autocomplete="off"
+              required
+            />
+            <ul class="listbox" id="country-listbox" role="listbox" aria-label="Country" hidden>
+              <li role="option" data-value="AU">Australia</li>
+              <li role="option" data-value="CA">Canada</li>
+              <li role="option" data-value="IN">India</li>
+              <li role="option" data-value="GB">United Kingdom</li>
+              <li role="option" data-value="US">United States of America</li>
+            </ul>
+            <input type="hidden" id="countryValue" name="country" />
+          </div>
+
+          <!-- Empty until Country is chosen. -->
+          <div>
+            <label for="state">State/Province *</label>
+            <select id="state" name="state" required>
+              <option value="">Select a country first</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="postalCode">Zip/Postal Code *</label>
+            <input type="text" id="postalCode" name="postalCode" required />
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Education</legend>
+          <div>
+            <label for="school">School *</label>
+            <input type="text" id="school" name="school" required />
+          </div>
+          <div>
+            <label for="major">Major *</label>
+            <input type="text" id="major" name="major" required />
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Work experience</legend>
+          <div>
+            <label for="employer">Employer *</label>
+            <input type="text" id="employer" name="employer" required />
+          </div>
+          <div>
+            <label for="jobTitle">Job Title *</label>
+            <input type="text" id="jobTitle" name="jobTitle" required />
+          </div>
+          <div>
+            <label for="employerLocation">Employer Location</label>
+            <input type="text" id="employerLocation" name="employerLocation" />
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Additional questions</legend>
+          <div>
+            <label for="projects">Describe a project you have worked on.</label>
+            <textarea id="projects" name="projects" rows="4"></textarea>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Documents</legend>
+          <!--
+            Hidden inputs driven by buttons. The label is on the button, and the
+            input carries only a name — so the classifier has to read the
+            surrounding text rather than the input's own label.
+          -->
+          <div id="resume-field">
+            <span id="resume-label">Resume *</span>
+            <button type="button" id="resume-button" aria-describedby="resume-label">
+              Upload résumé
+            </button>
+            <input
+              class="file-hidden"
+              type="file"
+              id="resumeInput"
+              name="resume"
+              accept=".pdf"
+              aria-labelledby="resume-label"
+              required
+            />
+            <span id="resume-filename" data-testid="resume-filename"></span>
+          </div>
+
+          <div id="cover-field">
+            <span id="cover-label">Cover Letter</span>
+            <button type="button" id="cover-button" aria-describedby="cover-label">
+              Upload cover letter
+            </button>
+            <input
+              class="file-hidden"
+              type="file"
+              id="coverInput"
+              name="coverLetter"
+              accept=".pdf"
+              aria-labelledby="cover-label"
+            />
+            <span id="cover-filename" data-testid="cover-filename"></span>
+          </div>
+        </fieldset>
+
+        <!-- Never clicked. Its handler records the attempt so a test can prove it. -->
+        <button type="submit" id="submit">Submit Application</button>
+      </form>
+    </main>
+
+    <script>
+      // A record of things that must not happen, readable from a test.
+      window.__fixture = { submitAttempts: 0 };
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__fixture.submitAttempts += 1;
+      });
+      document.getElementById('submit').addEventListener('click', () => {
+        window.__fixture.submitAttempts += 1;
+      });
+
+      // --- The country combobox -------------------------------------------
+      const country = document.getElementById('country');
+      const listbox = document.getElementById('country-listbox');
+      const countryValue = document.getElementById('countryValue');
+      const state = document.getElementById('state');
+
+      const STATES = {
+        US: ['Alabama', 'California', 'New Jersey', 'New York', 'Texas'],
+        CA: ['Alberta', 'British Columbia', 'Ontario'],
+        GB: ['England', 'Scotland', 'Wales'],
+        AU: ['New South Wales', 'Victoria'],
+        IN: ['Karnataka', 'Maharashtra'],
+      };
+
+      function openList() {
+        listbox.hidden = false;
+        country.setAttribute('aria-expanded', 'true');
+      }
+      function closeList() {
+        listbox.hidden = true;
+        country.setAttribute('aria-expanded', 'false');
+      }
+
+      country.addEventListener('focus', openList);
+      country.addEventListener('click', openList);
+      country.addEventListener('input', () => {
+        openList();
+        // A searchable list: typing filters it, the way a real one does.
+        const query = country.value.trim().toLowerCase();
+        for (const option of listbox.querySelectorAll('[role="option"]')) {
+          const label = option.textContent.trim().toLowerCase();
+          option.hidden = query.length > 0 && !label.includes(query);
+        }
+      });
+
+      listbox.addEventListener('click', (event) => {
+        const option = event.target.closest('[role="option"]');
+        if (!option) return;
+        selectCountry(option);
+      });
+
+      function selectCountry(option) {
+        for (const other of listbox.querySelectorAll('[role="option"]')) {
+          other.setAttribute('aria-selected', String(other === option));
+        }
+        country.value = option.textContent.trim();
+        countryValue.value = option.dataset.value;
+        closeList();
+        country.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // Choosing a country repopulates the dependent state list.
+        state.innerHTML = '<option value="">Select…</option>';
+        for (const name of STATES[option.dataset.value] ?? []) {
+          const entry = document.createElement('option');
+          entry.value = name;
+          entry.textContent = name;
+          state.append(entry);
+        }
+      }
+
+      // --- The button-driven file inputs ----------------------------------
+      for (const [buttonId, inputId, outputId] of [
+        ['resume-button', 'resumeInput', 'resume-filename'],
+        ['cover-button', 'coverInput', 'cover-filename'],
+      ]) {
+        const input = document.getElementById(inputId);
+        document.getElementById(buttonId).addEventListener('click', () => input.click());
+        input.addEventListener('change', () => {
+          document.getElementById(outputId).textContent = input.files[0]
+            ? input.files[0].name
+            : '';
+        });
+      }
+    </script>
+  </body>
+</html>

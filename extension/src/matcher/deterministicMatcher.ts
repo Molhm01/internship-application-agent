@@ -2,11 +2,11 @@ import {
   DEFAULT_SENSITIVE_POLICY,
   SENSITIVE_CANONICAL_QUESTIONS,
   degreeAnswersFor,
-  dialCodeForCountry,
   fieldMatchSchema,
   formatValue,
   locationSearchText,
   normalizeLabel,
+  resolveDialCode,
   resolveWebsiteValue,
   splitPhoneNumber,
   wholePhoneNumber,
@@ -180,7 +180,11 @@ function profileValue(
   const personal = profile.personal;
   const education = profile.education[0];
   const experience = profile.experience[0];
-  const dialCode = dialCodeForCountry(personal.address.country);
+  // The applicant's stored code first, the residence country only as a
+  // fallback. Deriving it from the country meant a profile with a phone and no
+  // address had nothing to put in a country-code control — and the phone number
+  // then went in whole, duplicating the prefix the control was already showing.
+  const dialCode = resolveDialCode(personal);
   const direct: Partial<
     Record<CanonicalQuestion, { reference: string; value: string | boolean | number | undefined }>
   > = {
@@ -200,11 +204,20 @@ function profileValue(
           : wholePhoneNumber(personal.phone)
         : undefined,
     },
-    // Derived from the country the profile states, never from the digits.
+    // The stored code, or the one the stated country implies. Never read off
+    // the digits of the number: a number beginning "1" is not evidence of a
+    // country, and guessing one here would put a wrong code on the application.
     phone_country_code: {
-      reference: 'profile.personal.address.country',
+      reference: personal.phoneCountryCode
+        ? 'profile.personal.phoneCountryCode'
+        : 'profile.personal.address.country',
       value: dialCode ?? undefined,
     },
+    // Which kind of phone and address a repeating contact block is recording.
+    // Both are stored answers; neither is inferred from the other fields, so a
+    // form asking "Phone type" on a profile that never said gets no answer.
+    phone_type: { reference: 'profile.personal.phoneType', value: personal.phoneType },
+    address_type: { reference: 'profile.personal.address.type', value: personal.address.type },
     // A combined location control wants the whole place, assembled only from
     // values the profile already holds.
     current_location: {
@@ -288,6 +301,12 @@ function profileValue(
     },
     major: { reference: 'profile.education[0].major', value: education?.major },
     minor: { reference: 'profile.education[0].minor', value: education?.minor },
+    // The level, which is a different answer from the degree's full name. A
+    // form offering "Bachelor's / Master's / Doctorate" wants this one.
+    degree_level: {
+      reference: 'profile.education[0].degreeLevel',
+      value: education?.degreeLevel,
+    },
     gpa: { reference: 'profile.education[0].gpa', value: education?.gpa },
     graduation_date: {
       reference: 'profile.education[0].graduationDate',

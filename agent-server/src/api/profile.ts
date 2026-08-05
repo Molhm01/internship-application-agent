@@ -3,7 +3,9 @@ import { z } from 'zod';
 import {
   computeProfileCompleteness,
   profileCompletenessSchema,
+  profileImportRequestSchema,
   profileSchema,
+  profileSyncEntrySchema,
   profileUpdateSchema,
   successResponseSchema,
 } from '@internship-agent/shared';
@@ -18,6 +20,21 @@ const profileResponseSchema = z.object({
 });
 
 export type ProfileResponse = z.infer<typeof profileResponseSchema>;
+
+/**
+ * The import response. Carries the merged profile for the caller that asked for
+ * it, plus a report that names only keys — so it can be rendered in Diagnostics,
+ * logged, and pasted into a bug without disclosing anything about the applicant.
+ */
+const profileImportResponseSchema = z.object({
+  profile: profileSchema,
+  completeness: profileCompletenessSchema,
+  report: z.array(profileSyncEntrySchema),
+  changed: z.boolean(),
+  migratedFrom: z.number().int().positive().nullable(),
+});
+
+export type ProfileImportResponse = z.infer<typeof profileImportResponseSchema>;
 
 // eslint-disable-next-line @typescript-eslint/require-await -- Fastify plugins must be async.
 export async function registerProfileRoutes(
@@ -78,6 +95,59 @@ export async function registerProfileRoutes(
     return sendValidated(reply, profileResponseSchema, {
       profile: saved,
       completeness: computeProfileCompleteness(saved),
+    });
+  });
+
+  /**
+   * Merges profiles held elsewhere into the stored one.
+   *
+   * This is how the profile the user maintains on Internship Pilot reaches the
+   * extension's settings page, which had no way of seeing it: the two stores
+   * were independent and nothing had ever copied one into the other.
+   *
+   * Non-destructive, and safe to call repeatedly — the merge cannot replace a
+   * populated value with an empty one, and reports `changed: false` when there
+   * was nothing to take.
+   */
+  app.post('/profile/import', (request, reply) => {
+    const parsed = parseBody(profileImportRequestSchema, request.body);
+    if (!parsed.ok) {
+      return reply.status(422).send({ ok: false, error: parsed.error });
+    }
+
+    let result;
+    try {
+      result = ctx.profiles.importFrom(parsed.data.sources);
+    } catch (cause) {
+      if (cause instanceof ProfileCorruptError) {
+        return fail(reply, {
+          code: 'VALIDATION_FAILED',
+          message: `The stored profile could not be read, so nothing was imported: ${cause.issues.slice(0, 3).join('; ')}`,
+          recoverable: false,
+          suggestedAction:
+            'The profile record is inconsistent with the current schema. Re-enter the affected sections in settings, or reset the profile.',
+          debugContext: { issueCount: cause.issues.length },
+        });
+      }
+      throw cause;
+    }
+
+    ctx.logger.info('profile imported', {
+      // Key-level counts only; never a key's contents.
+      sources: parsed.data.sources.map((source) => source.label),
+      changed: result.changed,
+      migratedFrom: result.migratedFrom,
+      imported: result.report.filter((entry) => entry.status === 'imported').length,
+      updated: result.report.filter((entry) => entry.status === 'updated').length,
+      missing: result.report.filter((entry) => entry.status === 'missing').length,
+    });
+
+    return sendValidated(reply, profileImportResponseSchema, {
+      profile: result.profile,
+      completeness: computeProfileCompleteness(result.profile),
+      report: result.report,
+      changed: result.changed,
+      migratedFrom: result.migratedFrom,
     });
   });
 }
