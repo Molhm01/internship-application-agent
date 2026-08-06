@@ -34,6 +34,7 @@ import {
   type FieldRunStatus,
   type FinalFieldOutcome,
   type FinalFieldStatus,
+  type RequiredSource,
 } from '@internship-agent/shared';
 import { finalizePendingResult, pendingResults } from '@internship-agent/shared';
 import { decideApproval, type ApprovalDecision } from './approvalPolicy.js';
@@ -267,6 +268,8 @@ export interface FieldDiagnostic {
   section?: string;
   controlType: string;
   required: boolean;
+  /** The evidence behind `required`, carried through from the scanner. */
+  requiredSource?: RequiredSource;
   intent?: string;
   profileValueAvailable: boolean;
   plannerSource: string;
@@ -490,6 +493,7 @@ export async function runApplicationAutofill(
         ...(field.section ? { section: field.section } : {}),
         controlType: field.fieldType,
         required: field.required,
+        ...(field.requiredSource ? { requiredSource: field.requiredSource } : {}),
         ...(field.canonicalKey ? { intent: field.canonicalKey } : {}),
         profileValueAvailable: hadProfileValue(source, plannedAction),
         plannerSource: source ?? 'none',
@@ -1242,6 +1246,7 @@ function buildRunTrace(input: {
     ...(entry.intent ? { intent: entry.intent } : {}),
     controlType: entry.controlType,
     required: entry.required,
+    ...(entry.requiredSource ? { requiredSource: entry.requiredSource } : {}),
     plannerSource: traceSource(entry.plannerSource),
     profileValueAvailable: entry.profileValueAvailable,
     ...(entry.plannedAction ? { plannedAction: entry.plannedAction } : {}),

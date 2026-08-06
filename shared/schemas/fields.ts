@@ -143,6 +143,34 @@ export type SemanticType = z.infer<typeof semanticTypeSchema>;
 export const canonicalQuestionSchema = z.enum(CANONICAL_QUESTIONS);
 export const fieldSectionSchema = z.enum(FIELD_SECTIONS);
 
+/**
+ * The evidence that made a control required — one member, always the strongest
+ * one found.
+ *
+ * A boolean `required` is not diagnosable. "Middle Name" was reported required
+ * because "First Name *" sat beside it in the same fieldset, and nothing in the
+ * scan said so: the flag looked identical to one earned by a `required`
+ * attribute. Recording *why* makes an unearned requirement visible in the run
+ * trace instead of only in the user's confusion.
+ *
+ * Ordered by strength. `associated_visual_marker` is the weakest that still
+ * counts, and it counts only when the marker sits in a label bound to this exact
+ * control — never in a section heading, a sibling field, or a validation
+ * message.
+ */
+export const REQUIRED_SOURCES = [
+  'native_required',
+  'aria_required',
+  'ats_metadata',
+  'group_requirement',
+  'associated_visual_marker',
+  'none',
+] as const;
+
+export const requiredSourceSchema = z.enum(REQUIRED_SOURCES);
+
+export type RequiredSource = (typeof REQUIRED_SOURCES)[number];
+
 export const fieldOptionSchema = z.object({
   label: z.string().max(1000),
   value: z.string().max(1000),
@@ -189,6 +217,13 @@ export const detectedFieldSchema = z.object({
   semanticType: semanticTypeSchema.optional(),
   selector: z.string().max(2000),
   required: z.boolean(),
+  /**
+   * What made `required` true, or `none` when nothing did. Optional because a
+   * field record written by an earlier build carries no such evidence, and
+   * dropping the whole scan over a missing diagnostic would be worse than
+   * reporting the requirement without its reason.
+   */
+  requiredSource: requiredSourceSchema.optional(),
   visible: z.boolean(),
   disabled: z.boolean(),
   currentValue: fieldValueSchema.optional(),

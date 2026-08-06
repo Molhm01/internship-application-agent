@@ -26,6 +26,7 @@ export * from './structuralFields.js';
 export * from './questionIdentity.js';
 export * from './matchPattern.js';
 export * from './sectionContext.js';
+export * from './scanStatistics.js';
 export * from './pendingResolution.js';
 export * from './finalFieldStatus.js';
 export * from './actionContract.js';

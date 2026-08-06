@@ -138,6 +138,59 @@ describe('merging scans across frames', () => {
     expect(merged!.domain).toBe('jobs.example.com');
   });
 
+  /**
+   * A field the parent's scan reached into a child document to find.
+   *
+   * The content script walks into every same-origin iframe it can reach, so the
+   * top frame legitimately reports controls belonging to a child. The child's
+   * own content script reports the same controls, correctly routed — and keeping
+   * both put two questions on the review screen for one `<input>` and sent the
+   * first write to a document that does not contain it.
+   */
+  function borrowed(url: string, ids: string[], sourceUrl: string) {
+    const result = scan(url, ids);
+    for (const field of result.fields) {
+      (field.metadata as Record<string, unknown>).frameUrl = sourceUrl;
+    }
+    return result;
+  }
+
+  it('drops a control the parent reached into a child frame to find', () => {
+    const merged = mergeFrameScans([
+      {
+        frame: top,
+        result: {
+          ...scan(top.url, ['own']),
+          fields: [
+            ...scan(top.url, ['own']).fields,
+            ...borrowed(top.url, ['shared'], child.url).fields,
+          ],
+        } as never,
+      },
+      { frame: child, result: borrowed(child.url, ['shared'], child.url) as never },
+    ]);
+
+    // One control, one field, routed to the frame that actually holds it.
+    expect(merged!.fields).toHaveLength(2);
+    const shared = merged!.fields.filter((field) => field.selector === '#shared');
+    expect(shared).toHaveLength(1);
+    expect(shared[0]!.frameId).toBe(7);
+    // Dropped, and said so: the census is what tells a person the scan saw more
+    // controls than the page has questions.
+    expect(merged!.statistics.duplicateControlsRemoved).toBe(1);
+    expect(merged!.statistics.total).toBe(2);
+  });
+
+  it('keeps the parent’s copy when the frame that owns it was never scanned', () => {
+    const merged = mergeFrameScans([
+      { frame: top, result: borrowed(top.url, ['orphan'], child.url) as never },
+    ]);
+    // A field routed imperfectly beats a control nobody knows about.
+    expect(merged!.fields).toHaveLength(1);
+    expect(merged!.fields[0]!.frameId).toBe(0);
+    expect(merged!.statistics.duplicateControlsRemoved).toBe(0);
+  });
+
   it('still produces a scan when the form is entirely inside an iframe', () => {
     const merged = mergeFrameScans([
       { frame: child, result: scan(child.url, ['a', 'b']) as never },

@@ -1,17 +1,12 @@
 import {
-  FIELD_SECTIONS,
   classifyPage,
+  countFieldStatistics,
   applicationScanResultSchema,
   type ApplicationScanResult,
   type ScanProgress,
   type ScanStatistics,
 } from '@internship-agent/shared';
-import {
-  censusForPage,
-  collectNavigationControls,
-  isSupportedField,
-  type ScanCensus,
-} from './domScanner.js';
+import { censusForPage, collectNavigationControls, type ScanCensus } from './domScanner.js';
 import { selectAdapter, type BrowserScanContext } from './adapters.js';
 
 export interface ScanApplicationOptions {
@@ -32,31 +27,10 @@ function statistics(
   navigationActions: number,
   census: ScanCensus,
 ): ScanStatistics {
-  const bySection = Object.fromEntries(FIELD_SECTIONS.map((section) => [section, 0])) as Record<
-    (typeof FIELD_SECTIONS)[number],
-    number
-  >;
-  for (const field of fields) bySection[field.section ?? 'other'] += 1;
-  const count = (type: ApplicationScanResult['fields'][number]['fieldType']): number =>
-    fields.filter((field) => field.fieldType === type).length;
-  return {
-    total: fields.length,
-    supported: fields.filter(isSupportedField).length,
-    unknown: count('unknown'),
-    required: fields.filter((field) => field.required).length,
-    optional: fields.filter((field) => !field.required).length,
-    text: count('text'),
-    textarea: count('textarea'),
-    select: count('select') + count('multi_select'),
-    combobox: count('combobox'),
-    radio: count('radio'),
-    checkbox: count('checkbox'),
-    file: count('file'),
-    credentialFields: count('password'),
-    navigationActions,
-    ...census,
-    bySection,
-  };
+  // Derived by the shared counter, which the frame merge also uses. Two
+  // implementations is how a merged scan came to report more supported fields
+  // than it had fields.
+  return countFieldStatistics(fields, navigationActions, census) as ScanStatistics;
 }
 
 export async function scanApplication({

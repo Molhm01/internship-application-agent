@@ -22,13 +22,18 @@ import { normalizeLabel } from './normalizeQuestion.js';
  */
 
 /** A domain a repeating section can belong to. */
-type SectionDomain = 'phone' | 'address' | 'email' | 'website';
+type SectionDomain = 'phone' | 'address' | 'email' | 'website' | 'experience' | 'education';
 
 const DOMAIN_RULES: ReadonlyArray<readonly [SectionDomain, RegExp]> = [
   ['phone', /\b(phones?|telephones?|mobiles?|contact numbers?)\b/],
   ['address', /\b(addresses|address|mailing|residence|location details)\b/],
   ['email', /\b(e ?mails?|e ?mail addresses)\b/],
   ['website', /\b(web ?sites?|links|social)\b/],
+  // Ordered after the contact domains, whose headings these patterns must never
+  // steal: "Address" is an address block even on a page whose next heading is
+  // "Work Experience".
+  ['experience', /\b(experiences?|employment|work history|employment history|positions?)\b/],
+  ['education', /\b(education|academic|schools?|universit(y|ies)|degrees?)\b/],
 ];
 
 /**
@@ -56,6 +61,22 @@ const GENERIC_LABELS: Readonly<Record<string, Partial<Record<SectionDomain, stri
   address: { address: 'address line 1' },
   value: { phone: 'phone number', email: 'email', website: 'website' },
   primary: {},
+  // A repeating experience block labels its columns as bare nouns. "Location"
+  // under it is where a *past job* was, and reading it as the applicant's own
+  // location is how a home address became the one thing a whole run wrote.
+  location: { experience: 'employer location' },
+  'position or title': { experience: 'job title' },
+  position: { experience: 'job title' },
+  title: { experience: 'job title' },
+  employer: { experience: 'employer' },
+  // Dates repeat verbatim across the two repeating blocks that have them, and
+  // an employment start date and an enrolment start date are different answers.
+  'start date': { experience: 'employment start date', education: 'education start date' },
+  'end date': { experience: 'employment end date', education: 'graduation date' },
+  from: { experience: 'employment start date' },
+  to: { experience: 'employment end date' },
+  school: { education: 'school' },
+  'graduation date': { education: 'graduation date' },
 };
 
 /** The domain a section heading names, or null when it names none. */

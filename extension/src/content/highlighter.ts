@@ -2,10 +2,10 @@ import {
   ANNOTATION_BADGES,
   ANNOTATION_COLOURS,
   isDrawnAnnotation,
-  markExtensionOwned,
   type AnnotationKind,
   type ReviewReason,
 } from '@internship-agent/shared';
+import { createOwnedElement } from './ownedDom.js';
 
 /**
  * Draws attention to fields that need a person, without editing the employer's
@@ -76,11 +76,10 @@ function ensureLayer(): HTMLElement {
   if (layer?.isConnected) return layer;
   host = document.getElementById(HOST_ID);
   if (!host) {
-    host = document.createElement('div');
-    host.id = HOST_ID;
     // Claims the whole subtree, shadow root included, so the next scan skips
     // every badge and check mark instead of reading them as page content.
-    markExtensionOwned(host);
+    host = createOwnedElement(document, 'div');
+    host.id = HOST_ID;
     // The host itself must never intercept a click meant for the application.
     host.style.cssText =
       'position:absolute;top:0;left:0;width:0;height:0;pointer-events:none;z-index:2147483646;';
@@ -88,7 +87,7 @@ function ensureLayer(): HTMLElement {
   }
   const root = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
   root.replaceChildren();
-  const style = document.createElement('style');
+  const style = createOwnedElement(document, 'style');
   style.textContent = `
     .layer { position: absolute; top: 0; left: 0; pointer-events: none; }
     .badge {
@@ -107,7 +106,7 @@ function ensureLayer(): HTMLElement {
       pointer-events: none;
     }
   `;
-  const created = document.createElement('div');
+  const created = createOwnedElement(document, 'div');
   created.className = 'layer';
   root.append(style, created);
   layer = created;
@@ -175,7 +174,7 @@ export function highlightField(request: HighlightRequest): boolean {
   const container = ensureLayer();
   const colour = COLOURS[request.annotation];
 
-  const badgeNode = document.createElement('div');
+  const badgeNode = createOwnedElement(document, 'div');
   badgeNode.className = request.annotation === 'verified' ? 'check' : 'badge';
   if (request.annotation === 'verified') {
     // A tick, not a banner. Twenty-five green labels down a filled form is

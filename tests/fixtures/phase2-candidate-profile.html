@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Candidate Profile — Phase 2 scanner fixture</title>
+    <style>
+      body {
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        margin: 24px;
+      }
+      .accordion-header {
+        display: block;
+        width: 100%;
+        text-align: left;
+        font-weight: 600;
+        background: #eef;
+        border: 1px solid #99c;
+        padding: 8px;
+      }
+      .field {
+        margin: 8px 0;
+      }
+      .required-indicator {
+        color: #b00;
+      }
+      .validation-summary {
+        border: 1px solid #b00;
+        padding: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Candidate Profile</h1>
+
+    <!--
+      Instructional prose. Reads exactly like a question to anything that
+      harvests text, and answers nothing.
+    -->
+    <p class="instructions">
+      Complete every section marked required before continuing. Fields marked with an asterisk are
+      mandatory and must be completed.
+    </p>
+    <p class="instructions">
+      Please provide your legal name as it appears on your government-issued identification.
+    </p>
+
+    <!-- A validation summary the page renders after a failed submit. -->
+    <div class="validation-summary" role="alert">
+      <p>Information needed. Please complete all required fields before continuing.</p>
+      <ul>
+        <li>City is required.</li>
+        <li>Country is required.</li>
+      </ul>
+    </div>
+
+    <form id="candidate-profile">
+      <!-- ============================ Name ============================ -->
+      <fieldset id="name-section">
+        <legend>Name</legend>
+        <div class="field">
+          <label for="firstName">First Name<span class="required-indicator">*</span></label>
+          <input id="firstName" name="firstName" type="text" required />
+        </div>
+        <div class="field">
+          <label for="middleName">Middle Name</label>
+          <input id="middleName" name="middleName" type="text" />
+        </div>
+        <div class="field">
+          <label for="lastName">Last Name<span class="required-indicator">*</span></label>
+          <input id="lastName" name="lastName" type="text" required />
+        </div>
+      </fieldset>
+
+      <!-- =========================== Phones =========================== -->
+      <!--
+        An iCIMS-shaped accordion header. It is a button with aria-expanded and
+        aria-controls, it says "required", and it is not a control.
+      -->
+      <button
+        type="button"
+        class="accordion-header"
+        id="phones-header"
+        aria-expanded="true"
+        aria-controls="phones-panel"
+      >
+        Phones (1)* required.
+      </button>
+      <div id="phones-panel" role="region" aria-labelledby="phones-header">
+        <p class="instructions">At least one phone number is required.</p>
+        <div class="field">
+          <label for="phoneType">Type</label>
+          <select id="phoneType" name="phoneType">
+            <option value="">Select…</option>
+            <option value="mobile">Mobile</option>
+            <option value="home">Home</option>
+            <option value="work">Work</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="phoneNumber">Number<span class="required-indicator">*</span></label>
+          <input id="phoneNumber" name="phoneNumber" type="tel" required />
+        </div>
+      </div>
+
+      <!-- ========================== Addresses ========================== -->
+      <button
+        type="button"
+        class="accordion-header"
+        id="addresses-header"
+        aria-expanded="true"
+        aria-controls="addresses-panel"
+      >
+        Addresses (1)* required.
+      </button>
+      <div id="addresses-panel" role="region" aria-labelledby="addresses-header">
+        <p class="instructions">Enter the address where you currently receive mail.</p>
+        <div class="field">
+          <label for="addressType">Type</label>
+          <select id="addressType" name="addressType">
+            <option value="">Select…</option>
+            <option value="home">Home</option>
+            <option value="mailing">Mailing</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="addressLine1">Address<span class="required-indicator">*</span></label>
+          <input id="addressLine1" name="addressLine1" type="text" required />
+        </div>
+        <div class="field">
+          <label for="addressLine2">Address 2</label>
+          <input id="addressLine2" name="addressLine2" type="text" />
+        </div>
+        <div class="field">
+          <label for="city">City<span class="required-indicator">*</span></label>
+          <input id="city" name="city" type="text" required />
+        </div>
+        <div class="field">
+          <label for="postalCode">ZIP/Postal Code<span class="required-indicator">*</span></label>
+          <input id="postalCode" name="postalCode" type="text" required />
+        </div>
+        <div class="field">
+          <label for="country">Country<span class="required-indicator">*</span></label>
+          <select id="country" name="country" required>
+            <option value="">Select…</option>
+            <option value="US">United States</option>
+            <option value="CA">Canada</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="stateProvince">State/Province<span class="required-indicator">*</span></label>
+          <select id="stateProvince" name="stateProvince" required>
+            <option value="">Select…</option>
+            <option value="NJ">New Jersey</option>
+            <option value="NY">New York</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ==================== Professional Experience ==================== -->
+      <h2 id="experience-heading">Professional Experience</h2>
+      <div role="region" aria-labelledby="experience-heading">
+        <div class="field">
+          <label for="employer">Employer</label>
+          <input id="employer" name="employer" type="text" />
+        </div>
+        <div class="field">
+          <label for="experienceTitle">Position or Title</label>
+          <input id="experienceTitle" name="experienceTitle" type="text" />
+        </div>
+        <div class="field">
+          <label for="experienceLocation">Location</label>
+          <input id="experienceLocation" name="experienceLocation" type="text" />
+        </div>
+        <div class="field">
+          <label for="experienceStart">Start Date</label>
+          <input id="experienceStart" name="experienceStart" type="date" />
+        </div>
+        <div class="field">
+          <label for="experienceEnd">End Date</label>
+          <input id="experienceEnd" name="experienceEnd" type="date" />
+        </div>
+      </div>
+
+      <!-- ========================== Education ========================== -->
+      <h2 id="education-heading">Education</h2>
+      <div role="region" aria-labelledby="education-heading">
+        <div class="field">
+          <label for="school">School</label>
+          <input id="school" name="school" type="text" />
+        </div>
+        <div class="field">
+          <label for="degree">Degree</label>
+          <input id="degree" name="degree" type="text" />
+        </div>
+        <div class="field">
+          <label for="major">Major</label>
+          <input id="major" name="major" type="text" />
+        </div>
+        <div class="field">
+          <label for="graduationDate">Graduation Date</label>
+          <input id="graduationDate" name="graduationDate" type="month" />
+        </div>
+
+        <!--
+          One select, named three ways at once: an explicit label[for], an
+          aria-labelledby pointing at a second node, and section text beside it.
+          Every one of those is a label strategy the scanner knows; together
+          they must still produce exactly one field.
+        -->
+        <p id="education-level-caption">Highest Level of Education</p>
+        <div class="field">
+          <label for="highestEducation">Highest Level of Education</label>
+          <select
+            id="highestEducation"
+            name="highestEducation"
+            aria-labelledby="education-level-caption"
+          >
+            <option value="">Select…</option>
+            <option value="hs">High School</option>
+            <option value="ba">Bachelor's Degree</option>
+            <option value="ms">Master's Degree</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ====================== Grouped controls ====================== -->
+      <h2 id="additional-heading">Additional Questions</h2>
+      <fieldset id="authorization-group">
+        <legend>Are you legally authorized to work in the United States?</legend>
+        <label><input type="radio" name="workAuthorized" value="yes" /> Yes</label>
+        <label><input type="radio" name="workAuthorized" value="no" /> No</label>
+      </fieldset>
+
+      <div class="field">
+        <label>
+          <input type="checkbox" id="marketingConsent" name="marketingConsent" />
+          I agree to receive text messages about my application.
+        </label>
+      </div>
+
+      <!-- ========================= Navigation ========================= -->
+      <div class="actions">
+        <button type="button" id="previous-step">Previous</button>
+        <button type="button" id="next-step">Next</button>
+        <button type="submit" id="final-submit">Submit Application</button>
+      </div>
+    </form>
+
+    <!--
+      A nested frame containing a control identical in name, id and label to one
+      in the parent document.
+    -->
+    <iframe
+      id="nested-details"
+      title="Additional details"
+      src="./phase2-candidate-profile-frame.html"
+      width="600"
+      height="200"
+    ></iframe>
+
+    <!--
+      Extension-owned annotations, exactly as the review layer leaves them: a
+      marked host, a badge inside it, and a control the extension itself owns.
+      None of this belongs to the employer and none of it is a question.
+    -->
+    <div data-internship-agent-owned="true" id="internship-agent-review-layer-fixture">
+      <div class="badge">Information needed</div>
+      <div class="badge">Manual response required</div>
+      <label for="agent-autofill-toggle">Enable AI Autofill</label>
+      <input id="agent-autofill-toggle" name="agentAutofillToggle" type="checkbox" />
+      <select id="agent-annotation-filter" name="agentAnnotationFilter">
+        <option value="all">All fields</option>
+      </select>
+      <button type="button" id="agent-autofill-button">Autofill Application</button>
+    </div>
+  </body>
+</html>

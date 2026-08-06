@@ -13,6 +13,7 @@ import {
   type FieldOption,
   type FieldSection,
   type FieldType,
+  type RequiredSource,
   type SemanticType,
 } from '@internship-agent/shared';
 
@@ -696,77 +697,281 @@ function optionsFor(elements: HTMLElement[], fieldType: FieldType): FieldOption[
 const REQUIRED_CLASS = /\b(required|mandatory|is-required|reqfield|asterisk)\b/i;
 
 /**
- * Validation wording that means "this one is still needed".
+ * A required marker in a label's own words.
  *
- * Taleo says "Information needed" and "Manual response required" rather than
- * marking the input, so these are read as a requirement in their own right.
+ * Deliberately much narrower than the wording this replaced, which also read
+ * "information needed", "manual response required", "please complete" and
+ * "cannot be blank". Every one of those is a *validation message*, and a
+ * validation message near a control says the page rejected something, not that
+ * this control is mandatory. Reading them as a requirement is how a validation
+ * summary listing two missing fields made every control beside it required.
  */
-const REQUIRED_TEXT =
-  /(^|\s)\*(\s|$)|\brequired\b|\bmandatory\b|\bthis field is needed\b|\binformation needed\b|\bmanual response required\b|\bplease (complete|answer|provide)\b|\bcannot be (blank|empty)\b|\bmust be (completed|answered|provided)\b/i;
+const REQUIRED_MARKER_TEXT = /\*|\brequired\b|\bmandatory\b/i;
+
+/** Nodes that carry a page's complaint rather than a control's own caption. */
+const VALIDATION_NODE_SELECTOR =
+  '[role="alert"], [role="status"], .error, .validation, .validation-summary, [class*="error"], [class*="validation"], [data-automation-id*="error"]';
+
+/** Attributes an ATS uses to declare a control mandatory. */
+const ATS_REQUIRED_ATTRIBUTES = ['data-required', 'data-is-required', 'data-mandatory'] as const;
+
+/** Containers an employer wraps a single question in. */
+const FIELD_WRAPPER_SELECTOR =
+  'label, .field, .form-field, .iCIMS_InfoField, [data-automation-id*="formField"], [data-qa*="field"], [class*="fieldEntry"], [class*="_fieldEntry"]';
 
 /**
- * Containers that wrap exactly one question.
+ * The innermost employer container that holds this control (or this group) and
+ * nothing else answerable.
  *
- * `fieldset` is deliberately absent. A fieldset groups several questions, so
- * reading its text for an asterisk marks every field in the group required as
- * soon as one of them is — on the iCIMS fixture that made "Middle Name"
- * required because "First Name *" sits beside it. A legend's *own* asterisk is
- * still honoured below; what is excluded is the rest of the group's text.
+ * Exclusivity is the whole point. A container holding several questions cannot
+ * say which of them an asterisk belongs to, and assuming it belongs to all of
+ * them is precisely how "Middle Name" became required because "First Name *"
+ * sat beside it inside the same fieldset.
  */
-const REQUIRED_CONTAINER_SELECTOR =
-  'label, .field, .form-field, .iCIMS_InfoField, [data-automation-id*="formField"], [data-qa*="field"], [class*="required"], [class*="mandatory"]';
-
-function isRequired(element: HTMLElement, label: string): boolean {
-  if ((isInput(element) || isTextArea(element) || isSelect(element)) && element.required) {
-    return true;
+function exclusiveContainer(elements: readonly HTMLElement[]): HTMLElement | null {
+  const first = elements[0];
+  if (!first) return null;
+  const selector = `${FIELD_WRAPPER_SELECTOR}, fieldset, [role="radiogroup"], [role="group"]`;
+  let container = first.closest<HTMLElement>(selector);
+  // Climb until the container holds the *whole* group. Each option of a radio
+  // group is wrapped in its own `<label>`, so the innermost wrapper holds one
+  // option and could never see the legend that asks the question.
+  while (container && !elements.every((element) => container?.contains(element))) {
+    container = container.parentElement?.closest<HTMLElement>(selector) ?? null;
   }
-  if (element.getAttribute('aria-required') === 'true') return true;
-  // An invalid control is one the page has already refused to accept.
-  if (element.getAttribute('aria-invalid') === 'true') return true;
-
-  const container = element.closest(REQUIRED_CONTAINER_SELECTOR);
-  // The legend of the enclosing group, read on its own. "Required information"
-  // as a legend applies to every field under it, which is a real pattern; the
-  // rest of the group's text is not.
-  const legend = element.closest('fieldset')?.querySelector(':scope > legend') ?? null;
-
-  // A required marker on the control, its own container, or that legend.
-  for (const candidate of [element, container, legend]) {
-    if (!candidate) continue;
-    const className =
-      typeof candidate.className === 'string'
-        ? candidate.className
-        : candidate.getAttribute('class');
-    if (className && REQUIRED_CLASS.test(className)) return true;
-    if (candidate.querySelector('[class*="asterisk"], [class*="required-indicator"]')) return true;
-  }
-
-  const containerText = cleanText(container?.textContent);
-  const legendText = cleanText(legend?.textContent);
-  return REQUIRED_TEXT.test(`${label} ${containerText} ${legendText}`);
+  if (!container || isExtensionOwned(container)) return null;
+  const others = Array.from(container.querySelectorAll<HTMLElement>(CONTROL_SELECTOR)).filter(
+    (candidate) => !elements.includes(candidate) && !shouldIgnore(candidate),
+  );
+  return others.length === 0 ? container : null;
 }
 
+/** True when this element itself declares a requirement in vendor metadata. */
+function hasAtsRequiredMetadata(element: Element): boolean {
+  for (const attribute of ATS_REQUIRED_ATTRIBUTES) {
+    const value = element.getAttribute(attribute);
+    if (value !== null && value !== 'false') return true;
+  }
+  if (/required/i.test(element.getAttribute('data-automation-id') ?? '')) return true;
+  const className =
+    typeof element.className === 'string'
+      ? element.className
+      : (element.getAttribute('class') ?? '');
+  return REQUIRED_CLASS.test(className);
+}
+
+/**
+ * A label node's own text, with validation messages and any nested control
+ * stripped out.
+ *
+ * A wrapping `<label>` around a radio group contains every option's words, and
+ * a field container often contains the page's complaint about the field. Neither
+ * is the caption, and neither may contribute an asterisk.
+ */
+function captionText(node: Element): string {
+  const clone = node.cloneNode(true) as Element;
+  for (const noise of clone.querySelectorAll(`${VALIDATION_NODE_SELECTOR}, ${CONTROL_SELECTOR}`)) {
+    noise.remove();
+  }
+  return cleanText(clone.textContent);
+}
+
+/** True when a caption node carries a required marker of any kind. */
+function hasRequiredMarker(node: Element): boolean {
+  if (
+    node.querySelector(
+      '[class*="asterisk"], [class*="required-indicator"], abbr[title*="required" i]',
+    )
+  ) {
+    return true;
+  }
+  return REQUIRED_MARKER_TEXT.test(captionText(node));
+}
+
+/**
+ * The caption nodes bound to this exact control — and to no other.
+ *
+ * `label[for]`, a wrapping `<label>`, and `aria-labelledby` are bindings the
+ * platform itself resolves, so a marker in one of them is unambiguously about
+ * this control. The exclusive container's own caption is included because that
+ * is where an ATS puts the asterisk when it renders it outside the `<label>`.
+ * Nothing else is consulted: not a heading, not a sibling field, not the rest of
+ * a shared fieldset.
+ */
+function associatedCaptions(
+  elements: readonly HTMLElement[],
+  container: HTMLElement | null,
+): Element[] {
+  const nodes = new Set<Element>();
+  for (const element of elements) {
+    if (element.id) {
+      const explicit = element.ownerDocument.querySelector(`label[for="${cssEscape(element.id)}"]`);
+      if (explicit) nodes.add(explicit);
+    }
+    const wrapped = element.closest('label');
+    if (wrapped) nodes.add(wrapped);
+    for (const id of cleanText(element.getAttribute('aria-labelledby'))
+      .split(' ')
+      .filter(Boolean)) {
+      const target = element.ownerDocument.getElementById(id);
+      if (target) nodes.add(target);
+    }
+  }
+  if (container) {
+    if (container.matches('fieldset')) {
+      const legend = container.querySelector(':scope > legend');
+      if (legend) nodes.add(legend);
+    } else {
+      for (const caption of container.querySelectorAll(
+        'label, legend, .label, .question, [class*="label"]',
+      )) {
+        nodes.add(caption);
+      }
+    }
+  }
+  return [...nodes].filter((node) => !isExtensionOwned(node));
+}
+
+export interface RequiredEvidence {
+  required: boolean;
+  source: RequiredSource;
+}
+
+/**
+ * Whether this control (or group) is required, and on what evidence.
+ *
+ * Strictly ordered, strongest first, and every step is scoped to the control
+ * itself or to a structure that provably contains nothing else. What is
+ * deliberately absent: `aria-invalid` (a rejection, not a requirement), section
+ * heading text, sibling fields, and validation messages.
+ */
+export function requiredEvidence(elements: readonly HTMLElement[]): RequiredEvidence {
+  const grouped = elements.length > 1;
+  const groupSource: RequiredSource = grouped ? 'group_requirement' : 'associated_visual_marker';
+
+  // 1 & 2 — the native property, then the bare attribute for controls that are
+  // not form elements and therefore have no property to read.
+  for (const element of elements) {
+    if ((isInput(element) || isTextArea(element) || isSelect(element)) && element.required) {
+      return { required: true, source: 'native_required' };
+    }
+    if (element.hasAttribute('required')) {
+      return { required: true, source: 'native_required' };
+    }
+  }
+
+  // 3 — the accessibility declaration.
+  for (const element of elements) {
+    if (element.getAttribute('aria-required') === 'true') {
+      return { required: true, source: 'aria_required' };
+    }
+  }
+
+  // 4 — vendor metadata on the control itself.
+  for (const element of elements) {
+    if (hasAtsRequiredMetadata(element)) return { required: true, source: 'ats_metadata' };
+  }
+
+  const container = exclusiveContainer(elements);
+
+  // 5 — a requirement attached to the actual group, never to a shared ancestor.
+  if (container) {
+    if (container.getAttribute('aria-required') === 'true') {
+      return { required: true, source: grouped ? 'group_requirement' : 'aria_required' };
+    }
+    if (hasAtsRequiredMetadata(container)) {
+      return { required: true, source: grouped ? 'group_requirement' : 'ats_metadata' };
+    }
+  }
+
+  // 6 — a visible marker inside a caption bound to this exact control.
+  for (const caption of associatedCaptions(elements, container)) {
+    if (hasRequiredMarker(caption)) return { required: true, source: groupSource };
+  }
+
+  return { required: false, source: 'none' };
+}
+
+/** Elements an employer uses to head a section. Legends are handled separately. */
+const HEADING_SELECTOR =
+  'h1, h2, h3, h4, h5, h6, [role="heading"], .section-title, [class*="sectionTitle"], [data-automation-id*="sectionTitle"], [data-automation-id*="sectionHeader"]';
+
+/** Employer-owned structures that own the controls inside them. */
+const SECTION_CONTAINER_SELECTOR =
+  'fieldset, section, [role="region"], [role="group"], [role="radiogroup"], [data-automation-id*="section" i]';
+
+/**
+ * The last heading inside a node, or the node's own text when it *is* a
+ * heading.
+ *
+ * Legends are excluded deliberately: a legend belongs to its own fieldset and to
+ * nothing after it, so borrowing one for the next control down the page names a
+ * section that ended.
+ */
+function headingWithin(node: Element): string {
+  if (isExtensionOwned(node)) return '';
+  if (node.matches(HEADING_SELECTOR)) return cleanText(node.textContent);
+  const found = node.querySelectorAll<HTMLElement>(HEADING_SELECTOR);
+  for (let index = found.length - 1; index >= 0; index -= 1) {
+    const candidate = found[index];
+    if (!candidate || isExtensionOwned(candidate)) continue;
+    const text = cleanText(candidate.textContent);
+    if (text) return text;
+  }
+  return '';
+}
+
+/**
+ * The section heading that actually governs this control.
+ *
+ * The previous implementation asked each ancestor for *any* direct-child
+ * heading, via `querySelector`, which returns the first in document order
+ * regardless of where the control sits. On a form whose direct children include
+ * `<h2>Professional Experience</h2>` and `<h2>Education</h2>`, every control not
+ * wrapped in a fieldset — the whole Phones block, the whole Addresses block, and
+ * all of Education — came back headed "Professional Experience". That is the
+ * root cause of the section-context failures: "Type" under Phones never saw a
+ * phone heading, so it never became `phone_type`, and the two "Type" controls on
+ * the page were indistinguishable.
+ *
+ * Resolution order, each step naming the *nearest* employer-owned structure:
+ *
+ *  1. the control's own fieldset legend;
+ *  2. the accessible name of the nearest section container — which is how an
+ *     ATS accordion says "these controls belong to the panel that header opened"
+ *     (`role="region"` + `aria-labelledby`), and the only way to reach an
+ *     accordion header that is a `<button>` rather than an `<h*>`;
+ *  3. the nearest heading *preceding* the control, walking outward through
+ *     earlier siblings at each level.
+ *
+ * Extension-owned nodes can never supply a heading at any step.
+ */
 function nearestHeading(element: HTMLElement): string {
   const fieldsetLegend = cleanText(
     element.closest('fieldset')?.querySelector(':scope > legend')?.textContent,
   );
   if (fieldsetLegend) return fieldsetLegend;
 
-  let current: Element | null = element.parentElement;
-  while (current && current !== element.ownerDocument.body) {
-    const heading = current.querySelector<HTMLElement>(
-      ':scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > [role="heading"], :scope > .section-title, :scope > [data-automation-id*="sectionTitle"]',
-    );
-    const value = cleanText(heading?.textContent);
-    if (value) return value;
-    current = current.parentElement;
+  const section = element.closest<HTMLElement>(SECTION_CONTAINER_SELECTOR);
+  if (section && !isExtensionOwned(section)) {
+    const labelled = textByIds(section, 'aria-labelledby');
+    if (labelled) return labelled;
+    const aria = cleanText(section.getAttribute('aria-label'));
+    if (aria) return aria;
   }
 
-  let previous: Element | null = element;
-  while ((previous = previous.previousElementSibling)) {
-    if (/^H[1-6]$/.test(previous.tagName) || previous.getAttribute('role') === 'heading') {
-      return cleanText(previous.textContent);
+  let node: Element | null = element;
+  const body = element.ownerDocument.body;
+  while (node && node !== body) {
+    for (
+      let sibling: Element | null = node.previousElementSibling;
+      sibling;
+      sibling = sibling.previousElementSibling
+    ) {
+      const text = headingWithin(sibling);
+      if (text) return text;
     }
+    node = node.parentElement;
   }
   return '';
 }
@@ -942,6 +1147,7 @@ function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedFie
           .map((element) => (element as HTMLInputElement).value)
       : selectedValue(first, type);
   const { helpText, validationText } = helpAndValidation(first);
+  const required = requiredEvidence(elements);
 
   return detectedFieldSchema.parse({
     id: stableId(`${pageId}|${selector}|${normalizedLabel}`),
@@ -955,7 +1161,8 @@ function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedFie
       ? { semanticType: semanticFromCanonical(match.question) }
       : {}),
     selector,
-    required: elements.some((element) => isRequired(element, label)),
+    required: required.required,
+    requiredSource: required.source,
     visible: true,
     disabled: false,
     ...(value !== undefined ? { currentValue: value } : {}),
@@ -979,6 +1186,10 @@ function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedFie
       tagName: first.tagName.toLowerCase(),
       frameUrl: first.ownerDocument.location?.href,
       groupedControls: elements.length,
+      // The radio/checkbox group this question is answered through, so the
+      // executor addresses the group rather than one member of it, and so two
+      // groups sharing a caption stay two questions.
+      ...(grouped && first.getAttribute('name') ? { groupName: first.getAttribute('name') } : {}),
       readOnly: true,
       // Context the resolver and the model both read. Recorded here rather than
       // folded into the label so the label stays the question the page asked.
@@ -1043,6 +1254,43 @@ function informationScore(field: DetectedField): number {
   return (field.options?.length ?? 0) * 10 + field.confidence;
 }
 
+/**
+ * The invariant that no normalized field may come from the extension's own DOM.
+ *
+ * `shouldIgnore` already refuses every extension-owned element, so reaching this
+ * means a filter was bypassed — a new UI surface that forgot the marker, or a
+ * control the extension moved into the page. Both are defects that would publish
+ * the agent's own affordances as employer questions ("Enable AI Autofill" was
+ * reported as an application question exactly this way), so the field is dropped
+ * and the scan says so rather than quietly shipping it.
+ */
+export function extensionOwnedViolation(elements: readonly HTMLElement[]): boolean {
+  return elements.some((element) => isExtensionOwned(element));
+}
+
+/**
+ * The invariant that one DOM control produces at most one normalized field.
+ *
+ * Throws rather than warns. Two fields addressing one control means the run will
+ * write it twice and verify neither, and reporting both as answered is a lie the
+ * rest of the pipeline has no way to detect.
+ */
+function claimControls(
+  owners: Map<HTMLElement, string>,
+  elements: readonly HTMLElement[],
+  fieldId: string,
+): void {
+  for (const element of elements) {
+    const existing = owners.get(element);
+    if (existing !== undefined) {
+      throw new Error(
+        `Scanner produced two fields for one control: ${existing} and ${fieldId} both address <${element.tagName.toLowerCase()}>.`,
+      );
+    }
+    owners.set(element, fieldId);
+  }
+}
+
 function scanOnce(document: Document, pageId: string): DomScanResult {
   const warnings: string[] = [];
   const roots = collectRoots(document, warnings);
@@ -1060,6 +1308,8 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
    * questions apart when they shared a label, which the identity can.
    */
   const byIdentity = new Map<string, DetectedField>();
+  /** Which field claimed each control, so no control can be claimed twice. */
+  const controlOwners = new Map<HTMLElement, string>();
   const census: ScanCensus = {
     rawControls: 0,
     falseControlsRemoved: 0,
@@ -1094,6 +1344,14 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
     }
 
     for (const elements of groups.values()) {
+      // Asserted here rather than trusted from `shouldIgnore`, so a future
+      // extension surface that forgets the marker fails loudly instead of being
+      // published as an employer question.
+      if (extensionOwnedViolation(elements)) {
+        census.falseControlsRemoved += elements.length;
+        warnings.push('EXTENSION_OWNED_CONTROL_REJECTED: agent UI reached the field scan.');
+        continue;
+      }
       const field = fieldFromElements(elements, pageId);
       // A group that produced no field was matched by the selector but is not a
       // question — a heading, a container, a control with nothing answerable.
@@ -1101,6 +1359,7 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
         census.falseControlsRemoved += elements.length;
         continue;
       }
+      claimControls(controlOwners, elements, field.id);
       const key = questionIdentity(field);
       const existing = byIdentity.get(key);
       if (existing) census.duplicateControlsRemoved += 1;

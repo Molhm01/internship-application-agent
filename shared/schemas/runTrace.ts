@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatus.js';
+import { requiredSourceSchema } from './fields.js';
 
 /**
  * One autofill run, described in counts and outcomes only.
@@ -79,6 +80,15 @@ export const fieldTraceSchema = z
     intent: z.string().max(120).optional(),
     controlType: z.string().max(40),
     required: z.boolean(),
+    /**
+     * The evidence behind `required`. A vocabulary member, never page text — an
+     * asterisk's *location* is diagnostic, its wording is not.
+     *
+     * Without it, "this field was marked required" and "this field inherited an
+     * asterisk from the section above it" are the same record, and the second is
+     * a scanner defect that reads as a form the user failed to complete.
+     */
+    requiredSource: requiredSourceSchema.optional(),
     plannerSource: tracePlannerSourceSchema,
     /**
      * Whether a saved value existed to answer this question — yes or no, never
