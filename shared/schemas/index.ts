@@ -22,3 +22,4 @@ export * from './applicationBundle.js';
 export * from './formAnalysis.js';
 export * from './employerAccounts.js';
 export * from './runTrace.js';
+export * from './pageControls.js';

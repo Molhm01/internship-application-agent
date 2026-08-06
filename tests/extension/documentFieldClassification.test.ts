@@ -4,7 +4,7 @@ import {
   selectDocumentTargets,
   type DocumentFieldKind,
 } from '@internship-agent/shared';
-import { collectDocumentFileFields } from '../../extension/src/uploads/documentAttachment.js';
+import { surveyUploadControls } from '../../extension/src/uploads/uploadControls.js';
 
 /**
  * What each upload control wants, decided from text alone and without a model.
@@ -102,7 +102,7 @@ describe('choosing which field each document goes in', () => {
 });
 
 describe('collecting file fields from a page', () => {
-  it('finds hidden inputs, skips disabled ones, and reads no text field', () => {
+  it('finds hidden inputs, skips disabled ones, and reads no text field', async () => {
     document.body.innerHTML = `
       <label for="r">Resume</label><input id="r" type="file" />
       <input id="hidden-resume" name="resume_alt" type="file" style="display:none" />
@@ -112,8 +112,8 @@ describe('collecting file fields from a page', () => {
       <button id="submit-application" type="submit">Submit</button>
     `;
 
-    const fields = collectDocumentFileFields(document);
-    expect(fields.map((entry) => entry.element.id)).toEqual(['r', 'hidden-resume', 'c']);
+    const fields = (await surveyUploadControls(document, false)).controls;
+    expect(fields.map((entry) => entry.input?.id)).toEqual(['r', 'hidden-resume', 'c']);
     expect(fields.map((entry) => entry.kind)).toEqual(['resume', 'resume', 'cover_letter']);
   });
 });

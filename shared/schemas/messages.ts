@@ -109,6 +109,15 @@ export const executeFillPlanMessageSchema = z.object({
   plan: deterministicFillPlanSchema,
   /** Only files referenced by approved upload actions are included. */
   documentContents: z.array(documentContentResponseSchema).max(10).default([]),
+  /**
+   * The URL of the frame this slice of the plan is for.
+   *
+   * A form split across frames is executed one frame at a time, and a subframe's
+   * URL is legitimately not the scan's. Present, the receiving frame checks
+   * itself against this instead of against `scan.url`; absent, it checks against
+   * `scan.url` exactly as before, so a single-frame page is unaffected.
+   */
+  frameUrl: z.string().max(2048).optional(),
 });
 export const fillProgressMessageSchema = z.object({
   type: z.literal('FILL_PROGRESS'),

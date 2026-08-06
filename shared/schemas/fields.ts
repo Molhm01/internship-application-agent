@@ -166,6 +166,21 @@ export const fieldValueSchema = z.union([
 export const detectedFieldSchema = z.object({
   id: idSchema,
   pageId: idSchema,
+  /**
+   * The frame this control actually lives in.
+   *
+   * An application is routinely not one document: iCIMS, Workday and
+   * SmartRecruiters render the upload section, and sometimes the whole form, in
+   * an iframe. A field discovered in a subframe and then executed against the
+   * top frame silently does nothing, so frame identity travels with the field
+   * from the moment it is found to the moment it is filled.
+   *
+   * Optional because the frame id is assigned by the background worker, which is
+   * the only side that knows it — the page cannot learn its own frame id. A
+   * field the worker has not stamped is treated as the main frame (0).
+   */
+  frameId: z.number().int().nonnegative().optional(),
+  frameUrl: z.string().max(2048).optional(),
   label: z.string().max(2000),
   normalizedLabel: z.string().max(2000),
   canonicalKey: canonicalQuestionSchema.optional(),

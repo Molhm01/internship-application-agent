@@ -16,6 +16,50 @@ import {
   verifyDomAction,
 } from '../verifier/domVerifier.js';
 import { selectComboboxOption } from './comboboxExecutor.js';
+import { answersFromList } from '../scanner/domScanner.js';
+
+/**
+ * The DOM types a browser lets a person type into.
+ *
+ * Kept here as well as in the scanner because the two must not be able to drift:
+ * the scanner decides what a control *is*, and this decides what may be *done*
+ * to it, and a repair applied to only one of them is how "No option on the page
+ * matched 'Molhm'" came back the first time.
+ */
+const TYPED_INPUT_TYPES = new Set(['text', 'email', 'tel', 'number', 'url', 'search', '']);
+
+function isTypedTextElement(element: HTMLElement): boolean {
+  if (element instanceof HTMLTextAreaElement) return !element.readOnly;
+  if (!(element instanceof HTMLInputElement)) return false;
+  if (element.readOnly) return false;
+  if (!TYPED_INPUT_TYPES.has(element.type.toLowerCase())) return false;
+  // A searchable Country or Location box is an editable input that genuinely
+  // answers from a list, and typing into it leaves the widget's own state unset.
+  // The discriminator is whether there is a list to answer from — not whether
+  // the element calls itself a combobox.
+  return !answersFromList(element);
+}
+
+/**
+ * Why this action may not be performed on this element, or null when it may.
+ *
+ * Only the case that caused real damage is enforced: an option-selecting action
+ * aimed at a control that is typed into. The reverse — typing into a `<select>`
+ * — is already impossible, because `HTMLSelectElement` has no writable value
+ * that accepts arbitrary text.
+ */
+function elementContractViolation(element: HTMLElement, action: string): string | null {
+  const optionActions = new Set([
+    'select_option',
+    'select_suggested_option',
+    'select_resolved_option',
+  ]);
+  if (!optionActions.has(action)) return null;
+  if (!isTypedTextElement(element)) return null;
+  const described =
+    element instanceof HTMLInputElement ? `input[type="${element.type}"]` : 'textarea';
+  return `This control is a ${described}, which is typed into rather than chosen from. "${action}" would search the page for an option list that does not exist, so the value was not written. This is a planning defect, not a missing option.`;
+}
 
 function failure(
   action: DeterministicFillAction,
@@ -285,6 +329,16 @@ export async function executeDomAction(
       'The field fingerprint changed after scanning.',
       started,
     );
+  }
+  // The contract again, this time against the element rather than the recorded
+  // field type. `contractViolation` above can only be as right as the scan was,
+  // and a scan that called an `<input type="text" role="combobox">` a combobox
+  // passes it. This is the check that cannot be fooled by a role attribute: a
+  // control the browser will let you type into is never answered by searching a
+  // list of options.
+  const elementViolation = elementContractViolation(element, action.action);
+  if (elementViolation) {
+    return failure(action, 'UNSUPPORTED_CONTROL', elementViolation, started);
   }
   // A file input the page hides on purpose and drives from a styled button is
   // the standard upload control on every ATS worth naming. It is populated

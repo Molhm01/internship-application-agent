@@ -193,7 +193,7 @@ export function isExtensionOwned(element: Element): boolean {
  * required." became an application question — twice. A control is a dropdown
  * only when the region it controls actually holds options.
  */
-function opensOptionList(element: HTMLElement): boolean {
+export function opensOptionList(element: HTMLElement): boolean {
   // `aria-haspopup` — of any kind, including `dialog` for a date picker — is
   // the element declaring itself a widget trigger. That declaration is enough;
   // it is the *absence* of one that leaves a bare `aria-expanded` ambiguous.
@@ -245,6 +245,10 @@ function isOwnedPopup(element: HTMLElement): boolean {
   );
 }
 
+/** The root of a React Select-style widget, as its own generated classes name it. */
+const REACT_SELECT_ROOT_SELECTOR =
+  '.select__control, [class*="react-select"], [class*="css-"][class*="-control"]';
+
 function shouldIgnore(element: HTMLElement): boolean {
   // Before every other test: an element the extension put on the page is not
   // part of the employer's form, however control-like it looks.
@@ -264,10 +268,14 @@ function shouldIgnore(element: HTMLElement): boolean {
   if (element.getAttribute('role') === 'listbox' && isOwnedPopup(element)) return true;
   // React Select's inner text input is the search box of a control this scan
   // already found. The control root carries the label and the options.
-  if (
-    isInput(element) &&
-    element.closest('.select__control, [class*="react-select"], [class*="css-"][class*="-control"]')
-  ) {
+  //
+  // Scoped to a strict *ancestor*, via `parentElement`. `closest` includes the
+  // element itself, so an `<input type="text" class="select__control">` — a
+  // plain text box that merely inherits a styling class, which is what an ATS
+  // ships for "Legal First Name" — was dropped from the scan entirely. It was
+  // not reported as unsupported or unmatched; it simply was not there, and the
+  // user was told the field could not be filled.
+  if (isInput(element) && element.parentElement?.closest(REACT_SELECT_ROOT_SELECTOR)) {
     return true;
   }
   // An input inside a combobox the scan already reports is that combobox's
@@ -460,9 +468,83 @@ export function isCustomCombobox(element: HTMLElement): boolean {
   return /(^|\s)css-[a-z0-9]+-control(\s|$)/.test(element.className || '');
 }
 
+/**
+ * The DOM types that are typed into, whatever the page says about them.
+ *
+ * This list is consulted *before* any ARIA role or CSS class, and that ordering
+ * is the whole repair. `isCustomCombobox` used to run first, and a live ATS
+ * renders its autocomplete as `<input type="text" role="combobox">` — so
+ * "Legal First Name" was classified `combobox`, `ALLOWED_ACTIONS.combobox`
+ * permits `select_option`, no contract violation was raised, and the executor
+ * searched a list of choices that does not exist and reported
+ * *"No option on the page matched 'Molhm'"* for a box you simply type into.
+ */
+const TYPED_INPUT_TYPES = new Set(['text', 'email', 'tel', 'number', 'url', 'search', '']);
+
+/**
+ * True when this element is written into rather than chosen from, judged from
+ * the element itself.
+ *
+ * Two exceptions, both of which really are choice controls wearing an input's
+ * clothes:
+ *
+ *  - a `readonly` input, which cannot be typed into at all, so calling it text
+ *    would leave it permanently blank;
+ *  - an input that answers from a list of choices, which it says in one of two
+ *    ways: it owns a popup that exists now (`aria-haspopup`, or `aria-controls`
+ *    pointing at a real listbox), or it declares `aria-autocomplete="list"`.
+ *
+ * The second half of that is not redundant. A searchable Location box renders no
+ * listbox at all until it receives a query — the element `aria-controls` names
+ * does not exist yet — and the same is true of a State control whose options
+ * appear only once Country is chosen. `aria-autocomplete` is the platform's own
+ * statement that this input's completions come from a list, and it is the only
+ * evidence available before the user has typed.
+ *
+ * What is deliberately *not* enough is `role="combobox"` on its own, or a
+ * React-Select-shaped class name. Those are what "Legal First Name" carries on a
+ * live ATS, and taking them as evidence of a list is what sent a first name to
+ * an option matcher that reported *"No option on the page matched 'Molhm'"*. The
+ * question is not "does this announce itself as a combobox" but "is there a list
+ * of choices to answer from" — which is precisely the condition under which
+ * option matching can succeed.
+ */
+export function isTypedTextControl(element: HTMLElement): boolean {
+  if (isTextArea(element)) return !element.readOnly;
+  if (!isInput(element)) return false;
+  if (element.readOnly) return false;
+  if (!TYPED_INPUT_TYPES.has(element.type.toLowerCase())) return false;
+  return !answersFromList(element);
+}
+
+/** True when this input takes its answer from a list rather than from typing. */
+export function answersFromList(element: HTMLElement): boolean {
+  const autocomplete = element.getAttribute('aria-autocomplete');
+  if (autocomplete === 'list' || autocomplete === 'both') return true;
+  return opensOptionList(element);
+}
+
 function inferType(element: HTMLElement, grouped = false): FieldType {
-  if (isTextArea(element)) return 'textarea';
   if (isSelect(element)) return element.multiple ? 'multi_select' : 'select';
+  // Before every role and class test. The DOM node's own type is the ground
+  // truth about how a control is answered; ARIA describes how it is announced.
+  if (isTypedTextControl(element)) {
+    if (isTextArea(element)) return 'textarea';
+    switch ((element as HTMLInputElement).type.toLowerCase()) {
+      case 'email':
+        return 'email';
+      case 'tel':
+        return 'tel';
+      case 'number':
+        return 'number';
+      case 'url':
+        return 'url';
+      // `text`, `search`, and a missing `type` are all a plain text box.
+      default:
+        return 'text';
+    }
+  }
+  if (isTextArea(element)) return 'textarea';
   if (element.isContentEditable) return 'contenteditable';
   if (element.getAttribute('role') === 'radiogroup') return 'radio';
   if (element.getAttribute('role') === 'switch') return 'checkbox';

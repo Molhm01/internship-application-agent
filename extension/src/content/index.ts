@@ -14,10 +14,12 @@ import {
   type DeterministicFillAction,
   type FillExecutionResult,
   activateNavigationMessageSchema,
-  attachDocumentsMessageSchema,
-  attachDocumentsResponseSchema,
+  attachToControlMessageSchema,
+  attachToControlResponseSchema,
+  discoverUploadControlsMessageSchema,
+  uploadControlsResponseSchema,
 } from '@internship-agent/shared';
-import { runDocumentAttachment } from '../uploads/attachRun.js';
+import { attachInFrame, discoverInFrame } from '../uploads/frameUploads.js';
 import { BUILD_ID } from '../generated/buildInfo.js';
 import { activateNavigation } from './navigate.js';
 import type { ContentPingResult, ExtensionMessage } from '../messaging/messages.js';
@@ -28,24 +30,31 @@ import { validatePageIdentity } from '../executor/pageProtection.js';
 import { startBundleBridge } from './bundleBridge.js';
 import { clearHighlights, focusField, highlightField, reviewOrder } from './highlighter.js';
 
+/**
+ * Loads exactly once per frame.
+ *
+ * The manifest injects this script at document_idle, and the worker also
+ * injects it with `chrome.scripting.executeScript` — both to repair a frame
+ * that lost its script after an extension reload, and because that injection is
+ * how frames are enumerated in the first place. Without this guard a frame
+ * would end up with two listeners, both of which would call `sendResponse` for
+ * the same message, and Chrome keeps only the first while the second throws.
+ *
+ * The guard is a flag rather than an early `throw`, because a script that
+ * throws makes `executeScript` report an error for that frame — and that error
+ * would be indistinguishable from a frame that genuinely could not be reached.
+ */
+declare global {
+  interface Window {
+    __internshipAgentContentLoaded__?: true;
+  }
+}
+
+const alreadyLoaded = window.__internshipAgentContentLoaded__ === true;
+window.__internshipAgentContentLoaded__ = true;
+
 const controllers = new Map<string, AbortController>();
 const fillControllers = new Map<string, AbortController>();
-
-// Listening costs nothing on a page that never posts a bundle, and it means the
-// user never has to have the popup open for the handoff to land.
-startBundleBridge();
-
-/**
- * Tells the worker this page exists, so a run armed by "Apply with Agent" can
- * begin without the user opening the popup and clicking a second button.
- *
- * Fired once per content-script load, and the worker decides whether anything
- * should happen — the page never gets to request its own automation, which
- * matters because a page can host a script that sends messages.
- */
-void chrome.runtime.sendMessage({ type: 'PAGE_READY', url: window.location.href }).catch(() => {
-  // No worker listening yet. The popup opening will reach the same code.
-});
 
 function scanError(
   code: AgentError['code'],
@@ -89,7 +98,11 @@ function passiveResult(
   });
 }
 
-chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendResponse) => {
+function handleMessage(
+  raw: ExtensionMessage,
+  _sender: chrome.runtime.MessageSender,
+  sendResponse: (response?: unknown) => void,
+): boolean {
   if (raw?.type === 'CONTENT_PING') {
     const result: ContentPingResult = {
       present: true,
@@ -208,43 +221,87 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
     return false;
   }
 
-  if (raw?.type === 'ATTACH_DOCUMENTS_IN_PAGE') {
-    // The document-only path. It reads `input[type=file]` and nothing else — no
-    // text field is scanned, no model is consulted, and no control other than a
-    // file input is touched, so the Submit button is unreachable from here.
-    const parsed = attachDocumentsMessageSchema.safeParse(raw);
+  if (raw?.type === 'DISCOVER_UPLOAD_CONTROLS') {
+    // Phase one of the document path: this frame describes what it can accept a
+    // document into, and decides nothing. No bytes arrive with this message and
+    // none leave with the answer.
+    const parsed = discoverUploadControlsMessageSchema.safeParse(raw);
     if (!parsed.success) {
       sendResponse(
-        attachDocumentsResponseSchema.parse({
-          type: 'ATTACH_DOCUMENTS_FAILED',
+        uploadControlsResponseSchema.parse({
+          type: 'UPLOAD_CONTROLS_FAILED',
           runId: 'unknown',
-          error: scanError(
-            'VALIDATION_FAILED',
-            'The attachment request failed validation and was not acted on.',
-          ),
+          reason: 'The discovery request failed validation and was not acted on.',
         }),
       );
       return false;
     }
     const message = parsed.data;
-    void runDocumentAttachment(document, message.runId, window.location.href, message.documents)
-      .then((report) => {
+    void discoverInFrame(document, message.runId, message.mayActivateLaunchers)
+      .then((survey) => {
         sendResponse(
-          attachDocumentsResponseSchema.parse({ type: 'ATTACH_DOCUMENTS_COMPLETE', report }),
+          uploadControlsResponseSchema.parse({
+            type: 'UPLOAD_CONTROLS',
+            runId: message.runId,
+            // The worker replaces this with the real frame id; a frame cannot
+            // learn its own.
+            survey: { ...survey, frameId: 0 },
+          }),
         );
       })
       .catch((cause: unknown) => {
         sendResponse(
-          attachDocumentsResponseSchema.parse({
-            type: 'ATTACH_DOCUMENTS_FAILED',
+          uploadControlsResponseSchema.parse({
+            type: 'UPLOAD_CONTROLS_FAILED',
             runId: message.runId,
-            error: scanError(
-              'DOCUMENT_ATTACHMENT_FAILED',
-              `The document attachment run failed: ${
-                cause instanceof Error ? cause.message : String(cause)
-              }`,
-              { runId: message.runId },
-            ),
+            reason: `Upload discovery failed in this frame: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
+          }),
+        );
+      });
+    return true;
+  }
+
+  if (raw?.type === 'ATTACH_DOCUMENT_TO_CONTROL') {
+    // Phase two: one document, one control this frame itself offered. The
+    // message carries a `controlId` minted here moments ago and no selector, so
+    // it cannot be used to reach anything this frame did not volunteer.
+    const parsed = attachToControlMessageSchema.safeParse(raw);
+    if (!parsed.success) {
+      sendResponse(
+        attachToControlResponseSchema.parse({
+          type: 'ATTACH_CONTROL_FAILED',
+          runId: 'unknown',
+          failureCode: 'CONTROL_LEFT_PAGE',
+          message: 'The attachment request failed validation and was not acted on.',
+        }),
+      );
+      return false;
+    }
+    const message = parsed.data;
+    void attachInFrame(message.runId, message.controlId, message.document)
+      .then((result) => {
+        sendResponse(
+          attachToControlResponseSchema.parse({
+            type: 'ATTACH_CONTROL_RESULT',
+            runId: message.runId,
+            attached: result.attached,
+            verified: result.verified,
+            failureCode: result.failureCode,
+            message: result.message,
+          }),
+        );
+      })
+      .catch((cause: unknown) => {
+        sendResponse(
+          attachToControlResponseSchema.parse({
+            type: 'ATTACH_CONTROL_FAILED',
+            runId: message.runId,
+            failureCode: 'FILE_TRANSFER_REFUSED',
+            message: `The attachment failed in this frame: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
           }),
         );
       });
@@ -271,7 +328,10 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
     const controller = new AbortController();
     fillControllers.set(message.runId, controller);
     void (async () => {
-      if (!validatePageIdentity(window.location.href, message.scan, message.plan).valid) {
+      if (
+        !validatePageIdentity(window.location.href, message.scan, message.plan, message.frameUrl)
+          .valid
+      ) {
         throw new DOMException(
           'The application page no longer matches the scan.',
           'InvalidStateError',
@@ -417,4 +477,26 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
     .finally(() => controllers.delete(scanId));
 
   return true;
-});
+}
+
+if (!alreadyLoaded) {
+  chrome.runtime.onMessage.addListener(handleMessage);
+
+  // Listening costs nothing on a page that never posts a bundle, and it means
+  // the user never has to have the popup open for the handoff to land.
+  startBundleBridge();
+
+  /**
+   * Tells the worker this page exists, so a run armed by "Apply with Agent" can
+   * begin without the user opening the popup and clicking a second button.
+   *
+   * Sent from the main frame only. A subframe announcing itself would arm a run
+   * against a document that is a fragment of the application, and the worker has
+   * no way to tell the two apart from the message alone.
+   */
+  if (window.top === window) {
+    void chrome.runtime.sendMessage({ type: 'PAGE_READY', url: window.location.href }).catch(() => {
+      // No worker listening yet. The popup opening will reach the same code.
+    });
+  }
+}

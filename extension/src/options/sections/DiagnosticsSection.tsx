@@ -5,6 +5,7 @@ import type {
   DeterministicFillPlan,
   FillRunReport,
   HealthResponse,
+  PageControlTrace,
   ProfileFieldStatus,
   RunTrace,
 } from '@internship-agent/shared';
@@ -47,6 +48,9 @@ export function DiagnosticsSection(): JSX.Element {
   const [traces, setTraces] = useState<RunTrace[]>([]);
   const [sync, setSync] = useState<ExtensionResponse<'SYNC_PROFILE'> | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [pageTrace, setPageTrace] = useState<PageControlTrace | null>(null);
+  const [tracing, setTracing] = useState(false);
+  const [traceError, setTraceError] = useState('');
 
   /**
    * Runs the profile import and shows what it did, key by key.
@@ -99,6 +103,42 @@ export function DiagnosticsSection(): JSX.Element {
   const clearTraces = async (): Promise<void> => {
     await sendMessage({ type: 'CLEAR_RUN_TRACES' });
     setTraces([]);
+  };
+
+  /**
+   * A frame-by-frame account of the upload controls on the page in front of you.
+   *
+   * This exists so a visible "My Computer" button cannot be silently ignored. It
+   * reports every frame, how many file inputs each holds, how many of those are
+   * hidden, how many upload launchers were seen, and how each one was — or was
+   * not — resolved to something a file can be put into. Nothing personal is in
+   * it: no field values, no page text, only structural counts and identifiers.
+   *
+   * Attaching nothing is the point. It never activates a launcher and never
+   * carries a document byte, so it is safe to run on any page at any time.
+   */
+  const exportPageControls = async (): Promise<void> => {
+    setTracing(true);
+    setTraceError('');
+    try {
+      const result = await sendMessage({ type: 'EXPORT_PAGE_CONTROL_TRACE' });
+      if ('error' in result) {
+        setTraceError(result.error.message);
+        return;
+      }
+      const blob = new Blob([JSON.stringify(result.trace, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `page-control-trace-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setPageTrace(result.trace);
+    } catch (cause) {
+      setTraceError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setTracing(false);
+    }
   };
 
   useEffect(() => {
@@ -307,6 +347,61 @@ export function DiagnosticsSection(): JSX.Element {
           ))}
         </ul>
       )}
+
+      <h3>Page control trace</h3>
+      {/*
+        Structural facts about the page in front of you: frames, file inputs,
+        hidden inputs, upload launchers, and how each launcher resolved. Nothing
+        typed into the form and nothing from the profile appears here — which is
+        what makes it safe to attach to a bug report.
+      */}
+      <p className="muted">
+        Frames, upload controls, and how each one was resolved — for the page in the active tab.
+        Counts and identifiers only; no field values or document contents. Nothing is uploaded and
+        no button is pressed.
+      </p>
+      <button type="button" onClick={() => void exportPageControls()} disabled={tracing}>
+        {tracing ? 'Inspecting the page…' : 'Export Page Control Trace'}
+      </button>
+      {traceError ? (
+        <p className="result result--bad" role="alert">
+          {traceError}
+        </p>
+      ) : null}
+      {pageTrace ? (
+        <ul className="diagnostics-traces">
+          <li>
+            <strong>
+              {pageTrace.framesReached} of {pageTrace.totalFrames} frame
+              {pageTrace.totalFrames === 1 ? '' : 's'} answered
+            </strong>{' '}
+            · {Math.round(pageTrace.elapsedMs / 100) / 10}s · build {pageTrace.buildId}
+          </li>
+          {pageTrace.frames.map((frame) => (
+            <li key={frame.frameId}>
+              Frame {frame.frameId}
+              {frame.topFrame ? ' (main)' : ''} · {frame.frameOrigin} · {frame.fileInputs} file
+              input
+              {frame.fileInputs === 1 ? '' : 's'} ({frame.hiddenFileInputs} hidden) ·{' '}
+              {frame.uploadLaunchers} upload launcher
+              {frame.uploadLaunchers === 1 ? '' : 's'} · {frame.cloudLaunchers} cloud button
+              {frame.cloudLaunchers === 1 ? '' : 's'} (never used)
+              {frame.controls.length > 0 ? (
+                <ul>
+                  {frame.controls.map((control) => (
+                    <li key={control.controlId}>
+                      {control.kind} · {control.discovery} ·{' '}
+                      {control.accessible ? 'reachable' : 'no reachable file input'}
+                      {control.hidden ? ' · hidden' : ''}
+                      {control.launcherLabel ? ` · “${control.launcherLabel}”` : ''}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }

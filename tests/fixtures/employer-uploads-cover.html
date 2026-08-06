@@ -1,0 +1,64 @@
+<meta charset="utf-8" />
+<title>Cover letter upload</title>
+<!--
+  The innermost frame: the cover-letter upload, two frames down from the page the
+  user is looking at.
+
+  Its file input exists but is invisible — `opacity: 0`, one pixel, absolutely
+  positioned — and is driven by a styled label. This is the standard shape of an
+  upload widget on every ATS worth naming, and its visibility says nothing about
+  whether it can be filled: it is populated programmatically, not typed into.
+
+  The Google Drive and Dropbox buttons are here because their text matches the
+  same /upload/ pattern a local launcher does. Nothing in the extension may press
+  one; each records the press so a test can prove none was.
+-->
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    margin: 0.5rem;
+  }
+  .upload-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+  #cover-letter-input {
+    opacity: 0;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+  }
+  .filename {
+    font-family: monospace;
+  }
+  label {
+    border: 1px solid #888;
+    border-radius: 4px;
+    padding: 0.25rem 0.75rem;
+    cursor: pointer;
+  }
+</style>
+
+<h3>Cover Letter</h3>
+<p>Attach a cover letter if you have one.</p>
+<div class="upload-row">
+  <label for="cover-letter-input" id="cover-letter-my-computer">My Computer</label>
+  <button type="button" id="cover-gdrive">Google Drive</button>
+  <button type="button" id="cover-dropbox">Dropbox</button>
+</div>
+<input id="cover-letter-input" name="coverLetterFile" type="file" accept="application/pdf" />
+<p class="filename" id="cover-letter-filename"></p>
+
+<script>
+  const input = document.getElementById('cover-letter-input');
+  input.addEventListener('change', () => {
+    document.getElementById('cover-letter-filename').textContent =
+      input.files && input.files[0] ? input.files[0].name : '';
+  });
+
+  for (const id of ['cover-gdrive', 'cover-dropbox']) {
+    document.getElementById(id).addEventListener('click', () => {
+      window.__cloudButtonPressed = (window.__cloudButtonPressed || []).concat(id);
+    });
+  }
+</script>

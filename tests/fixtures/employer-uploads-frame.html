@@ -1,0 +1,27 @@
+<meta charset="utf-8" />
+<title>Documents widget</title>
+<!--
+  The middle frame. It carries no upload control of its own — its whole purpose
+  is to be a level of nesting, so that the cover-letter widget below it is two
+  frames deep rather than one.
+
+  A scanner that walks only the top document's direct children finds this and
+  stops. That is the case this frame exists to fail.
+-->
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    margin: 0;
+  }
+  iframe {
+    border: 0;
+  }
+</style>
+<p>Documents are handled by our attachment service.</p>
+<iframe
+  id="cover-letter-inner"
+  src="employer-uploads-cover.html"
+  width="100%"
+  height="150"
+  title="Cover letter attachment"
+></iframe>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AttachableDocumentPayload } from '@internship-agent/shared';
-import { runDocumentAttachment } from '../../extension/src/uploads/attachRun.js';
+import { runSingleFrameAttachment } from './helpers/singleFrameAttach.js';
 
 /**
  * The document-only run against real DOM, including the two shapes that used to
@@ -63,7 +63,7 @@ describe('the document-only attachment run', () => {
       </form>`;
     wireFilenameDisplay();
 
-    const report = await runDocumentAttachment(document, 'run-1', 'https://jobs.example/apply', [
+    const report = await runSingleFrameAttachment('run-1', 'https://jobs.example/apply', [
       RESUME,
       COVER,
     ]);
@@ -96,9 +96,7 @@ describe('the document-only attachment run', () => {
       </div>`;
     wireFilenameDisplay();
 
-    const report = await runDocumentAttachment(document, 'run-2', 'https://jobs.example/apply', [
-      RESUME,
-    ]);
+    const report = await runSingleFrameAttachment('run-2', 'https://jobs.example/apply', [RESUME]);
 
     expect(report.resume.verified).toBe(true);
     expect(fileNameIn('hidden-resume')).toBe('Resume-Acme-Intern.pdf');
@@ -120,9 +118,7 @@ describe('the document-only attachment run', () => {
       document.getElementById('resume-status')!.textContent = name;
     });
 
-    const report = await runDocumentAttachment(document, 'run-3', 'https://jobs.example/apply', [
-      RESUME,
-    ]);
+    const report = await runSingleFrameAttachment('run-3', 'https://jobs.example/apply', [RESUME]);
 
     expect(report.resume.attached).toBe(true);
     expect(report.resume.verified).toBe(true);
@@ -142,7 +138,7 @@ describe('the document-only attachment run', () => {
       </form>`;
     wireFilenameDisplay();
 
-    const report = await runDocumentAttachment(document, 'run-4', 'https://jobs.example/apply', [
+    const report = await runSingleFrameAttachment('run-4', 'https://jobs.example/apply', [
       RESUME,
       COVER,
     ]);
@@ -165,7 +161,7 @@ describe('the document-only attachment run', () => {
       </form>`;
     wireFilenameDisplay();
 
-    await runDocumentAttachment(document, 'run-5', 'https://jobs.example/apply', [RESUME, COVER]);
+    await runSingleFrameAttachment('run-5', 'https://jobs.example/apply', [RESUME, COVER]);
 
     expect(fileNameIn('resume')).toBe('Resume-Acme-Intern.pdf');
     expect(fileNameIn('transcript')).toBeUndefined();
@@ -179,7 +175,7 @@ describe('the document-only attachment run', () => {
       </form>`;
     wireFilenameDisplay();
 
-    const report = await runDocumentAttachment(document, 'run-6', 'https://jobs.example/apply', [
+    const report = await runSingleFrameAttachment('run-6', 'https://jobs.example/apply', [
       RESUME,
       COVER,
     ]);
@@ -200,9 +196,7 @@ describe('the document-only attachment run', () => {
       input.value = '';
     });
 
-    const report = await runDocumentAttachment(document, 'run-7', 'https://jobs.example/apply', [
-      RESUME,
-    ]);
+    const report = await runSingleFrameAttachment('run-7', 'https://jobs.example/apply', [RESUME]);
 
     expect(report.resume.attached).toBe(true);
     expect(report.resume.verified).toBe(false);
@@ -215,7 +209,7 @@ describe('the document-only attachment run', () => {
       <p id="resume-filename"></p>`;
     wireFilenameDisplay();
 
-    const report = await runDocumentAttachment(document, 'run-8', 'https://jobs.example/apply', [
+    const report = await runSingleFrameAttachment('run-8', 'https://jobs.example/apply', [
       payload('resume', 'Master-Resume.pdf', RESUME_BYTES, 'default'),
     ]);
 
@@ -225,11 +219,14 @@ describe('the document-only attachment run', () => {
 
   it('says so plainly when the page has no upload control at all', async () => {
     document.body.innerHTML = '<form><input type="text" name="first_name" /></form>';
-    const report = await runDocumentAttachment(document, 'run-9', 'https://jobs.example/apply', [
-      RESUME,
-    ]);
+    const report = await runSingleFrameAttachment('run-9', 'https://jobs.example/apply', [RESUME]);
     expect(report.fileFieldsSeen).toBe(0);
     expect(report.resume.fieldFound).toBe(false);
-    expect(report.resume.message).toContain('no file upload control');
+    // "In any frame" is the part that had to change. The old sentence — "This
+    // page has no file upload control" — was said about the main document alone,
+    // on a page whose upload controls were in an iframe.
+    expect(report.resume.message).toContain('No file upload control was found in any frame');
+    // And it is only ever said when there was genuinely nothing to find.
+    expect(report.trace?.assertionFailed).toBe(false);
   });
 });

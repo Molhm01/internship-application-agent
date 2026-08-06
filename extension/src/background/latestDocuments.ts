@@ -1,10 +1,10 @@
 import {
   DEFAULT_ERROR_GUIDANCE,
-  attachDocumentsResponseSchema,
   documentAttachmentReportSchema,
   type AgentError,
   type AttachableDocumentPayload,
   type DocumentAttachmentReport,
+  type PageControlTrace,
   type LatestDocumentRecord,
   type LatestDocumentType,
   type StoredLatestDocument,
@@ -20,6 +20,8 @@ import {
   writeStoredDocument,
 } from '../storage/latestDocumentStore.js';
 import type { LatestDocumentSyncResult } from '../messaging/messages.js';
+import { attachAcrossFrames, surveyPageControls } from './attachAcrossFrames.js';
+import type { FrameTarget } from './frames.js';
 
 /**
  * The document-only path in the background worker.
@@ -67,6 +69,48 @@ async function lastAttachmentReport(): Promise<DocumentAttachmentReport | null> 
 
 async function rememberAttachmentReport(report: DocumentAttachmentReport): Promise<void> {
   await chrome.storage.local.set({ [LAST_REPORT_KEY]: report });
+}
+
+/**
+ * A fresh frame-by-frame survey of the page, without attaching anything.
+ *
+ * This is what "Export Page Control Trace" produces. It runs the same discovery
+ * the attach run does, so a "My Computer" button that the attach run could not
+ * see is equally impossible to hide from here — but it never activates a
+ * launcher and never carries a document byte, so it is safe to run on any page
+ * at any time.
+ */
+export async function exportPageControlTrace(
+  dependencies: AttachDocumentsDependencies,
+  targetUrl?: string,
+): Promise<{ trace: PageControlTrace } | { error: AgentError }> {
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await dependencies.resolveTab(targetUrl);
+  } catch {
+    return {
+      error: documentError('ACTIVE_TAB_UNAVAILABLE', 'The application tab could not be found.'),
+    };
+  }
+
+  const connection = await dependencies.ensureContentScript(tab.id!, tab.url);
+  if (!connection.reachable) {
+    return {
+      error: documentError(
+        'CONTENT_SCRIPT_UNAVAILABLE',
+        connection.reason ?? 'This page could not be reached. Refresh it and try again.',
+      ),
+    };
+  }
+
+  const frames = await dependencies.discoverFrames(tab.id!, tab.url);
+  return {
+    trace: await surveyPageControls({
+      tabId: tab.id!,
+      frames,
+      runId: `trace-${crypto.randomUUID()}`,
+    }),
+  };
 }
 
 /** What this browser holds right now, without asking the server anything. */
@@ -190,6 +234,8 @@ export interface AttachDocumentsDependencies {
     tabId: number,
     url?: string,
   ) => Promise<{ reachable: boolean; reason?: string }>;
+  /** Every frame of the tab that holds a live content script, in frame order. */
+  discoverFrames: (tabId: number, url?: string) => Promise<FrameTarget[]>;
 }
 
 /**
@@ -241,34 +287,51 @@ export async function attachLatestDocuments(
     };
   }
 
-  let raw: unknown;
+  // Every frame, not the top one. The upload section of a live application is
+  // routinely inside an iframe, and the previous build's whole-tab broadcast
+  // could only ever reach the main document — which is why a page showing four
+  // upload buttons reported "no file upload control" in 0.0 seconds.
+  const frames = await dependencies.discoverFrames(tab.id!, tab.url);
+  if (frames.length === 0) {
+    return {
+      error: documentError(
+        'CONTENT_SCRIPT_UNAVAILABLE',
+        'No frame of this page could be reached. Refresh it and try again.',
+      ),
+    };
+  }
+
+  let report: DocumentAttachmentReport;
   try {
-    raw = await chrome.tabs.sendMessage(tab.id!, {
-      type: 'ATTACH_DOCUMENTS_IN_PAGE',
-      runId: `attach-${crypto.randomUUID()}`,
+    report = await attachAcrossFrames({
+      tabId: tab.id!,
+      url: tab.url ?? '',
+      frames,
       documents: payloads,
+      runId: `attach-${crypto.randomUUID()}`,
     });
   } catch (cause) {
     return {
       error: documentError(
         'DOCUMENT_ATTACHMENT_FAILED',
-        `The page did not answer the attachment request: ${
+        `The document attachment run failed: ${
           cause instanceof Error ? cause.message : String(cause)
         }`,
       ),
     };
   }
 
-  const parsed = attachDocumentsResponseSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      error: documentError(
-        'DOCUMENT_ATTACHMENT_FAILED',
-        'The page returned an attachment result that failed validation. Nothing was reported as uploaded.',
-      ),
-    };
+  // A run that saw upload controls and matched none of them is a defect here,
+  // not a page without uploads. It is logged as one rather than presented to the
+  // user as an ordinary "nothing found".
+  if (report.trace?.assertionFailed) {
+    console.error('[agent] upload discovery assertion failed', {
+      runId: report.runId,
+      reason: report.trace.assertionReason,
+      frames: report.trace.totalFrames,
+    });
   }
-  if (parsed.data.type === 'ATTACH_DOCUMENTS_FAILED') return { error: parsed.data.error };
-  await rememberAttachmentReport(parsed.data.report);
-  return { report: parsed.data.report };
+
+  await rememberAttachmentReport(report);
+  return { report };
 }

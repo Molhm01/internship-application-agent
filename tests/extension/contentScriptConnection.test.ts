@@ -103,8 +103,13 @@ describe('reconnecting a content script', () => {
 
     const result = await ensureContentScript(7, ICIMS);
 
+    // Every frame. An upload widget or a whole form inside an iframe is in a
+    // document a main-frame-only injection never reaches, which is how a page
+    // showing four upload buttons came back reporting no upload control at all.
+    // Re-injecting a frame that already has the script is harmless: the script
+    // guards against loading twice.
     expect(chromeMock.scripting.executeScript).toHaveBeenCalledWith({
-      target: { tabId: 7, allFrames: false },
+      target: { tabId: 7, allFrames: true },
       files: ['content.js'],
     });
     expect(result.reachable).toBe(true);

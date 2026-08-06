@@ -5,7 +5,7 @@ import {
   type ApplicationScanResult,
 } from '@internship-agent/shared';
 import { buildDeterministicPlan } from '../../extension/src/planner/deterministicPlanner.js';
-import { runDocumentAttachment } from '../../extension/src/uploads/attachRun.js';
+import { runSingleFrameAttachment } from './helpers/singleFrameAttach.js';
 
 /**
  * The document-only path must not have changed how the fields that already work
@@ -124,7 +124,7 @@ describe('the document-only path touches nothing but file inputs', () => {
     });
 
     const bytes = Buffer.from('%PDF-1.4\nresume\n%%EOF\n');
-    await runDocumentAttachment(document, 'run-regression', 'https://example.test/apply', [
+    await runSingleFrameAttachment('run-regression', 'https://example.test/apply', [
       {
         documentType: 'resume',
         filename: 'Resume-Acme.pdf',

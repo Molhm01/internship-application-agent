@@ -95,6 +95,9 @@ import {
   startRun,
 } from '../storage/runState.js';
 import { ensureContentScript } from './contentScript.js';
+import { askEveryFrame, discoverFrames, tellEveryFrame, type FrameTarget } from './frames.js';
+import { mergeFrameScans, type FrameScan } from './mergeFrameScans.js';
+import { fillAcrossFrames } from './fillAcrossFrames.js';
 import { fillAccountForm } from './accountForm.js';
 import { armAutoStart, shouldAutoStart } from './autoStart.js';
 import {
@@ -118,6 +121,7 @@ import {
 import { attachBundleDocuments, isBundleDocumentReference } from '../uploads/bundleUploads.js';
 import {
   attachLatestDocuments,
+  exportPageControlTrace,
   readLatestDocuments,
   syncLatestDocuments,
 } from './latestDocuments.js';
@@ -168,6 +172,49 @@ async function activeApplicationTab(targetUrl?: string): Promise<chrome.tabs.Tab
   return tab;
 }
 
+/**
+ * Scans every frame and merges the results into one scan.
+ *
+ * A frame that fails is not fatal: a cross-origin advertising iframe cannot be
+ * scanned and has nothing to contribute, and letting it end the run would make
+ * the extension useless on any page that carries one. The run only fails when
+ * *no* frame produced a scan.
+ */
+async function scanEveryFrame(
+  tabId: number,
+  frames: readonly FrameTarget[],
+  scanId: string,
+): Promise<unknown> {
+  const replies = await askEveryFrame<unknown>(tabId, frames, { type: 'SCAN_APPLICATION', scanId });
+
+  const scans: FrameScan[] = [];
+  let lastFailure: unknown = null;
+  for (const reply of replies) {
+    const parsed = scanApplicationResponseSchema.safeParse(reply.response);
+    if (!parsed.success) continue;
+    if (parsed.data.type === 'SCAN_COMPLETE') {
+      scans.push({ frame: reply.frame, result: parsed.data.result });
+    } else {
+      lastFailure = parsed.data;
+    }
+  }
+
+  const merged = mergeFrameScans(scans);
+  if (!merged) {
+    return (
+      lastFailure ??
+      scanFailure('ATS_DETECTION_FAILED', 'No frame of this page could be scanned.', { scanId })
+    );
+  }
+  console.info('[agent] scan merged across frames', {
+    scanId,
+    frames: frames.length,
+    scanned: scans.length,
+    fields: merged.fields.length,
+  });
+  return { type: 'SCAN_COMPLETE', result: merged };
+}
+
 async function startScan(requestedScanId?: string, targetUrl?: string): Promise<unknown> {
   let tab: chrome.tabs.Tab;
   try {
@@ -194,8 +241,15 @@ async function startScan(requestedScanId?: string, targetUrl?: string): Promise<
   const scanId = requestedScanId ?? crypto.randomUUID();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    // Every frame, each addressed by id. An application form split between an
+    // outer page and an embedded widget is two documents, and a scan of only
+    // the first reports the widget's fields as not existing.
+    const frames = await discoverFrames(tab.id!, tab.url);
+    if (frames.length === 0) {
+      return scanFailure('CONTENT_SCRIPT_UNAVAILABLE', RECONNECT_MESSAGE, { scanId });
+    }
     const raw: unknown = await Promise.race([
-      chrome.tabs.sendMessage(tab.id!, { type: 'SCAN_APPLICATION', scanId }),
+      scanEveryFrame(tab.id!, frames, scanId),
       new Promise((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error('SCAN_TIMEOUT')), SCAN_TIMEOUT_MS);
       }),
@@ -306,12 +360,20 @@ async function portalRoute(act: boolean, targetUrl?: string): Promise<PortalRout
     return { decision: 'act', reason: decision.reason, takenIntent: decision.action.intent };
   }
 
-  const raw: unknown = await chrome.tabs.sendMessage(tab.id!, {
-    type: 'ACTIVATE_NAVIGATION',
-    intent: decision.action.intent,
-    selector: decision.action.selector,
-    expectedLabel: decision.action.label,
-  });
+  // The main frame, explicitly. Navigation controls are read from the merged
+  // scan's top-frame navigation state, so that is the only document whose
+  // selectors are meaningful — and a broadcast would let an embedded frame
+  // answer for the page.
+  const raw: unknown = await chrome.tabs.sendMessage(
+    tab.id!,
+    {
+      type: 'ACTIVATE_NAVIGATION',
+      intent: decision.action.intent,
+      selector: decision.action.selector,
+      expectedLabel: decision.action.label,
+    },
+    { frameId: 0 },
+  );
   const activation = navigationActivationResultSchema.safeParse(raw);
   // Falls back to the human choice rather than retrying: a route that could not
   // be activated once will not activate on a second identical attempt.
@@ -1383,18 +1445,25 @@ async function executeApproved(targetUrl?: string): Promise<unknown> {
   const runId = `fill-${crypto.randomUUID()}`;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const frames = await discoverFrames(tab.id!, tab.url);
+    if (frames.length === 0) {
+      return fillFailure('ACTIVE_TAB_UNAVAILABLE', RECONNECT_MESSAGE);
+    }
     const raw: unknown = await Promise.race([
-      chrome.tabs.sendMessage(tab.id!, {
-        type: 'EXECUTE_FILL_PLAN',
-        runId,
-        scan,
-        plan,
-        documentContents,
-      }),
+      // Sliced by the frame each field was discovered in. Sending the whole plan
+      // to the top frame leaves every field of an embedded widget reported as
+      // "not found", which reads as a scanning failure and is an addressing one.
+      fillAcrossFrames({ tabId: tab.id!, frames, scan, plan, documentContents, runId }).then(
+        (outcome) =>
+          'report' in outcome
+            ? { type: 'FILL_COMPLETE', report: outcome.report }
+            : fillFailure('INVALID_FILL_PLAN', `The fill run could not complete: ${outcome.error}`),
+      ),
       new Promise((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error('FILL_TIMEOUT')), FILL_TIMEOUT_MS);
       }),
     ]);
+    if (raw && typeof raw === 'object' && 'error' in raw) return raw;
     const response = fillExecutionResponseSchema.parse(raw);
     if (response.type === 'FILL_COMPLETE') {
       await saveFillReport(response.report);
@@ -1428,7 +1497,9 @@ async function cancelFill(runId?: string, targetUrl?: string): Promise<unknown> 
   try {
     const plan = await loadFillPlan();
     const tab = await activeApplicationTab(targetUrl ?? plan?.url);
-    await chrome.tabs.sendMessage(tab.id!, {
+    // Every frame: the run may be executing in any of them, and a cancel that
+    // reaches only the top frame leaves an embedded widget still being filled.
+    await tellEveryFrame(tab.id!, await discoverFrames(tab.id!, tab.url), {
       type: 'FILL_CANCEL',
       ...(runId ? { runId } : {}),
     });
@@ -1441,7 +1512,10 @@ async function cancelFill(runId?: string, targetUrl?: string): Promise<unknown> 
 async function cancelScan(scanId?: string, targetUrl?: string): Promise<unknown> {
   try {
     const tab = await activeApplicationTab(targetUrl);
-    await chrome.tabs.sendMessage(tab.id!, { type: 'SCAN_CANCEL', ...(scanId ? { scanId } : {}) });
+    await tellEveryFrame(tab.id!, await discoverFrames(tab.id!, tab.url), {
+      type: 'SCAN_CANCEL',
+      ...(scanId ? { scanId } : {}),
+    });
     return { ok: true };
   } catch {
     return { ok: true };
@@ -1563,7 +1637,7 @@ async function acceptAutofillRun(targetUrl?: string): Promise<unknown> {
       // reported separately so neither can mask the other.
       if ((outcome.report?.documentsAttached ?? 0) === 0) {
         const attached = await attachLatestDocuments(
-          { resolveTab: activeApplicationTab, ensureContentScript },
+          { resolveTab: activeApplicationTab, ensureContentScript, discoverFrames },
           targetUrl,
         ).catch(() => null);
         if (attached && 'report' in attached) {
@@ -1691,7 +1765,9 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
       highlight: async (requests, scrollToFirst) => {
         try {
           const tab = await activeApplicationTab(targetUrl);
-          await chrome.tabs.sendMessage(tab.id!, {
+          // Every frame. A field needing review can be in any of them, and each
+          // frame ignores requests for fields it does not hold.
+          await tellEveryFrame(tab.id!, await discoverFrames(tab.id!, tab.url), {
             type: 'HIGHLIGHT_REVIEW_FIELDS',
             requests,
             scrollToFirst,
@@ -1830,8 +1906,8 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return Promise.resolve({ ok: true });
     case 'FOCUS_REVIEW_FIELD':
       return activeApplicationTab()
-        .then((tab) =>
-          chrome.tabs.sendMessage(tab.id!, {
+        .then(async (tab) =>
+          tellEveryFrame(tab.id!, await discoverFrames(tab.id!, tab.url), {
             type: 'FOCUS_REVIEW_FIELD',
             fieldId: message.fieldId,
           }),
@@ -1840,7 +1916,11 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
         .catch(() => ({ ok: false }));
     case 'CLEAR_REVIEW_HIGHLIGHTS':
       return activeApplicationTab()
-        .then((tab) => chrome.tabs.sendMessage(tab.id!, { type: 'CLEAR_REVIEW_HIGHLIGHTS' }))
+        .then(async (tab) =>
+          tellEveryFrame(tab.id!, await discoverFrames(tab.id!, tab.url), {
+            type: 'CLEAR_REVIEW_HIGHLIGHTS',
+          }),
+        )
         .then(() => ({ ok: true }))
         .catch(() => ({ ok: false }));
     case 'HIGHLIGHT_REVIEW_FIELDS':
@@ -1878,10 +1958,16 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return syncLatestDocuments();
     case 'ATTACH_DOCUMENTS':
       return attachLatestDocuments(
-        { resolveTab: activeApplicationTab, ensureContentScript },
+        { resolveTab: activeApplicationTab, ensureContentScript, discoverFrames },
         message.targetUrl,
       );
-    case 'ATTACH_DOCUMENTS_IN_PAGE':
+    case 'EXPORT_PAGE_CONTROL_TRACE':
+      return exportPageControlTrace(
+        { resolveTab: activeApplicationTab, ensureContentScript, discoverFrames },
+        message.targetUrl,
+      );
+    case 'DISCOVER_UPLOAD_CONTROLS':
+    case 'ATTACH_DOCUMENT_TO_CONTROL':
       // Handled by the content script, not here.
       return null;
     case 'ANSWERS_LIST':

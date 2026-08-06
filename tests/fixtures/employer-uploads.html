@@ -1,0 +1,202 @@
+<meta charset="utf-8" />
+<title>Acme Careers — Software Engineering Intern</title>
+<!--
+  The live employer form this repair was reported against, reproduced.
+
+  Everything that made the real page defeat the old build is here and is here on
+  purpose:
+
+    * the résumé upload has no file input in the DOM at all until "My Computer"
+      is pressed — it is inserted by script on click, exactly like the widget on
+      the real page,
+    * the cover-letter upload has one, but it is hidden with opacity:0 and driven
+      from a styled button,
+    * both sections offer Google Drive / Dropbox / OneDrive buttons, whose text
+      matches /upload/ and which must never be pressed,
+    * Transcript and Work Samples are complete, working upload sections that must
+      come out of the run untouched,
+    * "Legal First Name" carries role="combobox" and a react-select-shaped class,
+      which is what made the old scanner call a text box a dropdown,
+    * one upload section is inside a nested iframe,
+    * and there is a real Submit button, which must never be clicked.
+-->
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 52rem;
+    margin: 2rem auto;
+  }
+  fieldset {
+    margin-bottom: 1.5rem;
+  }
+  .upload-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .hidden-input {
+    opacity: 0;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+  }
+  .filename {
+    font-family: monospace;
+  }
+</style>
+
+<h1>Software Engineering Intern</h1>
+<form id="application" action="/apply" method="post">
+  <fieldset id="account">
+    <legend>Create your account</legend>
+    <label for="login">Login</label>
+    <input id="login" name="login" type="text" />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" />
+  </fieldset>
+
+  <fieldset id="personal">
+    <legend>Personal information</legend>
+
+    <label for="firstName">Legal First Name</label>
+    <!--
+      A text box wearing a combobox's clothes. `role="combobox"` plus a
+      react-select-shaped class name is what a live ATS autocomplete renders, and
+      it is what made `inferType` return `combobox` for a field you type your
+      name into — after which the executor searched an option list that does not
+      exist and reported "No option on the page matched 'Molhm'".
+    -->
+    <input
+      id="firstName"
+      name="firstName"
+      type="text"
+      role="combobox"
+      aria-expanded="false"
+      class="css-1abcde-control"
+      autocomplete="given-name"
+      required
+    />
+
+    <label for="lastName">Legal Last Name</label>
+    <input id="lastName" name="lastName" type="text" class="select__control" required />
+
+    <label for="email">Email Address</label>
+    <input id="email" name="email" type="email" required />
+
+    <label for="phone">Phone Number</label>
+    <input id="phone" name="phone" type="tel" required />
+  </fieldset>
+
+  <fieldset id="resume-section">
+    <h3>Resume</h3>
+    <p>Attach your most recent resume.</p>
+    <div class="upload-row">
+      <!--
+        No file input exists here at load. The button creates one, which is the
+        shape the old discovery could not see at all.
+      -->
+      <button type="button" id="resume-my-computer">My Computer</button>
+      <button type="button" id="resume-gdrive">Google Drive</button>
+      <button type="button" id="resume-dropbox">Dropbox</button>
+      <button type="button" id="resume-onedrive">OneDrive</button>
+    </div>
+    <div id="resume-target"></div>
+    <p class="filename" id="resume-filename"></p>
+  </fieldset>
+
+  <fieldset id="cover-letter-section">
+    <h3>Cover Letter</h3>
+    <!--
+      Inside a frame, inside a frame. The cover-letter upload is two levels down,
+      so attaching it proves the whole chain: every frame is injected, each
+      survey keeps its own frame id, and the attach instruction goes back to the
+      exact frame that offered the control rather than to the tab at large.
+    -->
+    <iframe
+      id="cover-letter-frame"
+      src="employer-uploads-frame.html"
+      width="100%"
+      height="200"
+      title="Cover letter upload"
+    ></iframe>
+  </fieldset>
+
+  <fieldset id="transcript-section">
+    <h3>Transcript</h3>
+    <div class="upload-row">
+      <label for="transcript-input">My Computer</label>
+      <button type="button" id="transcript-gdrive">Google Drive</button>
+    </div>
+    <input id="transcript-input" name="transcriptFile" type="file" />
+    <p class="filename" id="transcript-filename"></p>
+  </fieldset>
+
+  <fieldset id="work-samples-section">
+    <h3>Work Samples</h3>
+    <div class="upload-row">
+      <label for="work-samples-input">My Computer</label>
+      <button type="button" id="samples-dropbox">Dropbox</button>
+    </div>
+    <input id="work-samples-input" name="workSamplesFile" type="file" multiple />
+    <p class="filename" id="work-samples-filename"></p>
+  </fieldset>
+
+  <!-- Never clicked. Present so that "never clicked" is a thing a test can check. -->
+  <button type="submit" id="submit-application">Submit Application</button>
+</form>
+
+<script>
+  /** Shows the filename the way a real widget does, from the input's own state. */
+  function report(inputId, outputId) {
+    const input = document.getElementById(inputId);
+    const output = document.getElementById(outputId);
+    if (!input || !output) return;
+    input.addEventListener('change', () => {
+      output.textContent = input.files && input.files[0] ? input.files[0].name : '';
+    });
+  }
+
+  report('transcript-input', 'transcript-filename');
+  report('work-samples-input', 'work-samples-filename');
+
+  // The résumé widget: no input until the launcher is pressed, and then one
+  // appears asynchronously — a microtask later, so a discovery that only checks
+  // synchronously after the click still finds nothing.
+  document.getElementById('resume-my-computer').addEventListener('click', () => {
+    if (document.getElementById('resume-input')) return;
+    setTimeout(() => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.id = 'resume-input';
+      input.name = 'resumeFile';
+      input.accept = 'application/pdf';
+      input.className = 'hidden-input';
+      document.getElementById('resume-target').append(input);
+      input.addEventListener('change', () => {
+        document.getElementById('resume-filename').textContent =
+          input.files && input.files[0] ? input.files[0].name : '';
+      });
+    }, 120);
+  });
+
+  // The cloud buttons navigate away. Nothing in the extension may press one, and
+  // if something does, this records it where a test can see it.
+  for (const id of [
+    'resume-gdrive',
+    'resume-dropbox',
+    'resume-onedrive',
+    'transcript-gdrive',
+    'samples-dropbox',
+  ]) {
+    document.getElementById(id).addEventListener('click', () => {
+      window.__cloudButtonPressed = (window.__cloudButtonPressed || []).concat(id);
+    });
+  }
+
+  document.getElementById('submit-application').addEventListener('click', (event) => {
+    // Recorded, and prevented, so that a test failure says "Submit was clicked"
+    // rather than "the page navigated".
+    event.preventDefault();
+    window.__submitClicked = true;
+  });
+</script>

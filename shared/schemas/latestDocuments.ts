@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { isoDateTimeSchema } from './common.js';
 import { agentErrorSchema } from './error.js';
 import { LIMITS } from '../constants/network.js';
+import { pageControlTraceSchema } from './pageControls.js';
 
 /**
  * The one document contract shared by Internship Pilot, the agent server, and
@@ -137,6 +138,13 @@ export const documentAttachmentReportSchema = z.object({
   /** File controls seen on the page, whatever their purpose. Diagnostics only. */
   fileFieldsSeen: z.number().int().nonnegative(),
   /**
+   * Frame-by-frame account of what was found and what was done about it.
+   *
+   * Optional only so a report stored by an earlier build still validates when it
+   * is read back; every report this build produces carries one.
+   */
+  trace: pageControlTraceSchema.optional(),
+  /**
    * Structurally impossible to be anything else: this path has no submit
    * capability, and the schema records that fact for the report reader.
    */
@@ -165,27 +173,23 @@ export const attachableDocumentSchema = z.object({
 
 export type AttachableDocumentPayload = z.infer<typeof attachableDocumentSchema>;
 
-export const attachDocumentsMessageSchema = z.object({
-  type: z.literal('ATTACH_DOCUMENTS_IN_PAGE'),
+/**
+ * Worker → one specific frame: "put this file in that control."
+ *
+ * The control is named by an id the same frame minted moments earlier — not by
+ * a selector the worker composed — so this message cannot be used to reach a
+ * control the frame did not itself offer. It carries exactly one document,
+ * because a failure on the résumé must not be able to take the cover letter
+ * down with it.
+ */
+export const attachToControlMessageSchema = z.object({
+  type: z.literal('ATTACH_DOCUMENT_TO_CONTROL'),
   runId: z.string().min(1).max(100),
-  documents: z.array(attachableDocumentSchema).max(2),
+  controlId: z.string().min(1).max(120),
+  document: attachableDocumentSchema,
 });
 
-export type AttachDocumentsMessage = z.infer<typeof attachDocumentsMessageSchema>;
-
-export const attachDocumentsResponseSchema = z.union([
-  z.object({
-    type: z.literal('ATTACH_DOCUMENTS_COMPLETE'),
-    report: documentAttachmentReportSchema,
-  }),
-  z.object({
-    type: z.literal('ATTACH_DOCUMENTS_FAILED'),
-    runId: z.string().min(1).max(100),
-    error: agentErrorSchema,
-  }),
-]);
-
-export type AttachDocumentsResponse = z.infer<typeof attachDocumentsResponseSchema>;
+export type AttachToControlMessage = z.infer<typeof attachToControlMessageSchema>;
 
 /**
  * What the popup gets back from a sync or a plain read.

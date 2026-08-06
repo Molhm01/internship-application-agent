@@ -46,7 +46,15 @@ export function isInjectablePage(url: string | undefined): boolean {
 
 async function ping(tabId: number): Promise<ContentPingResult | null> {
   try {
-    const response: unknown = await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_PING' });
+    // Addressed to the main frame, not broadcast. Now that the script runs in
+    // every frame, an unaddressed `sendMessage` resolves with whichever frame
+    // answers first — which could be an advertising iframe, and its answer would
+    // be taken as the page's own.
+    const response: unknown = await chrome.tabs.sendMessage(
+      tabId,
+      { type: 'CONTENT_PING' },
+      { frameId: 0 },
+    );
     if (!response || typeof response !== 'object') return null;
     return response as ContentPingResult;
   } catch {
@@ -88,7 +96,10 @@ export async function ensureContentScript(
 
   try {
     await chrome.scripting.executeScript({
-      target: { tabId, allFrames: false },
+      // Every frame, because the application form is routinely not in the main
+      // document. Re-injecting a frame that already has the script is harmless:
+      // the script guards against loading twice.
+      target: { tabId, allFrames: true },
       files: ['content.js'],
     });
   } catch (cause) {
