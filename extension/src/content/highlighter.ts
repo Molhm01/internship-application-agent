@@ -1,6 +1,7 @@
 import {
   ANNOTATION_BADGES,
   ANNOTATION_COLOURS,
+  isDrawnAnnotation,
   markExtensionOwned,
   type AnnotationKind,
   type ReviewReason,
@@ -164,6 +165,13 @@ export function highlightField(request: HighlightRequest): boolean {
   // the old one in place under a new badge is exactly how a filled field went
   // on displaying "Information needed".
   removeHighlight(request.fieldId);
+
+  // `none` means "this field carries no mark". The removal above is the whole
+  // of the work: a field the agent did not touch, because the page already held
+  // the right answer, is left exactly as the user wrote it. Returning true is
+  // correct — the request was honoured, and the element was found.
+  if (!isDrawnAnnotation(request.annotation)) return true;
+
   const container = ensureLayer();
   const colour = COLOURS[request.annotation];
 

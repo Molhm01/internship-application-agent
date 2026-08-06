@@ -194,6 +194,7 @@ test.afterAll(async () => {
 
 interface Evidence {
   application: Page;
+  popup: Page;
   report: {
     status: string;
     fieldsFound: number;
@@ -214,11 +215,17 @@ interface Evidence {
     }>;
   };
   trace: {
+    runId: string;
     buildId: string;
     pendingAtCompletion: number;
     finalStatusCounts: Record<string, number>;
     fields: Array<{
+      runId: string;
+      buildId: string;
       fieldId: string;
+      frameId: number;
+      plannerSource: string;
+      contractResult: string;
       label: string;
       section?: string;
       intent?: string;
@@ -235,6 +242,7 @@ interface Evidence {
     }>;
   };
   exported: { summary: string[]; buildId: string; trace: { fields: unknown[] } };
+  buildIds: { popup: string; worker: string; content: string };
 }
 
 let evidence: Evidence;
@@ -264,7 +272,28 @@ test.beforeAll(async () => {
   const exportResult = await message<
     { export: Evidence['exported'] } | { error: { message: string } }
   >(evidencePage, { type: 'EXPORT_AUTOFILL_RUN_TRACE' });
+
+  // The three bundles Chrome loaded independently, each asked for its own
+  // identity. A mixed-version run is not a degraded run: the scan, the plan and
+  // the fill each cross a bundle boundary, and a disagreement anywhere produces
+  // an error naming a value rather than the build.
+  const worker = await message<{ buildId: string }>(evidencePage, { type: 'WORKER_PING' });
+  const applicationTabId = await evidencePage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab?.id ?? null;
+  }, APPLICATION_URL);
+  expect(applicationTabId).not.toBeNull();
+  const content = await message<{ buildId?: string }>(evidencePage, {
+    type: 'ENSURE_CONTENT_SCRIPT',
+    tabId: applicationTabId,
+    url: APPLICATION_URL,
+  });
   await evidencePage.close();
+
+  const popupBuild = (await popup.locator('.popup__build').first().innerText()).replace(
+    /^Build\s+/,
+    '',
+  );
 
   expect(report, 'the run produced no report').toBeTruthy();
   expect(traces.length, 'the run produced no trace').toBeGreaterThan(0);
@@ -272,9 +301,15 @@ test.beforeAll(async () => {
 
   evidence = {
     application,
+    popup,
     report,
     trace: traces[0]!,
     exported: (exportResult as { export: Evidence['exported'] }).export,
+    buildIds: {
+      popup: popupBuild.split(' ·')[0]!.trim(),
+      worker: worker.buildId,
+      content: content.buildId ?? 'unstamped',
+    },
   };
 });
 
@@ -349,13 +384,14 @@ test.describe('GATE 3 — a verified field loses its Information needed mark', (
       (entry) => entry.annotation === 'verified',
     );
     expect(verified.length).toBeGreaterThan(0);
-    // One badge per field that needs a person, and no more.
-    const needing = evidence.report.fieldOutcomes.filter(
-      (entry) => entry.annotation !== 'verified' && entry.annotation !== 'optional_blank',
+    // Exactly as many "Information needed" badges as there are fields whose
+    // final status earns one. The reported failure was more badges than fields
+    // that needed them, which is what a mark drawn once and never revisited
+    // produces.
+    const orange = evidence.report.fieldOutcomes.filter(
+      (entry) => entry.annotation === 'information_needed',
     );
-    expect(badges.filter((text) => /information needed/i.test(text)).length).toBeLessThanOrEqual(
-      needing.length,
-    );
+    expect(badges.filter((text) => /information needed/i.test(text))).toHaveLength(orange.length);
   });
 });
 
@@ -367,10 +403,27 @@ test.describe('GATE 4 — an optional blank field is not an error', () => {
     expect(await markOn('middleName')).toBe('optional_blank');
   });
 
-  test('the already-correct field is left alone and reported as such', async () => {
+  test('the already-correct field is left alone, and carries no mark at all', async () => {
     expect(await evidence.application.locator('#city').inputValue()).toBe('Clifton');
     expect(outcome('City').status).toBe('SKIPPED_ALREADY_VALID');
-    expect(outcome('City').annotation).toBe('verified');
+    expect(outcome('City').annotation).toBe('none');
+    // The user's own correct answer is not the agent's work, so nothing is
+    // drawn on it — read off the employer's own DOM.
+    expect(await markOn('city')).toBeNull();
+    expect(await evidence.application.locator('#city').evaluate((el) => el.style.outline)).toBe('');
+  });
+});
+
+test.describe('a legal confirmation is a decision, not a missing value', () => {
+  test('is never ticked, and is marked purple rather than orange', async () => {
+    expect(await evidence.application.locator('#legalConfirmation').isChecked()).toBe(false);
+    const legal = evidence.report.fieldOutcomes.find((entry) =>
+      entry.label.toLowerCase().includes('certify'),
+    );
+    expect(legal, 'the legal confirmation was not reported').toBeTruthy();
+    expect(legal!.status).toBe('USER_CONFIRMATION_REQUIRED');
+    expect(legal!.annotation).toBe('sensitive_decision');
+    expect(await markOn('legalConfirmation')).toBe('sensitive_decision');
   });
 });
 
@@ -391,6 +444,31 @@ test.describe('GATE 5 — the counters equal the field results exactly', () => {
     ).toBe(evidence.report.fieldsFound);
     expect(evidence.trace.finalStatusCounts).toEqual(evidence.report.finalStatusCounts);
   });
+
+  test('the popup prints those numbers, from the field records', async () => {
+    // The end of the chain: what a person actually reads. Asserted against the
+    // field records rather than against fixed numbers, so this stays true if
+    // the fixture grows — and fails the moment the summary and the records
+    // disagree, which is the reported bug.
+    const counted = (status: string): number =>
+      evidence.report.fieldOutcomes.filter((entry) => entry.status === status).length;
+    const summary = evidence.popup.locator('.autofill__summary');
+    await expect(summary).toBeVisible();
+    for (const [line, value] of [
+      ['Detected', evidence.report.fieldOutcomes.length],
+      ['Filled and verified', counted('FILLED_VERIFIED')],
+      ['Optional blank', counted('OPTIONAL_LEFT_BLANK')],
+      ['Needs your answer', counted('USER_CONFIRMATION_REQUIRED')],
+      ['Failed', counted('FAILED_EXECUTION')],
+      ['Blocked', counted('BLOCKED')],
+      ['Already valid', counted('SKIPPED_ALREADY_VALID')],
+    ] as const) {
+      await expect(summary.getByText(`${line}: ${value}`, { exact: true })).toBeVisible();
+    }
+    await expect(summary.getByText(/^Elapsed time: /)).toBeVisible();
+    // And the popup never prints its own "these do not add up" alarm.
+    await expect(evidence.popup.getByText(/does not add up/i)).toHaveCount(0);
+  });
 });
 
 test.describe('GATE 6 — the built extension carried the run', () => {
@@ -401,12 +479,23 @@ test.describe('GATE 6 — the built extension carried the run', () => {
 
   test('records a full diagnostic for every field, with no value anywhere', () => {
     for (const field of evidence.trace.fields) {
+      // Every item the diagnostic is specified to carry, on every field.
+      expect(field.runId).toBe(evidence.trace.runId);
+      expect(field.buildId).toBe(evidence.trace.buildId);
+      expect(field.fieldId).toMatch(/^field-/);
+      expect(typeof field.frameId).toBe('number');
       expect(field.label.length).toBeGreaterThan(0);
       expect(field.controlType.length).toBeGreaterThan(0);
       expect(typeof field.required).toBe('boolean');
       expect(typeof field.profileValueAvailable).toBe('boolean');
+      expect(field.plannerSource.length).toBeGreaterThan(0);
+      expect(['accepted', 'repaired', 'rejected', 'not_applicable']).toContain(
+        field.contractResult,
+      );
       expect(typeof field.executorAttempted).toBe('boolean');
+      expect(field.verification.length).toBeGreaterThan(0);
       expect(field.finalStatus.length).toBeGreaterThan(0);
+      expect(field.annotation.length).toBeGreaterThan(0);
     }
     const serialized = JSON.stringify(evidence.trace);
     for (const secret of ['Molhm', 'Ellis', 'molhm@example.com', '48 Maple Avenue', 'Clifton']) {
@@ -414,9 +503,25 @@ test.describe('GATE 6 — the built extension carried the run', () => {
     }
   });
 
-  test('Export Autofill Run Trace produces a diagnosable document', () => {
+  test('Export Autofill Run Trace explains every field, and leaks nothing', () => {
     expect(evidence.exported.summary.length).toBeGreaterThan(0);
     expect(evidence.exported.trace.fields.length).toBe(evidence.report.fieldOutcomes.length);
+    const serialized = JSON.stringify(evidence.exported);
+    for (const secret of ['Molhm', 'Ellis', 'molhm@example.com', '48 Maple Avenue', 'Clifton']) {
+      expect(serialized, `the export leaked ${secret}`).not.toContain(secret);
+    }
+  });
+});
+
+test.describe('GATE 8 — popup, worker, and content script share BUILD_ID', () => {
+  test('all three bundles report one identity, and the trace agrees', () => {
+    // Three bundles Chrome loaded independently. A run whose parts disagree is
+    // the failure that made three rounds of repairs look ineffective: the
+    // browser was executing a bundle two commits behind its own source.
+    expect(evidence.buildIds.worker).toBe(evidence.buildIds.popup);
+    expect(evidence.buildIds.content).toBe(evidence.buildIds.popup);
+    expect(evidence.trace.buildId).toBe(evidence.buildIds.popup);
+    expect(evidence.buildIds.popup).toMatch(/^[0-9a-f]{7,40}(\+dirty)?\.s\d+\.\d{14}$/);
   });
 });
 

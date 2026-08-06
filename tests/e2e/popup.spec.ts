@@ -156,6 +156,14 @@ test('settings page exposes every profile area and loads without error', async (
   ).toBeVisible();
   await expect(diagnostics.locator('input, textarea')).toHaveCount(0);
 
+  // The run-trace export is a development tool and is behind the same switch as
+  // every other one. Someone applying for a job is offered one button, not a
+  // page of JSON export controls.
+  await expect(diagnostics.getByRole('button', { name: 'Export Autofill Run Trace' })).toHaveCount(
+    0,
+  );
+  await expect(diagnostics.getByText(/developer mode.*export the last run/i)).toBeVisible();
+
   // Nothing in this build may offer to fill or submit an application.
   //
   // Anchored to the start of the label, so it catches a control that *does*

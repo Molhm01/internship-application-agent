@@ -1,8 +1,10 @@
 import {
+  FINAL_FIELD_STATUSES,
   PAGE_KIND_LABELS,
   PORTAL_ROUTE_LABELS,
   isSettledStatus,
   type ApplicationAutofillReport,
+  type FinalFieldStatus,
   type NavigationState,
   type PortalRouteIntent,
   type PortalRouteResponse,
@@ -228,6 +230,31 @@ function ReviewList({
   );
 }
 
+/**
+ * The eight numbers the popup prints, counted from the run's final field
+ * records and from nothing else.
+ *
+ * `detected` is the length of the list; the six statuses partition it; `total`
+ * is their sum and exists so the render can *prove* they add up rather than
+ * assert it in a comment. Exported so the popup-summary tests count the same
+ * way the popup does — a test that re-implements the arithmetic proves only
+ * that two implementations agree.
+ */
+export function summarize(
+  report: ApplicationAutofillReport | null,
+): Record<FinalFieldStatus, number> & { detected: number; total: number } {
+  const counts = Object.fromEntries(FINAL_FIELD_STATUSES.map((status) => [status, 0])) as Record<
+    FinalFieldStatus,
+    number
+  >;
+  for (const outcome of report?.fieldOutcomes ?? []) counts[outcome.status] += 1;
+  return {
+    ...counts,
+    detected: report?.fieldOutcomes.length ?? 0,
+    total: FINAL_FIELD_STATUSES.reduce((sum, status) => sum + counts[status], 0),
+  };
+}
+
 export function AutofillPanel({
   state,
   eligible,
@@ -244,6 +271,14 @@ export function AutofillPanel({
   // the progress bar, the timer and the primary button all read it, so the
   // invalid combination the user saw cannot be constructed.
   const active = ACTIVE_RUN_STATES.includes(state.runState);
+  // The summary, counted here from the run's own field records.
+  //
+  // Deliberately not read off the report's pre-computed counters, and never off
+  // planner output: the numbers a person reads must be a tally of the list
+  // printed under them, computed in the same render from the same array. The
+  // counters that produced "Could not fill: 0" above eighteen unanswered
+  // questions were each derived somewhere else, from a different subset.
+  const summary = summarize(report);
   // A page that is asking for credentials or that has ended the application is
   // not one to fill: the button would do nothing useful and implying otherwise
   // is worse than saying so.
@@ -401,34 +436,33 @@ export function AutofillPanel({
             filled.
           */}
           <ul className="autofill__summary">
-            <li>Fields detected: {report.fieldsFound}</li>
-            <li>Automatically filled: {report.finalStatusCounts.FILLED_VERIFIED ?? 0}</li>
-            {(report.finalStatusCounts.SKIPPED_ALREADY_VALID ?? 0) > 0 ? (
-              <li>Already correct: {report.finalStatusCounts.SKIPPED_ALREADY_VALID}</li>
-            ) : null}
+            <li>Detected: {summary.detected}</li>
+            <li>Filled and verified: {summary.FILLED_VERIFIED}</li>
+            <li>Optional blank: {summary.OPTIONAL_LEFT_BLANK}</li>
+            <li>Needs your answer: {summary.USER_CONFIRMATION_REQUIRED}</li>
+            <li>Failed: {summary.FAILED_EXECUTION}</li>
+            <li>Blocked: {summary.BLOCKED}</li>
+            <li>Already valid: {summary.SKIPPED_ALREADY_VALID}</li>
+            <li>Elapsed time: {formatElapsed(report.totalDurationMs)}</li>
+            {/*
+              Not part of the partition: an upload that verified is already
+              counted under "Filled and verified". It is here because "did my
+              résumé actually go in?" is the one question the six statuses
+              cannot answer on their own.
+            */}
             <li>Documents uploaded: {report.documentsAttached}</li>
-            {report.optionalLeftBlank > 0 ? (
-              <li>Optional, left blank: {report.optionalLeftBlank}</li>
-            ) : null}
-            {/*
-              Required fields the run could not settle, counted from the audit
-              rather than from the results list. The two disagree whenever a
-              required field produced no action at all — which is exactly when
-              the summary used to read "Could not fill: 0" above a list of
-              fields the user still had to answer.
-            */}
-            {/*
-              Everything the run left for the user, counted once. The two lines
-              this replaces could read "Needs confirmation: 0 / Could not fill:
-              0" above a list of eighteen unanswered required fields, because
-              each counted a different subset and neither counted the fields
-              that produced no action at all.
-            */}
-            <li>Needs your answer: {report.userInputRequired}</li>
-            <li>Could not fill: {report.failedFields}</li>
-            {report.blockedFields > 0 ? <li>Blocked: {report.blockedFields}</li> : null}
-            <li>Total time: {formatElapsed(report.totalDurationMs)}</li>
           </ul>
+          {/*
+            Shown, not hidden. A summary whose parts do not add up is the
+            failure this whole model exists to end, so if it ever happens again
+            the popup says so rather than letting the user work it out.
+          */}
+          {summary.total !== summary.detected ? (
+            <p className="result result--bad" role="alert">
+              This summary does not add up: {summary.total} field results against {summary.detected}{' '}
+              detected. Export the run trace from Settings → Diagnostics.
+            </p>
+          ) : null}
           <p className="autofill__never-submits">
             The final Submit button was never clicked. Review the application and submit it
             yourself.

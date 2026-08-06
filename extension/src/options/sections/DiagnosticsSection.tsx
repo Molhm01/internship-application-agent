@@ -55,6 +55,17 @@ export function DiagnosticsSection(): JSX.Element {
   const [pageTrace, setPageTrace] = useState<PageControlTrace | null>(null);
   const [tracing, setTracing] = useState(false);
   const [traceError, setTraceError] = useState('');
+  /**
+   * The run-trace export is a development tool, so it is behind the same switch
+   * as every other one.
+   *
+   * Not a security boundary — the trace holds no personal data by construction —
+   * but a product one. Someone applying for a job is offered one button; a page
+   * of JSON export controls is what turned the diagnostics into the product last
+   * time. Read from settings rather than from a build flag so a user chasing a
+   * bug can turn it on without a rebuild.
+   */
+  const [developerMode, setDeveloperMode] = useState(false);
 
   /**
    * Runs the profile import and shows what it did, key by key.
@@ -196,6 +207,7 @@ export function DiagnosticsSection(): JSX.Element {
     ])
       .then(([settings, status, scan, plan, generations]) => {
         if (!active) return;
+        setDeveloperMode(settings.developerMode);
         setDiagnostics({
           extensionVersion: chrome.runtime.getManifest().version,
           server: status.health,
@@ -372,9 +384,15 @@ export function DiagnosticsSection(): JSX.Element {
         needs: the rolling list below answers "how have runs been going", this
         answers "what happened to each field on the last one, and why".
       */}
-      <button type="button" onClick={() => void exportRunTrace()} disabled={exporting}>
-        {exporting ? 'Collecting the run…' : 'Export Autofill Run Trace'}
-      </button>
+      {developerMode ? (
+        <button type="button" onClick={() => void exportRunTrace()} disabled={exporting}>
+          {exporting ? 'Collecting the run…' : 'Export Autofill Run Trace'}
+        </button>
+      ) : (
+        <p className="muted">
+          Turn on developer mode in Preferences to export the last run field by field.
+        </p>
+      )}
       <button type="button" onClick={exportTraces} disabled={traces.length === 0}>
         Export run traces
       </button>

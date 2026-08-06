@@ -15,11 +15,12 @@
       in aggregate. A test that says "at least twenty verified" cannot tell a
       run that filled the wrong twenty from one that filled the right twenty.
 
-        #firstName, #lastName, #email  → FILLED_VERIFIED
-        #middleName                    → OPTIONAL_LEFT_BLANK
-        #referralName                  → USER_CONFIRMATION_REQUIRED
-        #country                       → FAILED_EXECUTION
-        #city                          → SKIPPED_ALREADY_VALID
+        #firstName, #lastName, #email  → FILLED_VERIFIED          (green)
+        #middleName                    → OPTIONAL_LEFT_BLANK      (grey)
+        #referralName                  → USER_CONFIRMATION_REQUIRED (orange)
+        #legalConfirmation             → USER_CONFIRMATION_REQUIRED (purple)
+        #country                       → FAILED_EXECUTION         (red)
+        #city                          → SKIPPED_ALREADY_VALID    (no mark)
 
       Nothing here is styled and nothing is dynamic beyond the one control that
       is deliberately hostile. Keep it that way: a fixture whose behaviour is
@@ -98,6 +99,25 @@
             <option value="CA">Canada</option>
             <option value="GB">United Kingdom</option>
           </select>
+        </fieldset>
+
+        <fieldset>
+          <legend>Confirmation</legend>
+
+          <!--
+            A legal attestation. The agent may never tick this on the user's
+            behalf at any confidence, from any source, under any setting — it is
+            a statement the applicant makes, not a fact about them the profile
+            can supply. It ends USER_CONFIRMATION_REQUIRED wearing a *purple*
+            mark rather than an orange one: "we have no value for this" and
+            "this is a declaration only you may make" are different requests,
+            and colouring them alike is how a legal consent came to look like a
+            missing postcode.
+          -->
+          <label for="legalConfirmation">
+            I certify that the information in this application is true and complete.
+          </label>
+          <input id="legalConfirmation" name="legal_confirmation" type="checkbox" required />
         </fieldset>
 
         <!--

@@ -43,7 +43,27 @@ export const fieldTraceSchema = z
      * never from the value — safe to log, and the only way to correlate a field
      * across the scan, the plan, and the fill.
      */
+    /**
+     * The run and the build this record came from, repeated on every field.
+     *
+     * Redundant against the trace envelope, and deliberately so: field records
+     * get pasted into bug reports one at a time, and a record that cannot say
+     * which run and which bundle produced it is unusable. Three rounds of
+     * repairs looked ineffective because nobody could tell which build the
+     * evidence came from.
+     */
+    runId: z.string().max(200),
+    buildId: z.string().max(120),
     fieldId: z.string().max(200),
+    /**
+     * The frame the control actually lives in. 0 is the top document.
+     *
+     * An application is routinely not one document — iCIMS, Workday and
+     * SmartRecruiters render whole sections in iframes — and "the field was
+     * found in frame 2 and the write went to frame 0" is invisible without
+     * this.
+     */
+    frameId: z.number().int().nonnegative().default(0),
     /**
      * The question as the employer worded it.
      *

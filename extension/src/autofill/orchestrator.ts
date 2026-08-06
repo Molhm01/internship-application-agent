@@ -24,10 +24,14 @@ import {
   traceOrigin,
   ANNOTATION_BADGES,
   annotationFor,
+  assertNoTemporaryStatuses,
+  classifyQuestionDeterministically,
   countFinalStatuses,
   isSettledStatus,
   resolveFinalFieldStatus,
+  resolveRunningFieldStatus,
   type AnnotationKind,
+  type FieldRunStatus,
   type FinalFieldOutcome,
   type FinalFieldStatus,
 } from '@internship-agent/shared';
@@ -254,16 +258,31 @@ export interface StageTiming {
  * `ERROR_CODES` member, never a message that could quote what was typed.
  */
 export interface FieldDiagnostic {
+  runId: string;
+  buildId: string;
   fieldId: string;
+  /** 0 is the top document. A field found in a subframe is filled there too. */
+  frameId: number;
   label: string;
   section?: string;
   controlType: string;
   required: boolean;
   intent?: string;
   profileValueAvailable: boolean;
+  plannerSource: string;
   plannedAction?: string;
+  contractResult: 'accepted' | 'repaired' | 'rejected' | 'not_applicable';
   executionAttempted: boolean;
   verification: string;
+  /**
+   * Where the field stands right now.
+   *
+   * While the run is moving this is a `RUNNING_FIELD_STATUSES` member; when it
+   * stops, every one of them has been resolved into `finalStatus` and this
+   * agrees with it. Keeping both lets the completion check assert the
+   * difference instead of trusting it.
+   */
+  runStatus: FieldRunStatus;
   finalStatus: FinalFieldStatus;
   annotation: AnnotationKind;
   failureCode?: string;
@@ -386,6 +405,15 @@ export async function runApplicationAutofill(
   /** True once a CAPTCHA, MFA, or verification step stopped the run. */
   let pageBlocked = false;
   /**
+   * False while the loop is still moving.
+   *
+   * A field's `runStatus` is a stage marker until this flips and a final status
+   * afterwards. Having one flag rather than a per-field state machine is what
+   * makes "no field may still be pending at completion" a single assertion
+   * instead of an invariant spread over five call sites.
+   */
+  let runFinished = false;
+  /**
    * How long the executor spent on each field, and what it reported. Kept beside
    * the results rather than inside them because a later stage that does not
    * touch a field must not erase what an earlier one measured.
@@ -430,18 +458,62 @@ export async function runApplicationAutofill(
         // verified before the CAPTCHA appeared is still verified.
         blocked: pageBlocked && result?.verification !== 'verified',
       });
-      const sensitive = result?.sensitive ?? false;
+      // Purple is for a decision only the applicant may make. Two things earn
+      // it: the planner having flagged the action sensitive, and the question
+      // itself carrying legal-attestation or protected-characteristic language.
+      //
+      // The second is needed because the first is a property of an *action*, and
+      // a legal confirmation the planner refused to act on has no action to
+      // carry the flag — which is exactly how "I certify that this information
+      // is true" ended up orange, indistinguishable from a missing postcode.
+      // `classifyQuestionDeterministically` is the existing single source of
+      // truth for that language; this does not add a second copy of it.
+      const classification = classifyQuestionDeterministically(
+        field.question || field.label,
+      ).classification;
+      const sensitive =
+        (result?.sensitive ?? false) ||
+        classification === 'prohibited_legal' ||
+        classification === 'prohibited_sensitive';
+      // The contract's verdict, read off the action rather than re-derived: the
+      // planner records a repair as a warning naming the mismatch, and a refusal
+      // as `manual_review` carrying the same reason.
+      const violation = action ? contractViolation(field.fieldType, action.action) : null;
+      const repaired = action?.warnings.some((warning) => /must be (typed|chosen)/i.test(warning));
+      const executionAttempted = executorAttempted.has(field.id);
       return {
+        runId,
+        buildId: dependencies.buildId ?? 'unstamped',
         fieldId: field.id,
+        frameId: field.frameId ?? 0,
         label: (field.question || field.label || field.id).slice(0, 300),
         ...(field.section ? { section: field.section } : {}),
         controlType: field.fieldType,
         required: field.required,
         ...(field.canonicalKey ? { intent: field.canonicalKey } : {}),
         profileValueAvailable: hadProfileValue(source, plannedAction),
+        plannerSource: source ?? 'none',
         ...(plannedAction ? { plannedAction } : {}),
-        executionAttempted: executorAttempted.has(field.id),
+        contractResult: !action
+          ? 'not_applicable'
+          : violation
+            ? 'rejected'
+            : repaired
+              ? 'repaired'
+              : 'accepted',
+        executionAttempted,
         verification: result?.verification ?? 'not_attempted',
+        // While the loop is running this is the stage the field is waiting in;
+        // once it has stopped, `report()` has resolved every one of them and
+        // this equals `finalStatus`. Both are recorded so the completion check
+        // can assert the difference rather than assume it.
+        runStatus: runFinished
+          ? finalStatus
+          : resolveRunningFieldStatus({
+              planned: plannedAction !== undefined,
+              executionAttempted,
+              verificationObserved: result?.verification === 'verified',
+            }),
         finalStatus,
         annotation: annotationFor(finalStatus, sensitive),
         ...(result?.failureCode ? { failureCode: result.failureCode } : {}),
@@ -477,6 +549,10 @@ export async function runApplicationAutofill(
       const selector = selectorsByField.get(entry.fieldId) ?? fieldSelectors.get(entry.fieldId);
       if (!selector) return [];
       const result = resultsByField.get(entry.fieldId);
+      // `none` is still sent. The content script reads it as "remove whatever is
+      // on this field and draw nothing", which is not the same as omitting the
+      // field — an omitted field keeps the mark an earlier pass gave it, and
+      // that is the whole class of bug this redraw exists to end.
       return [
         {
           fieldId: entry.fieldId,
@@ -968,6 +1044,10 @@ export async function runApplicationAutofill(
     }
   }
 
+  // The loop has stopped. From here every field's `runStatus` is its verdict
+  // rather than the stage it was waiting in.
+  runFinished = true;
+
   // Every question the last scan saw must end with a status.
   //
   // The results map is built from `plan.actions`, so a field the planner never
@@ -1088,6 +1168,15 @@ export async function runApplicationAutofill(
   }
 
   const diagnostics = buildDiagnostics(lastFields, lastPlan);
+  // The same claim, checked against the status model rather than against the
+  // wording of a reason sentence. The line above catches a *prose* stage marker
+  // that survived; this catches a field whose `runStatus` is still one of
+  // PENDING_SCAN, PENDING_RESOLUTION, PENDING_EXECUTION or
+  // PENDING_VERIFICATION. Two checks because they fail for different reasons:
+  // the first is a rendering bug, this one is a state-machine bug.
+  assertNoTemporaryStatuses(
+    diagnostics.map((entry) => ({ fieldId: entry.fieldId, status: entry.runStatus })),
+  );
   if (dependencies.onTrace) {
     dependencies.onTrace(
       buildRunTrace({
@@ -1140,46 +1229,30 @@ function buildRunTrace(input: {
   scanCompletedAt: string;
   pendingAtCompletion: number;
 }): RunTrace {
-  const actionsByField = new Map(
-    (input.plan?.actions ?? []).map((action) => [action.fieldId, action]),
-  );
-  const fieldsById = new Map(input.fields.map((field) => [field.id, field]));
-
-  const fieldTraces: FieldTrace[] = input.diagnostics.map((entry): FieldTrace => {
-    const field = fieldsById.get(entry.fieldId);
-    const action = actionsByField.get(entry.fieldId);
-    // The contract's verdict, read off the action rather than re-derived: the
-    // planner records a repair as a warning naming the mismatch, and a refusal
-    // as `manual_review` carrying the same reason.
-    const violation = action && field ? contractViolation(field.fieldType, action.action) : null;
-    const repaired = action?.warnings.some((warning) => /must be (typed|chosen)/i.test(warning));
-    return {
-      fieldId: entry.fieldId,
-      label: entry.label,
-      ...(entry.section ? { section: entry.section } : {}),
-      ...(entry.intent ? { intent: entry.intent } : {}),
-      controlType: entry.controlType,
-      required: entry.required,
-      plannerSource: traceSource(
-        action?.source ?? (entry.profileValueAvailable ? 'profile' : undefined),
-      ),
-      profileValueAvailable: entry.profileValueAvailable,
-      ...(entry.plannedAction ? { plannedAction: entry.plannedAction } : {}),
-      contractResult: !action
-        ? 'not_applicable'
-        : violation
-          ? 'rejected'
-          : repaired
-            ? 'repaired'
-            : 'accepted',
-      executorAttempted: entry.executionAttempted,
-      verification: entry.verification,
-      finalStatus: entry.finalStatus,
-      annotation: entry.annotation,
-      ...(entry.failureCode ? { errorCode: entry.failureCode } : {}),
-      ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
-    };
-  });
+  // Copied from the orchestrator's own record, never re-derived. Re-deriving is
+  // how a trace comes to disagree with the report it describes, and a trace that
+  // disagrees with its own report is worse than no trace at all.
+  const fieldTraces: FieldTrace[] = input.diagnostics.map((entry): FieldTrace => ({
+    runId: entry.runId,
+    buildId: entry.buildId,
+    fieldId: entry.fieldId,
+    frameId: entry.frameId,
+    label: entry.label,
+    ...(entry.section ? { section: entry.section } : {}),
+    ...(entry.intent ? { intent: entry.intent } : {}),
+    controlType: entry.controlType,
+    required: entry.required,
+    plannerSource: traceSource(entry.plannerSource),
+    profileValueAvailable: entry.profileValueAvailable,
+    ...(entry.plannedAction ? { plannedAction: entry.plannedAction } : {}),
+    contractResult: entry.contractResult,
+    executorAttempted: entry.executionAttempted,
+    verification: entry.verification,
+    finalStatus: entry.finalStatus,
+    annotation: entry.annotation,
+    ...(entry.failureCode ? { errorCode: entry.failureCode } : {}),
+    ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
+  }));
 
   // Read straight off the report, which computed them from the same diagnostic
   // list. One arithmetic, one answer — the trace used to mix required-field

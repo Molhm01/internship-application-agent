@@ -5,7 +5,9 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   DEFAULT_AUTOFILL_SETTINGS,
   FINAL_FIELD_STATUSES,
+  RUNNING_FIELD_STATUSES,
   applicationScanResultSchema,
+  assertNoTemporaryStatuses,
   classifyPage,
   isSettledStatus,
   pendingResults,
@@ -278,7 +280,7 @@ describe('the diagnostic-trace fixture', () => {
     const last = harness.annotationBatches.at(-1) ?? [];
     expect(last.length).toBeGreaterThan(0);
     const verified = harness.report.fieldOutcomes.filter(
-      (entry) => entry.status === 'FILLED_VERIFIED' || entry.status === 'SKIPPED_ALREADY_VALID',
+      (entry) => entry.status === 'FILLED_VERIFIED',
     );
     expect(verified.length).toBeGreaterThan(0);
     for (const outcome of verified) {
@@ -288,6 +290,38 @@ describe('the diagnostic-trace fixture', () => {
       expect(mark!.annotation).toBe('verified');
       expect(mark!.badge).not.toMatch(/information needed/i);
     }
+    // A field the agent did not touch carries no mark at all — but it is still
+    // *sent*, so that whatever an earlier pass drew on it is removed. Omitting
+    // it would leave the stale mark in place, which is the bug itself.
+    for (const outcome of harness.report.fieldOutcomes.filter(
+      (entry) => entry.status === 'SKIPPED_ALREADY_VALID',
+    )) {
+      expect(outcome.annotation).toBe('none');
+      const mark = last.find((request) => request.fieldId === outcome.fieldId);
+      expect(mark, `${outcome.label} was not sent for a redraw`).toBeDefined();
+      expect(mark!.annotation).toBe('none');
+    }
+  });
+
+  it('GATE 2b — no field holds a temporary status once the run has stopped', () => {
+    for (const field of harness.trace.fields) {
+      expect(RUNNING_FIELD_STATUSES, `${field.label} is still pending`).not.toContain(
+        field.finalStatus,
+      );
+    }
+    // And the model itself refuses the claim, so this cannot be argued away by
+    // a future caller that assembles the report differently.
+    expect(() =>
+      assertNoTemporaryStatuses(
+        harness.report.fieldOutcomes.map((entry) => ({
+          fieldId: entry.fieldId,
+          status: entry.status,
+        })),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertNoTemporaryStatuses([{ fieldId: 'field-x', status: 'PENDING_VERIFICATION' }]),
+    ).toThrow(/temporary status/i);
   });
 
   it('GATE 4 — an optional blank field is not an error', () => {
@@ -362,9 +396,41 @@ describe('the diagnostic-trace fixture', () => {
     expect(traced!.controlType).toBe('select');
   });
 
-  it('leaves the already-correct field alone and says so', () => {
+  it('leaves the already-correct field alone, unmarked, and says so', () => {
     expect(value('city')).toBe('Clifton');
     expect(statusOf(harness.report, 'City')).toBe('SKIPPED_ALREADY_VALID');
+    const outcome = harness.report.fieldOutcomes.find((entry) => entry.label === 'City');
+    // The user's own correct answer is not the agent's work, so it gets no tick.
+    expect(outcome!.annotation).toBe('none');
+  });
+
+  it('marks a legal confirmation purple and never ticks it', () => {
+    const box = document.getElementById('legalConfirmation');
+    expect(box instanceof HTMLInputElement && box.checked, 'the agent ticked a legal consent').toBe(
+      false,
+    );
+    const outcome = harness.report.fieldOutcomes.find((entry) =>
+      entry.label.toLowerCase().includes('certify'),
+    );
+    expect(outcome, 'the legal confirmation was not reported').toBeDefined();
+    expect(outcome!.status).toBe('USER_CONFIRMATION_REQUIRED');
+    // Purple, not orange. "We have no value for this" and "this is a
+    // declaration only you may make" are different requests.
+    expect(outcome!.annotation).toBe('sensitive_decision');
+    expect(outcome!.required).toBe(true);
+  });
+
+  it('stamps every field record with the run, the build, and the frame', () => {
+    expect(harness.trace.fields.length).toBeGreaterThan(0);
+    for (const field of harness.trace.fields) {
+      expect(field.runId).toBe(harness.trace.runId);
+      expect(field.buildId).toBe('diagnostic-fixture');
+      expect(field.frameId).toBe(0);
+      expect(field.plannerSource.length).toBeGreaterThan(0);
+      expect(['accepted', 'repaired', 'rejected', 'not_applicable']).toContain(
+        field.contractResult,
+      );
+    }
   });
 
   it('records a full diagnostic for every field, and no value anywhere', () => {

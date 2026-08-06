@@ -205,15 +205,17 @@ describe('standalone popup autofill', () => {
     const autofill = await screen.findByRole('button', { name: 'Autofill Application' });
     fireEvent.click(autofill);
 
-    // The five named counts, shown after the run rather than a field-by-field
-    // list to work through before it.
-    await waitFor(() => expect(screen.getByText('Automatically filled: 1')).toBeDefined());
-    expect(screen.getByText('Fields detected: 2')).toBeDefined();
+    // The named counts, shown after the run rather than a field-by-field list
+    // to work through before it. Every one is a tally of the same list of final
+    // field records, so they add up to "Detected" by construction.
+    await waitFor(() => expect(screen.getByText('Filled and verified: 1')).toBeDefined());
+    expect(screen.getByText('Detected: 2')).toBeDefined();
     expect(screen.getByText('Documents uploaded: 1')).toBeDefined();
-    // One line, counting the audit and the review list together — the two
-    // used to be separate and each under-reported.
     expect(screen.getByText('Needs your answer: 1')).toBeDefined();
-    expect(screen.getByText('Could not fill: 0')).toBeDefined();
+    expect(screen.getByText('Failed: 0')).toBeDefined();
+    expect(screen.getByText('Blocked: 0')).toBeDefined();
+    expect(screen.getByText('Already valid: 0')).toBeDefined();
+    expect(screen.getByText('Optional blank: 0')).toBeDefined();
     expect(screen.getByText(/final Submit button was never clicked/i)).toBeDefined();
     // The unresolved question is offered as something the user can jump to.
     expect(screen.getByRole('button', { name: 'Gender' })).toBeDefined();
