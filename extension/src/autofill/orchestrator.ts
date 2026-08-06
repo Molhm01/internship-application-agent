@@ -1,6 +1,5 @@
 import {
   DEFAULT_ERROR_GUIDANCE,
-  REVIEW_BADGES,
   applicationAutofillReportSchema,
   QuestionLedger,
   auditRequiredFields,
@@ -23,6 +22,14 @@ import {
   type RunTrace,
   runTraceSchema,
   traceOrigin,
+  ANNOTATION_BADGES,
+  annotationFor,
+  countFinalStatuses,
+  isSettledStatus,
+  resolveFinalFieldStatus,
+  type AnnotationKind,
+  type FinalFieldOutcome,
+  type FinalFieldStatus,
 } from '@internship-agent/shared';
 import { finalizePendingResult, pendingResults } from '@internship-agent/shared';
 import { decideApproval, type ApprovalDecision } from './approvalPolicy.js';
@@ -124,7 +131,15 @@ export interface AutofillDependencies {
 export interface HighlightPlan {
   fieldId: string;
   selector: string;
-  reason: ReviewReason;
+  /**
+   * What this mark means, derived from the field's final status and from
+   * nothing else. The previous input was `reason`, a review flag computed
+   * before the executor ran — which is why a field that filled and verified
+   * went on wearing "Information needed".
+   */
+  annotation: AnnotationKind;
+  /** Kept for the review queue's wording. It no longer chooses the colour. */
+  reason?: ReviewReason;
   badge: string;
   question: string;
 }
@@ -225,6 +240,55 @@ export interface StageTiming {
   count: number;
 }
 
+/**
+ * What the run observed about one field, stage by stage.
+ *
+ * One record per normalized question, written as the field passes each stage
+ * rather than reconstructed afterwards from whatever survived. Reconstruction is
+ * how the report and the page came to disagree: the popup counted results, the
+ * page counted review flags, the audit counted required fields, and each of the
+ * three was computed in a different module from a different subset.
+ *
+ * Nothing here can hold a value. `profileValueAvailable` is a boolean about
+ * whether an answer existed, never the answer; `failureCode` is an
+ * `ERROR_CODES` member, never a message that could quote what was typed.
+ */
+export interface FieldDiagnostic {
+  fieldId: string;
+  label: string;
+  section?: string;
+  controlType: string;
+  required: boolean;
+  intent?: string;
+  profileValueAvailable: boolean;
+  plannedAction?: string;
+  executionAttempted: boolean;
+  verification: string;
+  finalStatus: FinalFieldStatus;
+  annotation: AnnotationKind;
+  failureCode?: string;
+  durationMs?: number;
+}
+
+/**
+ * True when a saved source actually produced an answer for this field.
+ *
+ * `source` is the planner's own account of where the answer came from, so this
+ * is a fact about the profile rather than a guess about it. `none` covers both
+ * "nothing was found" and "nothing may be used", which are alike from here:
+ * either way there was no value to write.
+ */
+function hadProfileValue(source: string | undefined, action: string | undefined): boolean {
+  if (source === undefined || source === 'none') return false;
+  return action !== 'missing_information' && action !== 'manual_review';
+}
+
+/** A field's stored value, in a form two scans can be compared by. */
+function valueKey(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '';
+  return JSON.stringify(value);
+}
+
 function timed<T>(
   stage: StageTiming['stage'],
   pass: number,
@@ -260,6 +324,15 @@ export async function runApplicationAutofill(
   const resultsByField = new Map<string, AutofillFieldResult>();
   /** How to find each field again when the marks are drawn. */
   const selectorsByField = new Map<string, string>();
+  /**
+   * Every scanned field's selector, not only the planned ones.
+   *
+   * A field the planner produced no action for still has to be markable — an
+   * unanswered required question with no mark on it is the one the user walks
+   * past — and `selectorsByField` above only ever held fields that reached a
+   * plan.
+   */
+  const fieldSelectors = new Map<string, string>();
   let iterations = 0;
   let url = '';
   let ats: ApplicationAutofillReport['ats'] = 'unknown';
@@ -301,6 +374,123 @@ export async function runApplicationAutofill(
   let lastScan: ApplicationScanResult | null = null;
   /** How many passes re-read a control whose choices another field produces. */
   let dependentRescans = 0;
+  /**
+   * What each field already held when the run first looked at it.
+   *
+   * This is the only way to tell "the agent filled it" from "it was already
+   * right". Both are good outcomes, but only the first is evidence the executor
+   * works, and reporting a pre-filled field as an agent success is how a broken
+   * fill can look like a working one.
+   */
+  const preexisting = new Map<string, string>();
+  /** True once a CAPTCHA, MFA, or verification step stopped the run. */
+  let pageBlocked = false;
+  /**
+   * How long the executor spent on each field, and what it reported. Kept beside
+   * the results rather than inside them because a later stage that does not
+   * touch a field must not erase what an earlier one measured.
+   */
+  const durationByField = new Map<string, number>();
+
+  /**
+   * One record per question on the form, each carrying exactly one final status.
+   *
+   * The authoritative field set is the *last* scan — the form as it stands now.
+   * That is deliberate and it is what makes the counters match the page: a
+   * result left over from an identity an earlier pass used, for a control this
+   * scan no longer sees, is not a field the user can look at, and counting it
+   * inflated every total the popup printed.
+   *
+   * `plan` is consulted only for what the planner intended; the verdict comes
+   * from what was observed.
+   */
+  const buildDiagnostics = (
+    fields: readonly DetectedField[],
+    plan: DeterministicFillPlan | null,
+  ): FieldDiagnostic[] => {
+    const actionsByField = new Map((plan?.actions ?? []).map((action) => [action.fieldId, action]));
+    return fields.map((field): FieldDiagnostic => {
+      const result = resultsByField.get(field.id);
+      const action = actionsByField.get(field.id);
+      const source = result?.source ?? action?.source;
+      const plannedAction = result?.attemptedAction ?? result?.action ?? action?.action;
+      // "Already valid" is decided against what the page held *before* the run,
+      // not against what it holds now — afterwards every filled field looks
+      // pre-filled.
+      const alreadyValidBeforeRun =
+        result?.verification === 'verified' &&
+        preexisting.get(field.id) !== undefined &&
+        preexisting.get(field.id) !== '' &&
+        preexisting.get(field.id) === valueKey(result.actualValue);
+      const finalStatus = resolveFinalFieldStatus({
+        field,
+        ...(result ? { result } : {}),
+        alreadyValidBeforeRun,
+        // Only fields the run did not settle inherit the block. A field that
+        // verified before the CAPTCHA appeared is still verified.
+        blocked: pageBlocked && result?.verification !== 'verified',
+      });
+      const sensitive = result?.sensitive ?? false;
+      return {
+        fieldId: field.id,
+        label: (field.question || field.label || field.id).slice(0, 300),
+        ...(field.section ? { section: field.section } : {}),
+        controlType: field.fieldType,
+        required: field.required,
+        ...(field.canonicalKey ? { intent: field.canonicalKey } : {}),
+        profileValueAvailable: hadProfileValue(source, plannedAction),
+        ...(plannedAction ? { plannedAction } : {}),
+        executionAttempted: executorAttempted.has(field.id),
+        verification: result?.verification ?? 'not_attempted',
+        finalStatus,
+        annotation: annotationFor(finalStatus, sensitive),
+        ...(result?.failureCode ? { failureCode: result.failureCode } : {}),
+        ...(durationByField.has(field.id) ? { durationMs: durationByField.get(field.id)! } : {}),
+      };
+    });
+  };
+
+  /** The diagnostic list as one terminal outcome per field. */
+  const toOutcomes = (diagnostics: readonly FieldDiagnostic[]): FinalFieldOutcome[] =>
+    diagnostics.map((entry) => ({
+      fieldId: entry.fieldId,
+      label: entry.label,
+      status: entry.finalStatus,
+      annotation: entry.annotation,
+      required: entry.required,
+      reason: resultsByField.get(entry.fieldId)?.reason ?? '',
+    }));
+
+  /**
+   * Redraws every mark on the page from the fields' current final statuses.
+   *
+   * Called after each verification stage rather than once at the end. That is
+   * the repair for the stale marks: a mark used to be drawn a single time, from
+   * a review flag decided before the executor ran, and nothing ever revisited it
+   * — so a field that filled and verified kept whatever the planner's
+   * uncertainty had earned it. Every field is sent every time, verified ones
+   * included, so a mark can be *replaced* rather than only added.
+   */
+  const annotate = async (scrollToFirst: boolean): Promise<void> => {
+    if (lastFields.length === 0) return;
+    const requests: HighlightPlan[] = buildDiagnostics(lastFields, lastPlan).flatMap((entry) => {
+      const selector = selectorsByField.get(entry.fieldId) ?? fieldSelectors.get(entry.fieldId);
+      if (!selector) return [];
+      const result = resultsByField.get(entry.fieldId);
+      return [
+        {
+          fieldId: entry.fieldId,
+          selector,
+          annotation: entry.annotation,
+          ...(result?.reviewReason ? { reason: result.reviewReason } : {}),
+          badge: ANNOTATION_BADGES[entry.annotation],
+          question: entry.label,
+        },
+      ];
+    });
+    const drawn = await dependencies.highlight(requests, scrollToFirst);
+    if (drawn.error) warnings.push(drawn.error.message);
+  };
 
   const report = (
     status: ApplicationAutofillReport['status'],
@@ -335,6 +525,16 @@ export async function runApplicationAutofill(
       );
     }
     const reviewing = results.filter((result) => result.reviewReason && !result.reviewed);
+    // The one list every count below is taken from.
+    //
+    // Previously each number was computed over a different subset — one over
+    // `results`, one over the required-field audit, one over review flags — and
+    // no two of them could be made to agree, which is how "Could not fill: 0"
+    // ended up printed above a list of fields the user still had to answer.
+    // There is now a single authoritative record per question on the form, and
+    // every counter is a tally of its final status.
+    const diagnostics = buildDiagnostics(lastFields, lastPlan);
+    const statusCounts = countFinalStatuses(toOutcomes(diagnostics));
     // Every required field ends in exactly one of three states. A field the run
     // never reached is not omitted — it is reported as needing the user, which
     // is what makes the gap visible instead of invisible.
@@ -359,9 +559,16 @@ export async function runApplicationAutofill(
       url: url || 'https://invalid.local/',
       ats,
       iterations,
-      fieldsFound: results.length,
-      fieldsCompleted: results.filter((result) => result.verification !== 'not_attempted').length,
-      fieldsVerified: results.filter((result) => result.verification === 'verified').length,
+      // The questions on the form, not the entries in a map. These were the
+      // same number only by luck: a result keyed by an identity a rerender had
+      // already replaced counted as a field the user could look at, and could
+      // not be found on the page.
+      fieldsFound: diagnostics.length,
+      // Settled work — filled, already correct, or correctly left blank. It
+      // used to mean "verification is not `not_attempted`", which counted a
+      // write the page rejected as completed work.
+      fieldsCompleted: diagnostics.filter((entry) => isSettledStatus(entry.finalStatus)).length,
+      fieldsVerified: statusCounts.FILLED_VERIFIED + statusCounts.SKIPPED_ALREADY_VALID,
       semanticMatches: results.filter(
         (result) =>
           result.action === 'select_resolved_option' ||
@@ -382,16 +589,15 @@ export async function runApplicationAutofill(
         .length,
       manualBlockers: reviewing.filter((result) => result.reviewReason === 'manual_required')
         .length,
-      failedFields: reviewing.filter((result) => result.reviewReason === 'failed').length,
-      skippedFields: results.filter((result) => result.action === 'skip').length,
-      optionalLeftBlank: results.filter((result) => result.verification === 'optional_left_blank')
-        .length,
-      // From the audit, not from the results list. A required field the run
-      // never reached produces no result at all, so counting results is exactly
-      // how "Could not fill: 0" ended up above a list of unanswered fields.
-      userInputRequired: audit.outstanding.filter(
-        (verdict) => verdict.outcome === 'USER_CONFIRMATION_REQUIRED',
-      ).length,
+      // Every one of these is now a tally of the same list, so the five lines
+      // the popup prints add up to the number above them by construction.
+      failedFields: statusCounts.FAILED_EXECUTION,
+      skippedFields: statusCounts.SKIPPED_ALREADY_VALID,
+      optionalLeftBlank: statusCounts.OPTIONAL_LEFT_BLANK,
+      userInputRequired: statusCounts.USER_CONFIRMATION_REQUIRED,
+      blockedFields: statusCounts.BLOCKED,
+      finalStatusCounts: statusCounts,
+      fieldOutcomes: toOutcomes(diagnostics),
       totalDurationMs: Math.max(0, Date.now() - startedAtMs),
       submissionPrevented: true,
       status,
@@ -450,8 +656,23 @@ export async function runApplicationAutofill(
     url = scan.url;
     ats = scan.ats.id;
 
+    // Recorded before anything can cut the pass short. A page that turns out to
+    // be blocked still has questions on it, and each of them still deserves a
+    // final status — BLOCKED — rather than being absent from a report that then
+    // claims the form had no fields.
+    lastFields = scan.fields;
+    lastScan = scan;
+    for (const field of scan.fields) {
+      fieldSelectors.set(field.id, field.selector);
+      // Only the first sighting. After the executor has written a value, the
+      // page holds it, and re-reading it would make every filled field look as
+      // though it had been correct all along.
+      if (!preexisting.has(field.id)) preexisting.set(field.id, valueKey(field.currentValue));
+    }
+
     const blocked = blockingCondition(scan);
     if (blocked) {
+      pageBlocked = true;
       terminal = blocked;
       break;
     }
@@ -465,8 +686,6 @@ export async function runApplicationAutofill(
     }
 
     emit('normalizing', 'Reading the questions');
-    lastFields = scan.fields;
-    lastScan = scan;
     // A control still offering nothing but prompts on a pass after the first is
     // one this run came back for because another field produced its choices.
     if (pass > 1) {
@@ -572,7 +791,10 @@ export async function runApplicationAutofill(
         // A result the executor produced without touching the page is not an
         // attempt, and must not overwrite what an earlier pass verified.
         const outcome = reported && wasExecuted(reported.status) ? reported : undefined;
-        if (outcome) executorAttempted.add(action.fieldId);
+        if (outcome) {
+          executorAttempted.add(action.fieldId);
+          durationByField.set(action.fieldId, outcome.durationMs);
+        }
         const executed = outcome
           ? { verified: outcome.status === 'verified', failed: outcome.status === 'failed' }
           : undefined;
@@ -635,6 +857,16 @@ export async function runApplicationAutofill(
           }
         }
       }
+      // Immediately after verification, not at the end of the run.
+      //
+      // This is the repair for the stale marks. Marks used to be drawn once,
+      // after the last pass, from a review flag decided before the executor
+      // ran — so a field that verified in pass one wore the planner's
+      // uncertainty until the run finished, and a field verified by a later
+      // pass had already been marked by an earlier one. Redrawing the whole
+      // page from the current final statuses means a field that verifies stops
+      // being marked as needing anything, at the moment it verifies.
+      await annotate(false);
       return { attempted: newlyApproved.length };
     };
 
@@ -769,40 +1001,22 @@ export async function runApplicationAutofill(
     selectorsByField.set(field.id, field.selector);
   }
 
-  // Highlighting runs whatever stopped the loop: a run that ended early still
-  // leaves the page marked up with what it did and did not manage.
-  const needingReview = [...resultsByField.values()].filter(
-    (result) => result.reviewReason && !result.reviewed,
+  // The page's marks, redrawn one last time from the final statuses.
+  //
+  // Whatever stopped the loop: a run that ended early still leaves the page
+  // marked with what it did and did not manage. Every field is sent, verified
+  // ones included, because the content script draws exactly what it is given —
+  // a field omitted here would keep the mark an earlier pass gave it.
+  const outstanding = toOutcomes(buildDiagnostics(lastFields, lastPlan)).filter(
+    (outcome) => !isSettledStatus(outcome.status),
   );
-  if (needingReview.length > 0) {
-    const requests: HighlightPlan[] = needingReview.flatMap((result) => {
-      const selector = selectorsByField.get(result.fieldId);
-      const reason = result.reviewReason;
-      // Without a selector there is no element to mark. The field stays in the
-      // report rather than being silently dropped.
-      if (!selector || !reason) return [];
-      return [
-        {
-          fieldId: result.fieldId,
-          selector,
-          reason,
-          badge: REVIEW_BADGES[reason],
-          question: result.question,
-        },
-      ];
-    });
-    const highlighted = await dependencies.highlight(
-      requests,
-      settings.scrollToFirstReviewField && terminal === null,
-    );
-    if (highlighted.error) warnings.push(highlighted.error.message);
-  }
+  await annotate(settings.scrollToFirstReviewField && terminal === null && outstanding.length > 0);
 
   if (terminal?.code === 'AUTOFILL_CANCELLED') {
     emit('cancelled', 'Cancelled');
     return report('cancelled', terminal);
   }
-  if (terminal && needingReview.length === 0 && resultsByField.size === 0) {
+  if (terminal && outstanding.length === 0 && resultsByField.size === 0) {
     emit('failed', 'Autofill failed');
     return report('failed', terminal);
   }
@@ -846,7 +1060,11 @@ export async function runApplicationAutofill(
       .length,
   });
 
-  const status = needingReview.length > 0 ? 'completed_with_review' : 'completed';
+  // COMPLETED is a claim about every field on the form, so it is decided by the
+  // final statuses rather than by how many review flags happen to be set. A run
+  // holding one unsettled field is `completed_with_review`, and the schema
+  // refuses the alternative.
+  const status = outstanding.length > 0 ? 'completed_with_review' : 'completed';
   emit(
     status === 'completed' ? 'completed' : 'completed_with_review',
     'Autofill complete. Review highlighted fields and submit manually.',
@@ -869,6 +1087,7 @@ export async function runApplicationAutofill(
     );
   }
 
+  const diagnostics = buildDiagnostics(lastFields, lastPlan);
   if (dependencies.onTrace) {
     dependencies.onTrace(
       buildRunTrace({
@@ -876,6 +1095,7 @@ export async function runApplicationAutofill(
         buildId: dependencies.buildId ?? 'unstamped',
         report: finished,
         fields: lastFields,
+        diagnostics,
         plan: lastPlan,
         scan: lastScan,
         executorAttempted,
@@ -884,6 +1104,7 @@ export async function runApplicationAutofill(
         analysisRan,
         scanStartedAt,
         scanCompletedAt,
+        pendingAtCompletion: stillPending.length,
       }),
     );
   }
@@ -906,6 +1127,9 @@ function buildRunTrace(input: {
   buildId: string;
   report: ApplicationAutofillReport;
   fields: readonly DetectedField[];
+  /** The orchestrator's own per-field record. The trace reports it; it does not
+   * re-derive it, so the trace and the report cannot disagree. */
+  diagnostics: readonly FieldDiagnostic[];
   plan: DeterministicFillPlan | null;
   scan: ApplicationScanResult | null;
   executorAttempted: ReadonlySet<string>;
@@ -914,27 +1138,33 @@ function buildRunTrace(input: {
   analysisRan: boolean;
   scanStartedAt: string;
   scanCompletedAt: string;
+  pendingAtCompletion: number;
 }): RunTrace {
   const actionsByField = new Map(
     (input.plan?.actions ?? []).map((action) => [action.fieldId, action]),
   );
-  const resultsByField = new Map(input.report.results.map((result) => [result.fieldId, result]));
+  const fieldsById = new Map(input.fields.map((field) => [field.id, field]));
 
-  const fieldTraces: FieldTrace[] = input.fields.map((field): FieldTrace => {
-    const action = actionsByField.get(field.id);
-    const result = resultsByField.get(field.id);
+  const fieldTraces: FieldTrace[] = input.diagnostics.map((entry): FieldTrace => {
+    const field = fieldsById.get(entry.fieldId);
+    const action = actionsByField.get(entry.fieldId);
     // The contract's verdict, read off the action rather than re-derived: the
     // planner records a repair as a warning naming the mismatch, and a refusal
     // as `manual_review` carrying the same reason.
-    const violation = action ? contractViolation(field.fieldType, action.action) : null;
+    const violation = action && field ? contractViolation(field.fieldType, action.action) : null;
     const repaired = action?.warnings.some((warning) => /must be (typed|chosen)/i.test(warning));
     return {
-      fieldId: field.id,
-      ...(field.canonicalKey ? { intent: field.canonicalKey } : {}),
-      controlType: field.fieldType,
-      required: field.required,
-      plannerSource: traceSource(result?.source ?? action?.source),
-      ...(action ? { plannedAction: action.action } : {}),
+      fieldId: entry.fieldId,
+      label: entry.label,
+      ...(entry.section ? { section: entry.section } : {}),
+      ...(entry.intent ? { intent: entry.intent } : {}),
+      controlType: entry.controlType,
+      required: entry.required,
+      plannerSource: traceSource(
+        action?.source ?? (entry.profileValueAvailable ? 'profile' : undefined),
+      ),
+      profileValueAvailable: entry.profileValueAvailable,
+      ...(entry.plannedAction ? { plannedAction: entry.plannedAction } : {}),
       contractResult: !action
         ? 'not_applicable'
         : violation
@@ -942,20 +1172,20 @@ function buildRunTrace(input: {
           : repaired
             ? 'repaired'
             : 'accepted',
-      executorAttempted: input.executorAttempted.has(field.id),
-      verification: result?.verification ?? 'not_attempted',
-      ...(result?.failureCode ? { errorCode: result.failureCode } : {}),
+      executorAttempted: entry.executionAttempted,
+      verification: entry.verification,
+      finalStatus: entry.finalStatus,
+      annotation: entry.annotation,
+      ...(entry.failureCode ? { errorCode: entry.failureCode } : {}),
+      ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
     };
   });
 
-  const finalStatusCounts: Record<string, number> = {};
-  for (const verdict of input.report.requiredFields) {
-    finalStatusCounts[verdict.outcome] = (finalStatusCounts[verdict.outcome] ?? 0) + 1;
-  }
-  for (const result of input.report.results) {
-    const key = `verification:${result.verification}`;
-    finalStatusCounts[key] = (finalStatusCounts[key] ?? 0) + 1;
-  }
+  // Read straight off the report, which computed them from the same diagnostic
+  // list. One arithmetic, one answer — the trace used to mix required-field
+  // verdicts with per-result verification stages in one map, so it agreed with
+  // neither the popup nor itself.
+  const finalStatusCounts = input.report.finalStatusCounts;
 
   const aiResults = input.report.results.filter((result) => result.source === 'ai_suggestion');
   // What the deterministic pass could not settle is what the analysis was asked
@@ -988,7 +1218,9 @@ function buildRunTrace(input: {
       (field) => field.plannerSource !== 'ai' && field.executorAttempted,
     ).length,
     deterministicVerified: fieldTraces.filter(
-      (field) => field.plannerSource !== 'ai' && field.verification === 'verified',
+      (field) =>
+        field.plannerSource !== 'ai' &&
+        (field.finalStatus === 'FILLED_VERIFIED' || field.finalStatus === 'SKIPPED_ALREADY_VALID'),
     ).length,
     questionsSentToAi: input.analysisRan ? unresolved : 0,
     // One batched request per stable page, and none at all when the
@@ -1005,6 +1237,7 @@ function buildRunTrace(input: {
       (verdict) => verdict.outcome !== 'FILLED_VERIFIED',
     ).length,
     finalStatusCounts,
+    pendingAtCompletion: input.pendingAtCompletion,
     stages: input.timings.map((entry) => ({
       stage: entry.stage,
       pass: entry.pass,

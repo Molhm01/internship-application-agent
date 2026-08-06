@@ -1,4 +1,10 @@
-import { REVIEW_BADGES, markExtensionOwned, type ReviewReason } from '@internship-agent/shared';
+import {
+  ANNOTATION_BADGES,
+  ANNOTATION_COLOURS,
+  markExtensionOwned,
+  type AnnotationKind,
+  type ReviewReason,
+} from '@internship-agent/shared';
 
 /**
  * Draws attention to fields that need a person, without editing the employer's
@@ -17,7 +23,18 @@ const MARKED_ATTRIBUTE = 'data-internship-agent-review';
 export interface HighlightRequest {
   fieldId: string;
   selector: string;
-  reason: ReviewReason;
+  /**
+   * What this field's mark means, chosen from its *final* status.
+   *
+   * This replaced a colour chosen from the review reason, which was computed
+   * before the executor ran and never revisited — so a field that filled and
+   * verified kept whatever mark the planner's uncertainty had earned it, and a
+   * page full of correctly filled answers stayed covered in "Information
+   * needed". The mark is now a function of the outcome and of nothing else.
+   */
+  annotation: AnnotationKind;
+  /** Retained for the review queue's own wording. Never chooses the colour. */
+  reason?: ReviewReason;
   badge: string;
   question?: string;
 }
@@ -30,12 +47,24 @@ interface ActiveHighlight extends HighlightRequest {
   badgeNode: HTMLElement;
 }
 
-const COLOURS: Record<ReviewReason, string> = {
-  ai_suggestion: '#c2410c',
-  missing_information: '#a16207',
-  manual_required: '#7e22ce',
-  failed: '#b91c1c',
-};
+const COLOURS = ANNOTATION_COLOURS;
+
+/**
+ * The marks a person is meant to act on.
+ *
+ * A verified field and a deliberately blank optional one are drawn quietly —
+ * they are reported, not requested — and are excluded from the review queue and
+ * from "scroll to the first field that needs you".
+ */
+const NEEDS_ATTENTION: readonly AnnotationKind[] = [
+  'information_needed',
+  'sensitive_decision',
+  'execution_failed',
+];
+
+export function needsAttention(annotation: AnnotationKind): boolean {
+  return NEEDS_ATTENTION.includes(annotation);
+}
 
 const active = new Map<string, ActiveHighlight>();
 let host: HTMLElement | null = null;
@@ -130,21 +159,35 @@ export function highlightField(request: HighlightRequest): boolean {
   const element = findElement(request.selector);
   if (!element) return false;
 
+  // Always first. A field being re-annotated after verification must lose the
+  // mark it was wearing before, and the outline it carried with it — leaving
+  // the old one in place under a new badge is exactly how a filled field went
+  // on displaying "Information needed".
   removeHighlight(request.fieldId);
   const container = ensureLayer();
-  const colour = COLOURS[request.reason];
+  const colour = COLOURS[request.annotation];
 
   const badgeNode = document.createElement('div');
-  badgeNode.className = 'badge';
-  badgeNode.style.background = colour;
-  badgeNode.textContent = request.badge || REVIEW_BADGES[request.reason];
+  badgeNode.className = request.annotation === 'verified' ? 'check' : 'badge';
+  if (request.annotation === 'verified') {
+    // A tick, not a banner. Twenty-five green labels down a filled form is
+    // noise; twenty-five ticks is a page a person can read at a glance.
+    badgeNode.style.color = colour;
+    badgeNode.textContent = '✓';
+  } else {
+    badgeNode.style.background = colour;
+    badgeNode.textContent = request.badge || ANNOTATION_BADGES[request.annotation];
+  }
   container.append(badgeNode);
 
   const previousOutline = element.style.outline;
   const previousOutlineOffset = element.style.outlineOffset;
   element.style.outline = `2px solid ${colour}`;
   element.style.outlineOffset = '1px';
-  element.setAttribute(MARKED_ATTRIBUTE, request.reason);
+  // The annotation kind, so a test — and a person with the inspector open —
+  // can read a field's verdict off the page itself rather than inferring it
+  // from a colour.
+  element.setAttribute(MARKED_ATTRIBUTE, request.annotation);
 
   active.set(request.fieldId, {
     ...request,
@@ -155,22 +198,6 @@ export function highlightField(request: HighlightRequest): boolean {
   });
   place(badgeNode, element);
   startTracking();
-  return true;
-}
-
-/** A quiet confirmation for a field that filled and verified. */
-export function markVerified(fieldId: string, selector: string): boolean {
-  const element = findElement(selector);
-  if (!element) return false;
-  removeHighlight(fieldId);
-  const container = ensureLayer();
-  const check = document.createElement('div');
-  check.className = 'check';
-  check.textContent = '✓';
-  container.append(check);
-  const rect = element.getBoundingClientRect();
-  check.style.top = `${rect.top + window.scrollY - 14}px`;
-  check.style.left = `${rect.left + window.scrollX}px`;
   return true;
 }
 
@@ -200,10 +227,16 @@ export function highlightCount(): number {
   return active.size;
 }
 
-/** Review entries in the order they appear down the page. */
+/**
+ * Entries that need a person, in the order they appear down the page.
+ *
+ * Verified and optional-blank marks are excluded: scrolling the user to the
+ * first green tick and calling it "the first field needing review" is how a
+ * finished form looked like an unfinished one.
+ */
 export function reviewOrder(): ActiveHighlight[] {
   return [...active.values()]
-    .filter((highlight) => highlight.element.isConnected)
+    .filter((highlight) => highlight.element.isConnected && needsAttention(highlight.annotation))
     .sort((first, second) => {
       const position = first.element.compareDocumentPosition(second.element);
       if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;

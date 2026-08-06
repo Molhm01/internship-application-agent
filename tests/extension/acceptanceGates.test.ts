@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   DEFAULT_AUTOFILL_SETTINGS,
+  FINAL_FIELD_STATUSES,
+  isSettledStatus,
   pendingResults,
   profileSchema,
   questionIdentity,
@@ -357,13 +359,49 @@ describe('GATE C — the counts', () => {
   });
 
   it('reconciles its own counters against its own results', () => {
+    // Every question on the form has exactly one final status, and every
+    // counter the popup prints is a tally of that one list. This is the
+    // invariant the three broken counters violated: they were computed over
+    // different subsets in different modules, so no two of them agreed and
+    // none of them agreed with the page.
+    expect(report.fieldOutcomes).toHaveLength(report.fieldsFound);
+    expect(new Set(report.fieldOutcomes.map((outcome) => outcome.fieldId)).size).toBe(
+      report.fieldOutcomes.length,
+    );
+    const counted = (status: string): number =>
+      report.fieldOutcomes.filter((outcome) => outcome.status === status).length;
     expect(report.fieldsVerified).toBe(
-      report.results.filter((result) => result.verification === 'verified').length,
+      counted('FILLED_VERIFIED') + counted('SKIPPED_ALREADY_VALID'),
     );
-    expect(report.userInputRequired).toBe(
-      report.requiredFields.filter((verdict) => verdict.outcome === 'USER_CONFIRMATION_REQUIRED')
-        .length,
+    expect(report.userInputRequired).toBe(counted('USER_CONFIRMATION_REQUIRED'));
+    expect(report.failedFields).toBe(counted('FAILED_EXECUTION'));
+    expect(report.optionalLeftBlank).toBe(counted('OPTIONAL_LEFT_BLANK'));
+    expect(report.blockedFields).toBe(counted('BLOCKED'));
+    // The six partition the form: they sum to the number detected.
+    expect(Object.values(report.finalStatusCounts).reduce((sum, count) => sum + count, 0)).toBe(
+      report.fieldsFound,
     );
+  });
+
+  it('leaves no field in a temporary state and every verified field unmarked', () => {
+    for (const outcome of report.fieldOutcomes) {
+      expect(FINAL_FIELD_STATUSES, `${outcome.label} had no final status`).toContain(
+        outcome.status,
+      );
+      // A field that verified may not still be asking for attention. The
+      // annotation is derived from the final status, so this is checkable from
+      // the report alone rather than only by looking at the page.
+      if (outcome.status === 'FILLED_VERIFIED' || outcome.status === 'SKIPPED_ALREADY_VALID') {
+        expect(outcome.annotation).toBe('verified');
+      }
+      if (outcome.status === 'OPTIONAL_LEFT_BLANK') {
+        expect(outcome.annotation).toBe('optional_blank');
+      }
+    }
+    // COMPLETED may not be claimed while a field is outstanding.
+    if (report.status === 'completed') {
+      expect(report.fieldOutcomes.every((outcome) => isSettledStatus(outcome.status))).toBe(true);
+    }
   });
 
   it('gives every outstanding field a reason that names a cause and an action', () => {

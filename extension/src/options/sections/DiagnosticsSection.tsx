@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type {
   AnswerGenerationStore,
   ApplicationScanResult,
+  AutofillRunTraceExport,
   DeterministicFillPlan,
   FillRunReport,
   HealthResponse,
@@ -48,6 +49,9 @@ export function DiagnosticsSection(): JSX.Element {
   const [traces, setTraces] = useState<RunTrace[]>([]);
   const [sync, setSync] = useState<ExtensionResponse<'SYNC_PROFILE'> | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [exported, setExported] = useState<AutofillRunTraceExport | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const [pageTrace, setPageTrace] = useState<PageControlTrace | null>(null);
   const [tracing, setTracing] = useState(false);
   const [traceError, setTraceError] = useState('');
@@ -103,6 +107,46 @@ export function DiagnosticsSection(): JSX.Element {
   const clearTraces = async (): Promise<void> => {
     await sendMessage({ type: 'CLEAR_RUN_TRACES' });
     setTraces([]);
+  };
+
+  /**
+   * The last run, field by field, as one document.
+   *
+   * This is the answer to "why was this field not filled?" for every field at
+   * once: each record names the question, the control, whether a saved value
+   * existed, what was planned, whether the executor was invoked, what
+   * verification observed, the final status, and how long it took. The summary
+   * at the top says where the run lost the fields it did not fill.
+   *
+   * Nothing personal can be in it. `fieldTraceSchema` is strict and has no
+   * member capable of holding a value, a password, a document, or a model
+   * prompt — so this is safe to attach to a bug report without reading it
+   * first.
+   */
+  const exportRunTrace = async (): Promise<void> => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const result = await sendMessage({ type: 'EXPORT_AUTOFILL_RUN_TRACE' });
+      if ('error' in result) {
+        setExportError(`${result.error.message} ${result.error.suggestedAction}`);
+        return;
+      }
+      const blob = new Blob([JSON.stringify(result.export, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `autofill-run-trace-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setExported(result.export);
+    } catch (cause) {
+      setExportError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setExporting(false);
+    }
   };
 
   /**
@@ -323,12 +367,48 @@ export function DiagnosticsSection(): JSX.Element {
         The last {traces.length === 1 ? 'run' : `${traces.length} runs`}, in counts only. No field
         values, documents, or profile data are recorded.
       </p>
+      {/*
+        The field-by-field export sits first because it is the one a bug report
+        needs: the rolling list below answers "how have runs been going", this
+        answers "what happened to each field on the last one, and why".
+      */}
+      <button type="button" onClick={() => void exportRunTrace()} disabled={exporting}>
+        {exporting ? 'Collecting the run…' : 'Export Autofill Run Trace'}
+      </button>
       <button type="button" onClick={exportTraces} disabled={traces.length === 0}>
         Export run traces
       </button>
       <button type="button" onClick={() => void clearTraces()} disabled={traces.length === 0}>
         Clear run traces
       </button>
+      {exportError ? (
+        <p className="result result--bad" role="alert">
+          {exportError}
+        </p>
+      ) : null}
+      {exported ? (
+        <ul className="diagnostics-traces">
+          <li>
+            <strong>
+              {exported.trace.fields.length} field
+              {exported.trace.fields.length === 1 ? '' : 's'} exported
+            </strong>{' '}
+            · build {exported.buildId} ·{' '}
+            {Object.entries(exported.trace.finalStatusCounts)
+              .filter(([, count]) => count > 0)
+              .map(([status, count]) => `${count} ${status}`)
+              .join(', ')}
+            {exported.trace.pendingAtCompletion > 0
+              ? ` · ${exported.trace.pendingAtCompletion} still pending`
+              : ''}
+            <ul>
+              {exported.summary.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </li>
+        </ul>
+      ) : null}
       {traces.length === 0 ? (
         <p className="muted">No autofill run has been recorded yet.</p>
       ) : (

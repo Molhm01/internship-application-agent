@@ -157,7 +157,12 @@ test('settings page exposes every profile area and loads without error', async (
   await expect(diagnostics.locator('input, textarea')).toHaveCount(0);
 
   // Nothing in this build may offer to fill or submit an application.
-  await expect(page.getByRole('button', { name: /Fill|Analyze|Submit/i })).toHaveCount(0);
+  //
+  // Anchored to the start of the label, so it catches a control that *does*
+  // something to a form and not one that merely names the feature. It used to
+  // be a substring match, which made "Export Autofill Run Trace" — a read-only
+  // diagnostic that touches no page — look like an offer to fill one.
+  await expect(page.getByRole('button', { name: /^(fill|analyze|submit)\b/i })).toHaveCount(0);
   await page.close();
 });
 

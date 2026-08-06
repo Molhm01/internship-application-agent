@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_AUTOFILL_SETTINGS,
+  isSettledStatus,
   profileSchema,
   type ApplicationAutofillReport,
   type DeterministicFillPlan,
@@ -375,11 +376,26 @@ describe('the completion summary is truthful', () => {
       // This is the "Could not fill: 0" contradiction, stated as an invariant.
       expect(harness.report.userInputRequired).toBeGreaterThan(0);
     }
+    // Counted over every question, not only the required ones: an optional
+    // sensitive question the agent may not answer still needs the user, and
+    // leaving it out of the count is how the summary read lower than the list
+    // printed underneath it.
     expect(harness.report.userInputRequired).toBe(
-      harness.report.requiredFields.filter(
-        (verdict) => verdict.outcome === 'USER_CONFIRMATION_REQUIRED',
+      harness.report.fieldOutcomes.filter(
+        (outcome) => outcome.status === 'USER_CONFIRMATION_REQUIRED',
       ).length,
     );
+    // Every required field the audit calls outstanding is outstanding here too.
+    const auditOutstanding = new Set(
+      harness.report.requiredFields
+        .filter((verdict) => verdict.outcome === 'USER_CONFIRMATION_REQUIRED')
+        .map((verdict) => verdict.fieldId),
+    );
+    for (const fieldId of auditOutstanding) {
+      const outcome = harness.report.fieldOutcomes.find((entry) => entry.fieldId === fieldId);
+      expect(outcome, `${fieldId} had no final status`).toBeDefined();
+      expect(outcome && isSettledStatus(outcome.status)).toBe(false);
+    }
   });
 
   it('reports a total duration', async () => {

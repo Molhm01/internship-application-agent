@@ -100,7 +100,31 @@ const autofillReport = applicationAutofillReportSchema.parse({
   fieldsVerified: 1,
   documentsAttached: 1,
   manualBlockers: 1,
+  userInputRequired: 1,
   status: 'completed_with_review',
+  // One terminal record per question, and the counters are tallies of it. The
+  // popup reads this rather than the results list: a question the planner
+  // produced no action for is absent from `results` entirely, which is how a
+  // run could print a summary that agreed with none of its own fields.
+  finalStatusCounts: { FILLED_VERIFIED: 1, USER_CONFIRMATION_REQUIRED: 1 },
+  fieldOutcomes: [
+    {
+      fieldId: 'first-name',
+      label: 'First name',
+      status: 'FILLED_VERIFIED',
+      annotation: 'verified',
+      required: true,
+      reason: 'Exact saved profile value.',
+    },
+    {
+      fieldId: 'gender',
+      label: 'Gender',
+      status: 'USER_CONFIRMATION_REQUIRED',
+      annotation: 'sensitive_decision',
+      required: false,
+      reason: 'This question is only ever answered from an explicit saved answer.',
+    },
+  ],
   results: [
     {
       fieldId: 'first-name',

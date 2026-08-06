@@ -104,6 +104,15 @@ export const ERROR_CODES = [
    * browser. A mixed-version run is refused rather than attempted.
    */
   'BUILD_MISMATCH',
+  /**
+   * A diagnostic was asked for before there was anything to diagnose.
+   *
+   * Its own code rather than a generic failure: "nothing has run yet" and "the
+   * trace could not be read" have the same shape and opposite remedies, and
+   * telling someone chasing a fill bug to reload the extension when they simply
+   * have not clicked the button yet sends them down the wrong path.
+   */
+  'NO_RUN_RECORDED',
   'ACTIVE_TAB_UNAVAILABLE',
   'CONTENT_SCRIPT_UNAVAILABLE',
   'UNSUPPORTED_PAGE',
@@ -269,6 +278,7 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'Open chrome://extensions, press Reload on Internship Application Agent, then reopen this page. The background worker is out of date.',
   BUILD_MISMATCH:
     'Open chrome://extensions, press Reload on Internship Application Agent, then reload this page so every part of the extension comes from the same build.',
+  NO_RUN_RECORDED: 'Run autofill on an application page first, then export the trace of that run.',
   ACTIVE_TAB_UNAVAILABLE: 'Open an HTTP or HTTPS application page, then try the scan again.',
   CONTENT_SCRIPT_UNAVAILABLE: RECONNECT_MESSAGE,
   UNSUPPORTED_PAGE: 'Open a normal HTTP or HTTPS job application page and retry.',

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Halden Instruments — Applications Engineering Intern</title>
+  </head>
+  <body>
+    <!--
+      A candidate-profile fixture with one field per final status.
+
+      Every other fixture in this directory is a realistic form that happens to
+      exercise several outcomes. This one is the opposite: it is built so that
+      each of the six final statuses is reached by exactly one identifiable
+      control, and so a run over it can be asserted field by field rather than
+      in aggregate. A test that says "at least twenty verified" cannot tell a
+      run that filled the wrong twenty from one that filled the right twenty.
+
+        #firstName, #lastName, #email  → FILLED_VERIFIED
+        #middleName                    → OPTIONAL_LEFT_BLANK
+        #referralName                  → USER_CONFIRMATION_REQUIRED
+        #country                       → FAILED_EXECUTION
+        #city                          → SKIPPED_ALREADY_VALID
+
+      Nothing here is styled and nothing is dynamic beyond the one control that
+      is deliberately hostile. Keep it that way: a fixture whose behaviour is
+      hard to predict cannot be evidence of anything.
+    -->
+    <main>
+      <h1>Apply: Applications Engineering Intern</h1>
+      <form id="application">
+        <fieldset>
+          <legend>Your details</legend>
+
+          <!-- Three ordinary text fields the saved profile answers exactly. -->
+          <label for="firstName">First name</label>
+          <input id="firstName" name="first_name" type="text" autocomplete="given-name" required />
+
+          <label for="lastName">Last name</label>
+          <input id="lastName" name="last_name" type="text" autocomplete="family-name" required />
+
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" autocomplete="email" required />
+
+          <!--
+            Optional, and the profile states there is no middle name. The
+            correct outcome is an empty box and no request to the user — not
+            "Information needed", which asks for something the employer did not.
+          -->
+          <label for="middleName">Middle name</label>
+          <input id="middleName" name="middle_name" type="text" />
+
+          <!--
+            Already holds exactly the value the profile would write. Nothing
+            should be typed into it, and it should be reported as already
+            correct rather than as an agent success — the two look identical in
+            a count and only one of them is evidence the executor works.
+          -->
+          <label for="city">City</label>
+          <input id="city" name="city" type="text" value="Clifton" />
+        </fieldset>
+
+        <fieldset>
+          <legend>How you heard about us</legend>
+
+          <!--
+            Required, and a fact nobody holds. There is no profile key for it,
+            it may not be reasoned about, and inventing a name would be worse
+            than leaving it. The correct outcome is to hand it back to the user
+            with an orange mark.
+          -->
+          <label for="referralName">Name of the employee who referred you</label>
+          <input id="referralName" name="referral_name" type="text" required />
+        </fieldset>
+
+        <fieldset>
+          <legend>Logistics</legend>
+
+          <!--
+            A dropdown that refuses every write.
+
+            Deliberately a question the profile *can* answer — the applicant's
+            country is known — because that is the only way this reaches the
+            executor at all. A control nobody has a value for is never attempted
+            and ends USER_CONFIRMATION_REQUIRED, which is a different bug with a
+            different repair.
+
+            The listener below restores the placeholder on change, which is what
+            an ATS does when it re-renders a control after selection. The agent
+            resolves the value and selects it; the page will not keep it. So the
+            write is attempted, verification observes the empty control, and the
+            field ends FAILED_EXECUTION with a red mark — never "Information
+            needed", which would blame the profile for a page defect.
+          -->
+          <label for="country">Country</label>
+          <select id="country" name="country">
+            <option value="">Please choose</option>
+            <option value="US">United States</option>
+            <option value="CA">Canada</option>
+            <option value="GB">United Kingdom</option>
+          </select>
+        </fieldset>
+
+        <!--
+          The control that ends the application. No code path in this repository
+          may click it; the listener below records a click so a test can assert
+          the absence rather than assume it.
+        -->
+        <button type="submit" id="submitApplication">Submit Application</button>
+      </form>
+    </main>
+
+    <script>
+      // Records what the page was asked to do, so a test can assert that the
+      // final submit was never clicked rather than infer it from a report.
+      window.fixtureState = { submitted: false, countryWrites: 0 };
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.fixtureState.submitted = true;
+      });
+
+      // The hostile dropdown. It counts the writes so a test can prove the
+      // executor really tried, rather than that it never got that far — "the
+      // page refused it" and "we never attempted it" are different defects with
+      // different repairs, and they are indistinguishable from an empty box.
+      const country = document.getElementById('country');
+      country.addEventListener('change', () => {
+        if (country.value === '') return;
+        window.fixtureState.countryWrites += 1;
+        country.value = '';
+      });
+    </script>
+  </body>
+</html>

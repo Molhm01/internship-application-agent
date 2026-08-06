@@ -433,7 +433,8 @@ interface HarnessOptions {
 
 function harness(options: HarnessOptions): {
   dependencies: AutofillDependencies;
-  highlighted: Array<{ fieldId: string; reason: string }>;
+  /** The last batch of marks the run asked the page to draw. */
+  lastAnnotations: Array<{ fieldId: string; annotation: string }>;
   phases: string[];
   scrolled: boolean[];
 } {
@@ -441,7 +442,10 @@ function harness(options: HarnessOptions): {
   let planIndex = 0;
   let executeIndex = 0;
   let calls = 0;
-  const highlighted: Array<{ fieldId: string; reason: string }> = [];
+  // Marks are redrawn after every verification stage, so only the last batch
+  // is the page's final state. Accumulating them all would assert on
+  // intermediate frames of an animation.
+  let lastAnnotations: Array<{ fieldId: string; annotation: string }> = [];
   const phases: string[] = [];
   const scrolled: boolean[] = [];
 
@@ -465,9 +469,10 @@ function harness(options: HarnessOptions): {
       return Promise.resolve(report ? { report } : {});
     },
     highlight: (requests, scrollToFirst) => {
-      for (const request of requests) {
-        highlighted.push({ fieldId: request.fieldId, reason: request.reason });
-      }
+      lastAnnotations = requests.map((request) => ({
+        fieldId: request.fieldId,
+        annotation: request.annotation,
+      }));
       scrolled.push(scrollToFirst);
       return Promise.resolve({});
     },
@@ -479,7 +484,14 @@ function harness(options: HarnessOptions): {
     waitForStability: () => Promise.resolve(),
     now: () => new Date().toISOString(),
   };
-  return { dependencies, highlighted, phases, scrolled };
+  return {
+    dependencies,
+    get lastAnnotations() {
+      return lastAnnotations;
+    },
+    phases,
+    scrolled,
+  };
 }
 
 describe('the autofill run', () => {
@@ -518,16 +530,22 @@ describe('the autofill run', () => {
       proposedValue: undefined,
       sensitive: true,
     });
-    const { dependencies, highlighted, scrolled } = harness({
+    const run = harness({
       scans: [scanResult([field({ id: 'field-2', selector: '#field-2' })])],
       plans: [planFor([blocked])],
     });
 
-    const report = await runApplicationAutofill(dependencies);
+    const report = await runApplicationAutofill(run.dependencies);
     expect(report.status).toBe('completed_with_review');
     expect(report.manualBlockers).toBe(1);
-    expect(highlighted).toEqual([{ fieldId: 'field-2', reason: 'manual_required' }]);
-    expect(scrolled).toEqual([true]);
+    // A sensitive question the agent may not answer is purple — an explicit
+    // decision only the user may make — rather than orange, which means a
+    // factual answer nobody holds.
+    expect(run.lastAnnotations).toEqual([{ fieldId: 'field-2', annotation: 'sensitive_decision' }]);
+    // Scrolling happens once, on the final redraw, and only when something is
+    // actually outstanding. The intermediate redraws never scroll.
+    expect(run.scrolled.at(-1)).toBe(true);
+    expect(run.scrolled.slice(0, -1)).not.toContain(true);
   });
 
   it('does not scroll when the user turned that off', async () => {
@@ -546,7 +564,7 @@ describe('the autofill run', () => {
       settings: { scrollToFirstReviewField: false },
     });
     await runApplicationAutofill(dependencies);
-    expect(scrolled).toEqual([false]);
+    expect(scrolled).not.toContain(true);
   });
 
   it('picks up a field revealed by an earlier answer', async () => {

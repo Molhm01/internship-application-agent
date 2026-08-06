@@ -4,6 +4,7 @@ import {
   RECONNECT_MESSAGE,
   compareBuilds,
   describeRunTrace,
+  autofillRunTraceExportSchema,
   applicationScanResultSchema,
   scanApplicationResponseSchema,
   scanMessageSchema,
@@ -1876,6 +1877,30 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return loadRunTraces().then((traces) => ({ traces }));
     case 'CLEAR_RUN_TRACES':
       return clearRunTraces().then(() => ({ cleared: true as const }));
+    case 'EXPORT_AUTOFILL_RUN_TRACE':
+      // The most recent run, field by field, with its own diagnosis attached.
+      // Counts and outcomes only: `runTraceSchema` is strict and no member of
+      // `fieldTraceSchema` can hold a value, so this is safe to attach to a bug
+      // report without reading it first.
+      return loadRunTraces().then((traces) => {
+        const latest = traces[0];
+        if (!latest) {
+          return {
+            error: answerFailure(
+              'NO_RUN_RECORDED',
+              'No autofill run has been recorded yet, so there is nothing to export. Run autofill on an application page first.',
+            ),
+          };
+        }
+        return {
+          export: autofillRunTraceExportSchema.parse({
+            exportedAt: new Date().toISOString(),
+            buildId: BUILD_ID,
+            summary: describeRunTrace(latest),
+            trace: latest,
+          }),
+        };
+      });
     case 'RUN_APPLICATION_AUTOFILL':
       return acceptAutofillRun(message.targetUrl);
     case 'GET_AUTOFILL_RUN':

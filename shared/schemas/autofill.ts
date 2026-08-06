@@ -5,6 +5,7 @@ import { confidenceSchema, idSchema, isoDateTimeSchema } from './common.js';
 import { canonicalQuestionSchema } from './fields.js';
 import { deterministicAnswerSourceSchema, deterministicFillActionKindSchema } from './fill.js';
 import { REQUIRED_FIELD_OUTCOMES } from '../logic/requiredFieldAudit.js';
+import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatus.js';
 
 /**
  * One-button autofill: the contract between the popup, the background
@@ -241,6 +242,40 @@ export const applicationAutofillReportSchema = z
      * under-report.
      */
     userInputRequired: z.number().int().nonnegative().default(0),
+    /** Fields a CAPTCHA, MFA, or protected page stopped the agent from reaching. */
+    blockedFields: z.number().int().nonnegative().default(0),
+    /**
+     * The six final statuses, counted over every question on the form.
+     *
+     * Carried in the report so the summary is checkable against itself: the
+     * counters above are tallies of this object, and a test can assert their
+     * sum equals `fieldsFound` without re-deriving anything.
+     */
+    finalStatusCounts: z
+      .record(z.enum(FINAL_FIELD_STATUSES), z.number().int().nonnegative())
+      .default({}),
+    /**
+     * One terminal record per question, in page order.
+     *
+     * This is what the popup renders. `results` below is the fill pipeline's own
+     * account, keyed by planner action, and a question the planner never
+     * produced an action for is simply absent from it — which is how a run that
+     * settled two of twenty-seven fields still looked finished. Every field on
+     * the form appears here, with exactly one final status.
+     */
+    fieldOutcomes: z
+      .array(
+        z.object({
+          fieldId: idSchema,
+          label: z.string().max(2000),
+          status: z.enum(FINAL_FIELD_STATUSES),
+          annotation: z.enum(ANNOTATION_KINDS),
+          required: z.boolean(),
+          reason: z.string().max(2000).default(''),
+        }),
+      )
+      .max(2000)
+      .default([]),
     /** Wall-clock time for the whole run, so a slow run is visibly slow. */
     totalDurationMs: z.number().int().nonnegative().max(3_600_000).default(0),
     documentsAttached: z.number().int().nonnegative().default(0),
@@ -286,6 +321,45 @@ export const applicationAutofillReportSchema = z
         code: z.ZodIssueCode.custom,
         path: ['status'],
         message: 'A run with fields awaiting review is completed_with_review, not completed',
+      });
+    }
+    // Every question has exactly one final status, so the six counts add up to
+    // the number of questions. Asserted in the schema rather than in a test:
+    // this is the invariant the popup's summary rests on, and it must be
+    // impossible to persist a report that breaks it.
+    if (report.fieldOutcomes.length > 0) {
+      const total = Object.values(report.finalStatusCounts).reduce((sum, count) => sum + count, 0);
+      if (total !== report.fieldOutcomes.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['finalStatusCounts'],
+          message: `The final statuses total ${total} but the run recorded ${report.fieldOutcomes.length} fields`,
+        });
+      }
+      if (report.fieldsFound !== report.fieldOutcomes.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['fieldsFound'],
+          message: 'fieldsFound must be the number of fields with a final status',
+        });
+      }
+    }
+    // COMPLETED is a claim about every field, and it may not be made while one
+    // of them is still outstanding. `completed_with_review` is the honest state
+    // for that run, and the popup already knows how to render it.
+    if (
+      report.status === 'completed' &&
+      report.fieldOutcomes.some(
+        (outcome) =>
+          outcome.status === 'USER_CONFIRMATION_REQUIRED' ||
+          outcome.status === 'FAILED_EXECUTION' ||
+          outcome.status === 'BLOCKED',
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status'],
+        message: 'A run with an unsettled field cannot be completed',
       });
     }
   });

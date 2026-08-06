@@ -1,7 +1,7 @@
 import {
   PAGE_KIND_LABELS,
   PORTAL_ROUTE_LABELS,
-  REVIEW_BADGES,
+  isSettledStatus,
   type ApplicationAutofillReport,
   type NavigationState,
   type PortalRouteIntent,
@@ -176,12 +176,22 @@ function RouteChoices({
 /**
  * The fields still waiting on the user, and only those.
  *
- * One card per unresolved question, with the question in the page's own words
- * and the options the page actually offers, so answering it takes a click
- * rather than a trip to the form. A field that filled and verified never
- * appears here — the point is that 26 detected fields produce a list of the two
- * or three nobody could answer safely, not a list of 26.
+ * Driven by each field's *final status*, not by a review flag. The two used to
+ * be different things computed in different modules: a flag set before the
+ * executor ran could survive a successful fill, so a question that was answered
+ * and confirmed still produced a card asking the user to answer it. A field
+ * whose status is settled cannot appear here, because "settled" and "not on this
+ * list" are now the same statement.
+ *
+ * One card per unresolved question, in the page's own words, so dealing with it
+ * takes a click rather than a trip through the form.
  */
+const OUTSTANDING_BADGES: Record<string, string> = {
+  USER_CONFIRMATION_REQUIRED: 'Needs your answer',
+  FAILED_EXECUTION: 'Autofill failed',
+  BLOCKED: 'Blocked — needs you',
+};
+
 function ReviewList({
   report,
   onFocus,
@@ -189,61 +199,28 @@ function ReviewList({
   report: ApplicationAutofillReport;
   onFocus: (fieldId: string) => void;
 }): JSX.Element | null {
-  const needsReview = report.results.filter((result) => result.reviewReason && !result.reviewed);
-  if (needsReview.length === 0) return null;
-  return (
-    <ul className="review-list">
-      {needsReview.map((result) => (
-        <li key={result.fieldId} className="review-list__card">
-          <strong className="review-list__badge">{REVIEW_BADGES[result.reviewReason!]}</strong>
-          <button type="button" className="link-button" onClick={() => onFocus(result.fieldId)}>
-            {result.question || 'Unlabelled question'}
-          </button>
-          {result.reason ? <span className="review-list__reason">{result.reason}</span> : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/**
- * Required fields the run could not settle, named individually.
- *
- * `results` covers fields the planner produced an action for. A required field
- * the run never reached produces no action at all, so it would be absent from
- * that list entirely — which is the silent skip this is here to prevent.
- */
-function OutstandingRequired({
-  report,
-  onFocus,
-}: {
-  report: ApplicationAutofillReport;
-  onFocus: (fieldId: string) => void;
-}): JSX.Element | null {
-  const answered = new Set(report.results.map((result) => result.fieldId));
-  const missed = report.requiredFields.filter(
-    (verdict) => verdict.outcome !== 'FILLED_VERIFIED' && !answered.has(verdict.fieldId),
-  );
-  if (missed.length === 0) return null;
+  const outstanding = report.fieldOutcomes.filter((outcome) => !isSettledStatus(outcome.status));
+  if (outstanding.length === 0) return null;
   return (
     <>
       <p className="autofill__analysis">
-        {missed.length === 1
-          ? 'One required field still needs an answer:'
-          : `${missed.length} required fields still need an answer:`}
+        {outstanding.length === 1
+          ? 'One field still needs you:'
+          : `${outstanding.length} fields still need you:`}
       </p>
       <ul className="review-list">
-        {missed.map((verdict) => (
-          <li key={verdict.fieldId} className="review-list__card">
+        {outstanding.map((outcome) => (
+          <li key={outcome.fieldId} className="review-list__card">
             <strong className="review-list__badge">
-              {verdict.outcome === 'BLOCKED_BY_CAPTCHA_OR_VERIFICATION'
-                ? 'Blocked — needs you'
-                : 'Required answer needed'}
+              {outcome.annotation === 'sensitive_decision'
+                ? 'Your decision'
+                : (OUTSTANDING_BADGES[outcome.status] ?? 'Needs your answer')}
+              {outcome.required ? ' · required' : ''}
             </strong>
-            <button type="button" className="link-button" onClick={() => onFocus(verdict.fieldId)}>
-              {verdict.label}
+            <button type="button" className="link-button" onClick={() => onFocus(outcome.fieldId)}>
+              {outcome.label || 'Unlabelled question'}
             </button>
-            <span className="review-list__reason">{verdict.reason}</span>
+            {outcome.reason ? <span className="review-list__reason">{outcome.reason}</span> : null}
           </li>
         ))}
       </ul>
@@ -267,25 +244,6 @@ export function AutofillPanel({
   // the progress bar, the timer and the primary button all read it, so the
   // invalid combination the user saw cannot be constructed.
   const active = ACTIVE_RUN_STATES.includes(state.runState);
-  /**
-   * Everything left for the user, counted once across both sources.
-   *
-   * A required field that produced no action at all appears in the audit and
-   * not in the results, and a reviewed suggestion appears in the results and
-   * not in the audit. Counting either alone under-reports, which is how the
-   * summary claimed nothing needed confirmation beside eighteen fields that
-   * did.
-   */
-  const needsUser = report
-    ? new Set([
-        ...report.requiredFields
-          .filter((verdict) => verdict.outcome === 'USER_CONFIRMATION_REQUIRED')
-          .map((verdict) => verdict.fieldId),
-        ...report.results
-          .filter((result) => result.reviewReason && !result.reviewed)
-          .map((result) => result.fieldId),
-      ]).size
-    : 0;
   // A page that is asking for credentials or that has ended the application is
   // not one to fill: the button would do nothing useful and implying otherwise
   // is worse than saying so.
@@ -432,9 +390,22 @@ export function AutofillPanel({
             anything of them, and the list below it holds exactly those fields —
             not all 26.
           */}
+          {/*
+            The status lines — filled, already correct, optional, needs you,
+            could not fill, blocked — partition the fields, so they sum to
+            "Fields detected" by construction rather than by coincidence. Each
+            is a tally of the same list. The lines that used to be here counted
+            different subsets in different modules, and no arrangement of them
+            ever summed to the number printed above them. "Documents uploaded"
+            is a separate dimension: an upload that verified is also counted as
+            filled.
+          */}
           <ul className="autofill__summary">
             <li>Fields detected: {report.fieldsFound}</li>
-            <li>Automatically filled: {report.fieldsVerified}</li>
+            <li>Automatically filled: {report.finalStatusCounts.FILLED_VERIFIED ?? 0}</li>
+            {(report.finalStatusCounts.SKIPPED_ALREADY_VALID ?? 0) > 0 ? (
+              <li>Already correct: {report.finalStatusCounts.SKIPPED_ALREADY_VALID}</li>
+            ) : null}
             <li>Documents uploaded: {report.documentsAttached}</li>
             {report.optionalLeftBlank > 0 ? (
               <li>Optional, left blank: {report.optionalLeftBlank}</li>
@@ -453,8 +424,9 @@ export function AutofillPanel({
               each counted a different subset and neither counted the fields
               that produced no action at all.
             */}
-            <li>Needs your answer: {needsUser}</li>
+            <li>Needs your answer: {report.userInputRequired}</li>
             <li>Could not fill: {report.failedFields}</li>
+            {report.blockedFields > 0 ? <li>Blocked: {report.blockedFields}</li> : null}
             <li>Total time: {formatElapsed(report.totalDurationMs)}</li>
           </ul>
           <p className="autofill__never-submits">
@@ -462,11 +434,7 @@ export function AutofillPanel({
             yourself.
           </p>
           <ReviewList report={report} onFocus={(fieldId) => void state.focusField(fieldId)} />
-          <OutstandingRequired
-            report={report}
-            onFocus={(fieldId) => void state.focusField(fieldId)}
-          />
-          {report.results.some((result) => result.reviewReason) ? (
+          {report.fieldOutcomes.length > 0 ? (
             <button
               type="button"
               className="link-button"

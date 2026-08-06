@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatus.js';
 
 /**
  * One autofill run, described in counts and outcomes only.
@@ -43,20 +44,49 @@ export const fieldTraceSchema = z
      * across the scan, the plan, and the fill.
      */
     fieldId: z.string().max(200),
+    /**
+     * The question as the employer worded it.
+     *
+     * A question, never an answer. Without it every record in this file reads
+     * `field-1a2b3c`, which correlates perfectly and diagnoses nothing — the
+     * whole point of a trace is that a person can look at it and say "that one,
+     * the graduation date, is the field that failed".
+     */
+    label: z.string().max(300),
+    /** Which part of the form the question sits under. */
+    section: z.string().max(60).optional(),
     /** The canonical intent, when one was resolved. Never the question text. */
     intent: z.string().max(120).optional(),
     controlType: z.string().max(40),
     required: z.boolean(),
     plannerSource: tracePlannerSourceSchema,
+    /**
+     * Whether a saved value existed to answer this question — yes or no, never
+     * the value. "The profile had nothing" and "the profile had it and the
+     * write failed" are the two halves of every unfilled field, and they were
+     * indistinguishable from outside.
+     */
+    profileValueAvailable: z.boolean(),
     /** The action the planner produced. */
     plannedAction: z.string().max(60).optional(),
     /** Whether the control-type contract accepted, repaired, or rejected it. */
     contractResult: z.enum(['accepted', 'repaired', 'rejected', 'not_applicable']),
     /** Whether the executor was actually invoked for this field. */
     executorAttempted: z.boolean(),
+    /** What verification observed. A stage result, not a verdict. */
     verification: z.string().max(40),
+    /**
+     * The verdict. Exactly one member of the closed final vocabulary, for every
+     * field, always — this is the field the acceptance gates are written
+     * against and the field the page annotation is chosen from.
+     */
+    finalStatus: z.enum(FINAL_FIELD_STATUSES),
+    /** The mark this field should be wearing on the page. */
+    annotation: z.enum(ANNOTATION_KINDS),
     /** An `ERROR_CODES` member. Never a message, which can quote a value. */
     errorCode: z.string().max(60).optional(),
+    /** How long this field spent in the executor, when it reached one. */
+    durationMs: z.number().nonnegative().max(600_000).optional(),
   })
   .strict();
 
@@ -111,8 +141,23 @@ export const runTraceSchema = z
     dependentFieldsRescanned: z.number().int().nonnegative(),
     requiredFieldsRemaining: z.number().int().nonnegative(),
 
-    /** Final `fieldStatusSchema` outcomes, counted by name. */
-    finalStatusCounts: z.record(z.string().max(60), z.number().int().nonnegative()),
+    /**
+     * The six final statuses, counted by name over every field the run saw.
+     *
+     * Every count the popup shows is derived from this one object, so a summary
+     * that disagrees with its own field list is no longer constructible. It
+     * previously mixed required-field verdicts with per-result verification
+     * stages in one map, which double-counted required fields and counted stage
+     * markers as outcomes — the arithmetic behind "Could not fill: 0" printed
+     * above eighteen unanswered questions.
+     */
+    finalStatusCounts: z.record(z.enum(FINAL_FIELD_STATUSES), z.number().int().nonnegative()),
+    /**
+     * Fields still in a temporary state when the run stopped. Must be zero: a
+     * run may not complete holding one, and recording it makes that checkable
+     * from the trace alone rather than only from an assertion inside the worker.
+     */
+    pendingAtCompletion: z.number().int().nonnegative().default(0),
 
     stages: z.array(stageTraceSchema).max(200),
     fields: z.array(fieldTraceSchema).max(500),
@@ -121,6 +166,26 @@ export const runTraceSchema = z
   .strict();
 
 export type RunTrace = z.infer<typeof runTraceSchema>;
+
+/**
+ * One run's trace, packaged for a human to open.
+ *
+ * The trace alone is a list of records; this adds the sentences that say what
+ * the records mean, so a bug report carries a diagnosis rather than homework.
+ * Still counts and outcomes only — the schema is strict, and `fieldTraceSchema`
+ * has no field capable of holding a value.
+ */
+export const autofillRunTraceExportSchema = z
+  .object({
+    exportedAt: z.string().max(40),
+    buildId: z.string().max(120),
+    /** Why each field ended where it did, one sentence per cause. */
+    summary: z.array(z.string().max(500)).max(50),
+    trace: runTraceSchema,
+  })
+  .strict();
+
+export type AutofillRunTraceExport = z.infer<typeof autofillRunTraceExportSchema>;
 
 /**
  * The origin of a URL, or a placeholder.
@@ -153,9 +218,7 @@ export function describeRunTrace(trace: RunTrace): string[] {
   const unmapped = count((field) => field.plannerSource === 'none' && field.intent === undefined);
   if (unmapped > 0) lines.push(`${unmapped} field(s) had no intent mapping at all.`);
 
-  const missingValue = count(
-    (field) => field.plannerSource === 'none' && field.intent !== undefined,
-  );
+  const missingValue = count((field) => !field.profileValueAvailable && field.intent !== undefined);
   if (missingValue > 0) {
     lines.push(`${missingValue} field(s) had an intent but no saved value to answer it.`);
   }
@@ -175,8 +238,28 @@ export function describeRunTrace(trace: RunTrace): string[] {
     lines.push(`${notInvoked} planned action(s) never reached the executor.`);
   }
 
-  const failed = count((field) => field.verification === 'failed');
+  const failed = count((field) => field.finalStatus === 'FAILED_EXECUTION');
   if (failed > 0) lines.push(`${failed} field(s) were written but did not verify.`);
+
+  const alreadyValid = count((field) => field.finalStatus === 'SKIPPED_ALREADY_VALID');
+  if (alreadyValid > 0) {
+    lines.push(`${alreadyValid} field(s) already held the correct answer and were left alone.`);
+  }
+
+  const optional = count((field) => field.finalStatus === 'OPTIONAL_LEFT_BLANK');
+  if (optional > 0) {
+    lines.push(`${optional} optional field(s) were deliberately left blank. Not outstanding work.`);
+  }
+
+  const blocked = count((field) => field.finalStatus === 'BLOCKED');
+  if (blocked > 0) lines.push(`${blocked} field(s) were blocked by a verification step.`);
+
+  if (trace.pendingAtCompletion > 0) {
+    lines.push(
+      `${trace.pendingAtCompletion} field(s) were still in a temporary state when the run stopped. ` +
+        'That is a defect in the run, not in the page.',
+    );
+  }
 
   if (trace.questionsSentToAi > 0 && trace.aiRequests === 0) {
     lines.push(
