@@ -5,6 +5,7 @@ export * from './formatters.js';
 export * from './optionMatcher.js';
 export * from './locationMatcher.js';
 export * from './phoneNumber.js';
+export * from './phoneGroup.js';
 export * from './aiQuestions.js';
 export * from './promptSafety.js';
 export * from './manualAnswer.js';

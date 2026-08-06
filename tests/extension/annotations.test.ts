@@ -123,6 +123,55 @@ describe('page annotations', () => {
     expect(reviewOrder().map((entry) => entry.fieldId)).toEqual(['referralName']);
   });
 
+  it('leaves one control wearing one mark when two records resolve to it', () => {
+    // A superseded record, a deduplicated one, or the two halves of a combined
+    // widget can all resolve to the same element. Keying marks by field id alone
+    // let both draw — an orange badge above the green border the other one had
+    // just put on, which is exactly what the page showed.
+    highlightField({
+      fieldId: 'phone-code',
+      selector: '#firstName',
+      annotation: 'information_needed',
+      badge: 'Information needed',
+    });
+    highlightField(request('firstName', 'verified'));
+
+    expect(markOf('firstName')).toBe('verified');
+    expect(badges()).not.toContain('Information needed');
+    expect(isHighlighted('phone-code')).toBe(false);
+    expect(highlightCount()).toBe(1);
+  });
+
+  it('does not let a needs-you mark displace a verdict already settled', () => {
+    // The surviving mark must not depend on which order the requests arrived
+    // in: a control that verified stays verified whichever record is drawn last.
+    highlightField(request('firstName', 'verified'));
+    highlightField({
+      fieldId: 'phone-code',
+      selector: '#firstName',
+      annotation: 'information_needed',
+      badge: 'Information needed',
+    });
+
+    expect(markOf('firstName')).toBe('verified');
+    expect(badges()).not.toContain('Information needed');
+    expect(highlightCount()).toBe(1);
+  });
+
+  it('never lets an un-mark erase another record’s verdict', () => {
+    // `none` un-marks its own field. A field the agent did not touch must not
+    // strip the tick a different record earned on a control they share.
+    highlightField(request('firstName', 'verified'));
+    highlightField({
+      fieldId: 'shadow-record',
+      selector: '#firstName',
+      annotation: 'none',
+      badge: '',
+    });
+    expect(markOf('firstName')).toBe('verified');
+    expect(isHighlighted('firstName')).toBe(true);
+  });
+
   it('reports honestly when the element has left the page', () => {
     document.getElementById('firstName')!.remove();
     expect(highlightField(request('firstName', 'verified'))).toBe(false);

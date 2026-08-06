@@ -67,6 +67,11 @@ export function needsAttention(annotation: AnnotationKind): boolean {
   return NEEDS_ATTENTION.includes(annotation);
 }
 
+/** A mark reporting finished work rather than asking for any. */
+function isSettled(annotation: AnnotationKind): boolean {
+  return annotation === 'verified' || annotation === 'optional_blank';
+}
+
 const active = new Map<string, ActiveHighlight>();
 let host: HTMLElement | null = null;
 let layer: HTMLElement | null = null;
@@ -141,6 +146,14 @@ function stopTracking(): void {
   reposition = null;
 }
 
+/** The mark currently drawn on this element, whichever field owns it. */
+function markOn(element: HTMLElement): ActiveHighlight | null {
+  for (const highlight of active.values()) {
+    if (highlight.element === element) return highlight;
+  }
+  return null;
+}
+
 function findElement(selector: string): HTMLElement | null {
   try {
     return document.querySelector<HTMLElement>(selector);
@@ -169,7 +182,26 @@ export function highlightField(request: HighlightRequest): boolean {
   // of the work: a field the agent did not touch, because the page already held
   // the right answer, is left exactly as the user wrote it. Returning true is
   // correct — the request was honoured, and the element was found.
+  //
+  // Deliberately before the shared-element rule below: `none` un-marks its own
+  // field and no one else's, so it can never erase another record's verdict from
+  // a control the two of them share.
   if (!isDrawnAnnotation(request.annotation)) return true;
+
+  // One control, one mark — whoever asked for it.
+  //
+  // Two field records can resolve to the same element: a superseded record from
+  // an earlier identity, a duplicate the scan deduplicated, or a widget whose
+  // halves share a selector. Keying marks by field id alone let both of them
+  // draw, and only the last one drawn owned the outline — a green border under
+  // an orange badge, which is precisely what the page showed. An outcome that is
+  // already settled is never displaced by one still asking for something, so the
+  // surviving mark does not depend on which order the requests arrived in.
+  const occupant = markOn(element);
+  if (occupant && occupant.fieldId !== request.fieldId) {
+    if (isSettled(occupant.annotation) && needsAttention(request.annotation)) return true;
+    removeHighlight(occupant.fieldId);
+  }
 
   const container = ensureLayer();
   const colour = COLOURS[request.annotation];

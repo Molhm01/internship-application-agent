@@ -104,3 +104,22 @@ export function containsDialCode(phone: string, dialCode: string | null): boolea
   if (!dialCode) return false;
   return phone.trim().startsWith('+') && digitsOf(phone).startsWith(digitsOf(dialCode));
 }
+
+/**
+ * A value that already states its own dialling code, whichever code that is.
+ *
+ * `containsDialCode` answers "is this the code I expected?", which needs a code
+ * to compare against. This answers the different question a *finished* control
+ * raises: does what the page now holds already include a country code, so that
+ * a separate country-code control has nothing left to contribute?
+ *
+ * The optional leading letters are the ISO country prefix a combined widget
+ * renders beside the code — "US +1 (929) 264-3117" is one control's value, not
+ * two. A bare "(929) 264-3117" states no code and is not accepted, which is what
+ * keeps a form with a genuinely separate code control honest.
+ */
+const DIAL_CODE_STATED = /^\s*(?:[A-Za-z]{2,3}\s+)?\+\s*\d/;
+
+export function carriesDialCode(value: string): boolean {
+  return DIAL_CODE_STATED.test(value);
+}

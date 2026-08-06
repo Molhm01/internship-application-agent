@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Candidate profile — combined phone control</title>
+    <!--
+      The phone block as a real portal builds it.
+
+      Three things share one visual row: a phone *type* select, a country-code
+      widget that is part of the phone input's own control, and the phone number
+      box. The country-code widget is a listbox-style combobox whose menu only
+      exists once it is opened, so a scan of the page finds a control with no
+      choices on it — nothing the executor can ever write into — sitting
+      directly over the phone number box.
+
+      That is the shape that produced the reported failure: the number filled and
+      verified with its +1 intact, and the country-code control, which had no
+      separate answer to give, kept an "Information needed" badge drawn on top
+      of it.
+    -->
+    <style>
+      body {
+        font:
+          14px system-ui,
+          sans-serif;
+        margin: 24px;
+        max-width: 640px;
+      }
+      .field {
+        margin-bottom: 16px;
+      }
+      label,
+      .label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 6px;
+      }
+      .phone-widget {
+        display: flex;
+        align-items: stretch;
+        border: 1px solid #9ca3af;
+        border-radius: 4px;
+      }
+      .phone-widget [role='combobox'] {
+        padding: 6px 10px;
+        border-right: 1px solid #9ca3af;
+        white-space: nowrap;
+      }
+      .phone-widget input {
+        border: 0;
+      }
+      .required {
+        color: #b91c1c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Candidate profile</h1>
+    <form id="application">
+      <fieldset>
+        <legend>Legal name</legend>
+        <div class="field">
+          <label for="firstName">Legal First Name <span class="required">*</span></label>
+          <input id="firstName" name="firstName" type="text" required />
+        </div>
+        <div class="field">
+          <label for="lastName">Legal Last Name <span class="required">*</span></label>
+          <input id="lastName" name="lastName" type="text" required />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Contact</legend>
+        <div class="field">
+          <label for="email">Email Address <span class="required">*</span></label>
+          <input id="email" name="email" type="email" required />
+        </div>
+
+        <div class="field">
+          <label for="phoneType">Contact Phone Type <span class="required">*</span></label>
+          <select id="phoneType" name="phoneType" required>
+            <option value="">Select One</option>
+            <option value="mobile">Mobile</option>
+            <option value="home">Home</option>
+            <option value="work">Work</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <span class="label" id="dial-label"
+            >Country Phone Code <span class="required">*</span></span
+          >
+          <label for="phoneNumber" id="number-label"
+            >Phone Number <span class="required">*</span></label
+          >
+          <div class="phone-widget">
+            <!--
+              The country-code half of the combined control. It announces itself
+              as a combobox, and its menu is built only when it is opened, so a
+              scan finds no choices on it at all.
+            -->
+            <div
+              id="countryPhoneCode"
+              role="combobox"
+              aria-labelledby="dial-label"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-required="true"
+              tabindex="0"
+            >
+              US +1
+            </div>
+            <input
+              id="phoneNumber"
+              name="phoneNumber"
+              type="tel"
+              autocomplete="tel"
+              aria-labelledby="number-label"
+              required
+            />
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Address</legend>
+        <!--
+          Deliberately unanswerable from the fixture's profile: the applicant
+          never stated a country. It must stay orange while the phone block goes
+          green, which is what proves the repair reconciles evidence rather than
+          turning every mark green.
+        -->
+        <div class="field">
+          <label for="country">Country <span class="required">*</span></label>
+          <select id="country" name="country" required>
+            <option value="">Select One</option>
+            <option value="CA">Canada</option>
+            <option value="GB">United Kingdom</option>
+            <option value="US">United States</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <!-- Never clicked. Present so the page is a real application form. -->
+      <button type="submit" id="submit">Submit Application</button>
+    </form>
+
+    <script>
+      // The page counts submission attempts itself, so a test asserting nothing
+      // was submitted is reading the employer page's own record rather than the
+      // agent's account of its own behaviour.
+      window.__fixture = { submitAttempts: 0 };
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__fixture.submitAttempts += 1;
+      });
+    </script>
+  </body>
+</html>

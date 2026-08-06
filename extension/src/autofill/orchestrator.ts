@@ -28,8 +28,10 @@ import {
   classifyQuestionDeterministically,
   countFinalStatuses,
   isSettledStatus,
+  reconcilePhoneGroup,
   resolveFinalFieldStatus,
   resolveRunningFieldStatus,
+  type PhoneControlObservation,
   type AnnotationKind,
   type FieldRunStatus,
   type FinalFieldOutcome,
@@ -305,6 +307,17 @@ function hadProfileValue(source: string | undefined, action: string | undefined)
   return action !== 'missing_information' && action !== 'manual_review';
 }
 
+/**
+ * What a control holds, as readable text.
+ *
+ * A checkbox's `true` and a multi-select's list are values, not text, and
+ * neither can state a dialling code — so they read as empty here rather than as
+ * "true", which is a string that means nothing to anything downstream.
+ */
+function observedText(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
 /** A field's stored value, in a form two scans can be compared by. */
 function valueKey(value: unknown): string {
   if (value === undefined || value === null || value === '') return '';
@@ -440,7 +453,7 @@ export async function runApplicationAutofill(
     plan: DeterministicFillPlan | null,
   ): FieldDiagnostic[] => {
     const actionsByField = new Map((plan?.actions ?? []).map((action) => [action.fieldId, action]));
-    return fields.map((field): FieldDiagnostic => {
+    const entries = fields.map((field): FieldDiagnostic => {
       const result = resultsByField.get(field.id);
       const action = actionsByField.get(field.id);
       const source = result?.source ?? action?.source;
@@ -522,6 +535,48 @@ export async function runApplicationAutofill(
         annotation: annotationFor(finalStatus, sensitive),
         ...(result?.failureCode ? { failureCode: result.failureCode } : {}),
         ...(durationByField.has(field.id) ? { durationMs: durationByField.get(field.id)! } : {}),
+      };
+    });
+
+    // The one place a status is revised after the fact, and it revises it from
+    // observed DOM state rather than from an intention.
+    //
+    // A control whose answer is already on the page, inside the combined control
+    // beside it, is not an open question — and leaving it open is what drew an
+    // "Information needed" badge over a phone number that had filled and
+    // verified with its +1 intact. Nothing here invents a status: the only
+    // outcome it may write is `FILLED_VERIFIED`, onto a field the run would
+    // otherwise have left for the user.
+    const observations = fields.map((field, index): PhoneControlObservation => {
+      const entry = entries[index]!;
+      const result = resultsByField.get(field.id);
+      return {
+        fieldId: field.id,
+        ...(field.canonicalKey ? { canonicalKey: field.canonicalKey } : {}),
+        fieldType: field.fieldType,
+        selector: field.selector,
+        frameId: field.frameId ?? 0,
+        disabled: field.disabled,
+        optionCount: field.options?.length ?? 0,
+        status: entry.finalStatus,
+        // The executor's confirmed read first: after a fill it is what the page
+        // kept, which is exactly the evidence this decision needs. The scanned
+        // value is the fallback for a control nothing was written to.
+        observedValue: observedText(result?.actualValue ?? field.currentValue),
+      };
+    });
+    const { statuses } = reconcilePhoneGroup(observations);
+    if (statuses.size === 0) return entries;
+    return entries.map((entry) => {
+      const revised = statuses.get(entry.fieldId);
+      if (!revised) return entry;
+      return {
+        ...entry,
+        // `runStatus` follows `finalStatus` once the run has stopped, so the
+        // completion check keeps asserting the two agree rather than assuming it.
+        ...(runFinished ? { runStatus: revised } : {}),
+        finalStatus: revised,
+        annotation: annotationFor(revised, false),
       };
     });
   };
@@ -618,11 +673,24 @@ export async function runApplicationAutofill(
     // Every required field ends in exactly one of three states. A field the run
     // never reached is not omitted — it is reported as needing the user, which
     // is what makes the gap visible instead of invisible.
+    //
+    // The status comes from the same authoritative record the page marks and the
+    // popup counters come from, so a field settled by reconciliation cannot be
+    // green on the page and outstanding in the audit at the same time — which is
+    // the disagreement the whole status model exists to prevent.
+    const settledById = new Set(
+      diagnostics
+        .filter((entry) => isSettledStatus(entry.finalStatus))
+        .map((entry) => entry.fieldId),
+    );
     const audit = auditRequiredFields({
       fields: lastFields,
       results: results.map((result) => ({
         fieldId: result.fieldId,
-        status: result.verification === 'verified' ? 'verified' : 'needs_review',
+        status:
+          result.verification === 'verified' || settledById.has(result.fieldId)
+            ? 'verified'
+            : 'needs_review',
         reason: result.reason,
         ...(result.reviewReason ? { reviewReason: result.reviewReason } : {}),
       })),
