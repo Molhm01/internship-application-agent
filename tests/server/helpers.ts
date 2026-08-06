@@ -10,6 +10,7 @@ import { buildServer } from '../../agent-server/src/server.js';
 import { createProfileRepository } from '../../agent-server/src/profile/repository.js';
 import { createDocumentStorage } from '../../agent-server/src/documents/storage.js';
 import { createDocumentRepository } from '../../agent-server/src/documents/repository.js';
+import { createLatestDocumentRepository } from '../../agent-server/src/documents/latestRepository.js';
 import { createAnswerRepository } from '../../agent-server/src/answers/repository.js';
 import type { RateLimiter } from '../../agent-server/src/security/rateLimit.js';
 import { createExtractionRepository } from '../../agent-server/src/documents/extractionRepository.js';
@@ -88,6 +89,7 @@ export async function createTestServer(
   });
   const profiles = createProfileRepository(db);
   const documents = createDocumentRepository(db, documentStorage);
+  const latestDocuments = createLatestDocumentRepository(db, documentStorage);
   const answers = createAnswerRepository(db);
   const extractions = createExtractionRepository(db);
   const resumeExtractor = createResumeExtractor(extractions);
@@ -113,6 +115,7 @@ export async function createTestServer(
       profiles,
       documentStorage,
       documents,
+      latestDocuments,
       answers,
       extractions,
       resumeExtractor,

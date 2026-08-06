@@ -116,6 +116,11 @@ import {
   endAnalysisScope,
 } from '../analysis/analysisMemo.js';
 import { attachBundleDocuments, isBundleDocumentReference } from '../uploads/bundleUploads.js';
+import {
+  attachLatestDocuments,
+  readLatestDocuments,
+  syncLatestDocuments,
+} from './latestDocuments.js';
 import { selectSavedResume } from './standaloneResources.js';
 import {
   answerText,
@@ -674,7 +679,9 @@ async function syncProfileFromBundle(
 async function syncProfileNow(url?: string): Promise<ProfileSyncOutcome> {
   const bundle = url
     ? ((await bundleForUrl(url).catch(() => null)) ?? (await loadActiveBundle().catch(() => null)))
-    : ((await loadActiveBundle().catch(() => null)) ?? (await listBundles().catch(() => []))[0] ?? null);
+    : ((await loadActiveBundle().catch(() => null)) ??
+      (await listBundles().catch(() => []))[0] ??
+      null);
   return syncProfileFromBundle(bundle);
 }
 
@@ -1539,6 +1546,34 @@ async function acceptAutofillRun(targetUrl?: string): Promise<unknown> {
   void runAutofill(targetUrl, runId)
     .then(async (result) => {
       const outcome = result as { report?: ApplicationAutofillReport; error?: AgentError };
+      // The document path runs after the fields, on the settled page — but only
+      // when the run itself attached nothing.
+      //
+      // A run started from an Internship Pilot bundle has already attached that
+      // job's tailored documents, and those are the right ones: they were
+      // generated for this employer and travelled with this application.
+      // Re-attaching the globally newest pair over them would replace a
+      // job-specific résumé with whatever happened to be generated most
+      // recently. This step exists for the case that was broken — no bundle
+      // could be matched to the page at all — and stays out of the way of the
+      // case that works.
+      //
+      // Deliberately not folded into the autofill report: an upload widget that
+      // refuses a file is a fact about a document, not a field, and the two are
+      // reported separately so neither can mask the other.
+      if ((outcome.report?.documentsAttached ?? 0) === 0) {
+        const attached = await attachLatestDocuments(
+          { resolveTab: activeApplicationTab, ensureContentScript },
+          targetUrl,
+        ).catch(() => null);
+        if (attached && 'report' in attached) {
+          console.info('[agent] documents attached after autofill', {
+            runId,
+            resumeVerified: attached.report.resume.verified,
+            coverLetterVerified: attached.report.coverLetter.verified,
+          });
+        }
+      }
       await finishRun(runId, outcome);
     })
     .catch(async (cause: unknown) => {
@@ -1837,6 +1872,18 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
       return deleteDocument(message.id);
     case 'DOCUMENT_EXTRACT':
       return extractDocument(message.id);
+    case 'GET_LATEST_DOCUMENTS':
+      return readLatestDocuments();
+    case 'SYNC_LATEST_DOCUMENTS':
+      return syncLatestDocuments();
+    case 'ATTACH_DOCUMENTS':
+      return attachLatestDocuments(
+        { resolveTab: activeApplicationTab, ensureContentScript },
+        message.targetUrl,
+      );
+    case 'ATTACH_DOCUMENTS_IN_PAGE':
+      // Handled by the content script, not here.
+      return null;
     case 'ANSWERS_LIST':
       return listAnswers();
     case 'ANSWER_CREATE':

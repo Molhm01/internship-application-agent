@@ -44,17 +44,17 @@ Extension settings (options page)
 
 ## 2. Every separate profile representation currently in use
 
-| # | Representation | Owner | Storage | Reaches autofill? |
-|---|---|---|---|---|
-| 1 | `ApplicationProfile` row (flat columns) | Internship Pilot | `dev.db` | Yes, via the snapshot |
-| 2 | `Experience` / `Project` / `Education` tables | Internship Pilot | `dev.db` | Yes, via the snapshot |
-| 3 | `ResumeFact` rows | Internship Pilot | `dev.db` | Partly — see §5 |
-| 4 | `UserProfile` / `ApplicationPreferences` / `SensitiveAnswerPreferences` | Internship Pilot (auth-era) | `dev.db` | **No** — never read by the bundle route |
-| 5 | `ProfileSnapshot` (`profileSnapshot.ts`) | Internship Pilot | in-flight JSON | Yes |
-| 6 | `applicationBundleTransferSchema.profile` | shared contract | postMessage payload | Yes |
-| 7 | `applicationBundleSchema.profile` | extension | IndexedDB | Yes (source A) |
-| 8 | `profileSchema` blob in `profile.data` | Agent server | `local-data/agent.db` | Yes (source B) |
-| 9 | Agent server tables `education`, `experience`, `projects`, `activities`, `volunteering`, `eligibility` | Agent server | `local-data/agent.db` | **No** — all empty, and nothing reads them into the plan |
+| #   | Representation                                                                                         | Owner                       | Storage               | Reaches autofill?                                        |
+| --- | ------------------------------------------------------------------------------------------------------ | --------------------------- | --------------------- | -------------------------------------------------------- |
+| 1   | `ApplicationProfile` row (flat columns)                                                                | Internship Pilot            | `dev.db`              | Yes, via the snapshot                                    |
+| 2   | `Experience` / `Project` / `Education` tables                                                          | Internship Pilot            | `dev.db`              | Yes, via the snapshot                                    |
+| 3   | `ResumeFact` rows                                                                                      | Internship Pilot            | `dev.db`              | Partly — see §5                                          |
+| 4   | `UserProfile` / `ApplicationPreferences` / `SensitiveAnswerPreferences`                                | Internship Pilot (auth-era) | `dev.db`              | **No** — never read by the bundle route                  |
+| 5   | `ProfileSnapshot` (`profileSnapshot.ts`)                                                               | Internship Pilot            | in-flight JSON        | Yes                                                      |
+| 6   | `applicationBundleTransferSchema.profile`                                                              | shared contract             | postMessage payload   | Yes                                                      |
+| 7   | `applicationBundleSchema.profile`                                                                      | extension                   | IndexedDB             | Yes (source A)                                           |
+| 8   | `profileSchema` blob in `profile.data`                                                                 | Agent server                | `local-data/agent.db` | Yes (source B)                                           |
+| 9   | Agent server tables `education`, `experience`, `projects`, `activities`, `volunteering`, `eligibility` | Agent server                | `local-data/agent.db` | **No** — all empty, and nothing reads them into the plan |
 
 There is no legacy `chrome.storage` profile: the extension has never kept its
 own copy. Its settings page is a thin editor over representation 8.
@@ -81,16 +81,16 @@ referralSource, addressLine2, suffix, salaryMinimum, securityClearanceStatus`
 
 ### 3.2 Structured tables (Internship Pilot) — observed row counts
 
-| Table | Rows |
-|---|---|
-| `Experience` | **0** |
-| `Project` | **0** |
-| `Education` | **0** |
-| `ResumeFact` | **51** |
-| `ApprovedAnswer` | 1 |
-| `GeneratedDocument` | 135 |
-| `CompanyRelationshipFact` | 1 |
-| `UserProfile` | **0** |
+| Table                     | Rows   |
+| ------------------------- | ------ |
+| `Experience`              | **0**  |
+| `Project`                 | **0**  |
+| `Education`               | **0**  |
+| `ResumeFact`              | **51** |
+| `ApprovedAnswer`          | 1      |
+| `GeneratedDocument`       | 135    |
+| `CompanyRelationshipFact` | 1      |
+| `UserProfile`             | **0**  |
 
 `ResumeFact` breakdown by `type` (all `status = approved`):
 `activity` 3, `coursework` 6, `education` 2, `experience` 3, `gpa` 1,
@@ -136,14 +136,14 @@ Agent server tables `education`, `experience`, `projects`, `activities`,
 `buildProfileSnapshot` falls back to `ResumeFact` rows when a structured table
 is empty — but only for two of the four sections:
 
-| Section | Structured source | Résumé-fact fallback | Result with the observed data |
-|---|---|---|---|
-| experience | `Experience` (0 rows) | yes (`type = experience`) | 3 entries survive |
-| projects | `Project` (0 rows) | yes (`type = project`) | 3 entries survive |
-| education | `Education` (0 rows) | **none** | only the single entry synthesized from `ApplicationProfile.school` |
-| skills | — | yes (`type = skill`) | 32 entries survive |
-| activities | — | **none** | 3 `activity` facts dropped entirely |
-| coursework | `ApplicationProfile.relevantCoursework` | **none** | 6 `coursework` facts dropped |
+| Section    | Structured source                       | Résumé-fact fallback      | Result with the observed data                                      |
+| ---------- | --------------------------------------- | ------------------------- | ------------------------------------------------------------------ |
+| experience | `Experience` (0 rows)                   | yes (`type = experience`) | 3 entries survive                                                  |
+| projects   | `Project` (0 rows)                      | yes (`type = project`)    | 3 entries survive                                                  |
+| education  | `Education` (0 rows)                    | **none**                  | only the single entry synthesized from `ApplicationProfile.school` |
+| skills     | —                                       | yes (`type = skill`)      | 32 entries survive                                                 |
+| activities | —                                       | **none**                  | 3 `activity` facts dropped entirely                                |
+| coursework | `ApplicationProfile.relevantCoursework` | **none**                  | 6 `coursework` facts dropped                                       |
 
 Also dropped by the snapshot type itself: `SnapshotProject` has no `url`,
 `startDate`, or `endDate` even though `projectEntrySchema` accepts all three and
@@ -243,7 +243,7 @@ planner, and executor rather than by reading the code. Each is a live-page
 failure the committed lab fixtures did not reproduce.
 
 1. **The country combobox was sent a machine code as its search query.**
-   `selectComboboxOption` fell back to the *option's value* when no search text
+   `selectComboboxOption` fell back to the _option's value_ when no search text
    was supplied. A Country control whose "United States of America" option has
    `value="US"` therefore had "US" typed into its search box; no label contains
    that string, the searchable list filtered itself to nothing, and the run
@@ -268,7 +268,7 @@ failure the committed lab fixtures did not reproduce.
 5. **A combobox's own popup was scanned as a second question.** The
    `[role="listbox"]` a combobox names in `aria-controls` was reported as its own
    Country control, so the run tried to fill Country twice and verified neither.
-6. **An upload verified on "a file is attached" rather than "*this* file is
+6. **An upload verified on "a file is attached" rather than "_this_ file is
    attached."** The executor now compares the control's reported filename
    against the name it actually wrote.
 
@@ -276,15 +276,15 @@ failure the committed lab fixtures did not reproduce.
 
 `buildProfileSnapshot` run against the real `Internship-AI/dev.db`, counts only:
 
-| Section | Before | After |
-|---|---|---|
-| `education` | 1 | **3** |
-| `experience` | 3 | 3 |
-| `projects` | 3 | 3 |
-| `skills.technical` | 32 | 32 |
-| `activities` | — (no key) | **3** |
-| `organizations` | — (no key) | 0 |
-| `sensitivePolicies` | 4 | 4 |
+| Section             | Before     | After |
+| ------------------- | ---------- | ----- |
+| `education`         | 1          | **3** |
+| `experience`        | 3          | 3     |
+| `projects`          | 3          | 3     |
+| `skills.technical`  | 32         | 32    |
+| `activities`        | — (no key) | **3** |
+| `organizations`     | — (no key) | 0     |
+| `sensitivePolicies` | 4          | 4     |
 
 Snapshot version 3. `personal` now carries `phoneCountryCode`; `address` carries
 `line1, city, state, postalCode, country, metroRegion`.

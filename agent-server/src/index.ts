@@ -7,6 +7,7 @@ import { createOllamaClient } from './ollama/client.js';
 import { createProfileRepository } from './profile/repository.js';
 import { createDocumentStorage } from './documents/storage.js';
 import { createDocumentRepository } from './documents/repository.js';
+import { createLatestDocumentRepository } from './documents/latestRepository.js';
 import { createAnswerRepository } from './answers/repository.js';
 import { loadOrCreateToken } from './security/token.js';
 import { buildServer } from './server.js';
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
   const generations = createGenerationRepository(db);
   const profiles = createProfileRepository(db);
   const documents = createDocumentRepository(db, documentStorage);
+  const latestDocuments = createLatestDocumentRepository(db, documentStorage);
   const answers = createAnswerRepository(db);
   const aiAnswers = createAiAnswerService({
     ollama,
@@ -59,6 +61,7 @@ async function main(): Promise<void> {
     profiles,
     documentStorage,
     documents,
+    latestDocuments,
     answers,
     extractions,
     resumeExtractor,

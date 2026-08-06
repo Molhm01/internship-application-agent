@@ -181,29 +181,29 @@ Detailed fixture and real-ATS checks are in [docs/MANUAL_TESTING.md](docs/MANUAL
 
 ## Commands
 
-| Command                    | What it does                                                     |
-| -------------------------- | ---------------------------------------------------------------- |
-| `npm install`              | Installs every workspace.                                        |
-| `npm run dev`              | Server and extension watch builds together.                      |
-| `npm run dev:server`       | Agent server with `--watch`.                                     |
-| `npm run dev:extension`    | Vite watch build into `extension/dist`.                          |
-| `npm run start:fixtures`   | Serves scanner fixtures on `http://127.0.0.1:4173`.              |
-| `npm run build`            | Shared schemas, then server, then extension.                     |
-| `npm run lint`             | ESLint, type-aware, across every workspace.                      |
-| `npm run format`           | Prettier write. `npm run format:check` in CI.                    |
-| `npm run typecheck`        | `tsc --build` for the packages, plus a separate pass over tests. |
-| `npm run test`             | Vitest: server, integration, and extension projects.             |
-| `npm run test:e2e`         | Playwright, loading the built extension in Chromium.             |
-| `npm run validate`         | format:check → lint → typecheck → test → build.                  |
-| `npm run test:autofill:acceptance` | The acceptance gates: jsdom, then the built extension in Chromium. |
-| `npm run autofill:diagnose` | Runs that acceptance click and writes `AUTOFILL_RUN_DIAGNOSTIC.md`. |
+| Command                            | What it does                                                                |
+| ---------------------------------- | --------------------------------------------------------------------------- |
+| `npm install`                      | Installs every workspace.                                                   |
+| `npm run dev`                      | Server and extension watch builds together.                                 |
+| `npm run dev:server`               | Agent server with `--watch`.                                                |
+| `npm run dev:extension`            | Vite watch build into `extension/dist`.                                     |
+| `npm run start:fixtures`           | Serves scanner fixtures on `http://127.0.0.1:4173`.                         |
+| `npm run build`                    | Shared schemas, then server, then extension.                                |
+| `npm run lint`                     | ESLint, type-aware, across every workspace.                                 |
+| `npm run format`                   | Prettier write. `npm run format:check` in CI.                               |
+| `npm run typecheck`                | `tsc --build` for the packages, plus a separate pass over tests.            |
+| `npm run test`                     | Vitest: server, integration, and extension projects.                        |
+| `npm run test:e2e`                 | Playwright, loading the built extension in Chromium.                        |
+| `npm run validate`                 | format:check → lint → typecheck → test → build.                             |
+| `npm run test:autofill:acceptance` | The acceptance gates: jsdom, then the built extension in Chromium.          |
+| `npm run autofill:diagnose`        | Runs that acceptance click and writes `AUTOFILL_RUN_DIAGNOSTIC.md`.         |
 | `npm run verify:extension-runtime` | Proves every bundle in `extension/dist` carries the same, current build id. |
-| `npm run clean`            | Removes build output.                                            |
-| `npm run check:ollama`     | Confirms the configured model exists and honours a JSON schema.  |
-| `npm run db:check`         | Checks SQLite integrity and reports the schema version.          |
-| `npm run db:backup`        | Creates and validates a consistent SQLite backup.                |
-| `npm run user-data:export` | Exports user data without tokens or document bytes.              |
-| `npm run backup:verify`    | Verifies source, build, database, and document recovery inputs.  |
+| `npm run clean`                    | Removes build output.                                                       |
+| `npm run check:ollama`             | Confirms the configured model exists and honours a JSON schema.             |
+| `npm run db:check`                 | Checks SQLite integrity and reports the schema version.                     |
+| `npm run db:backup`                | Creates and validates a consistent SQLite backup.                           |
+| `npm run user-data:export`         | Exports user data without tokens or document bytes.                         |
+| `npm run backup:verify`            | Verifies source, build, database, and document recovery inputs.             |
 
 `npm run test:e2e` needs `npm run build` first and starts the agent server itself.
 So does `npm run test:autofill:acceptance`, which is the subset of it that drives one

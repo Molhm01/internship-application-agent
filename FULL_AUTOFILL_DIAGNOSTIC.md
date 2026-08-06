@@ -180,7 +180,7 @@ orchestrator treated any result as an execution outcome.
 
 So: pass 1 filled and verified twenty-five fields. Pass 2 re-approved only the
 one dependent control the page had just revealed; every other action came back
-`skipped`, which read as *executed and not verified* — downgrading twenty-four
+`skipped`, which read as _executed and not verified_ — downgrading twenty-four
 verified fields to failed. Pass 3 executed nothing, and rewrote those to
 unverified. The page was correctly filled the entire time and the summary said
 otherwise. `executorAttempted` was wrong for the same reason: the run trace
@@ -210,19 +210,19 @@ own page.
 
 ### Measured in Chromium, one click, no second click
 
-| Measure                              | Value                                    |
-| ------------------------------------ | ---------------------------------------- |
-| Raw controls matched                 | 41                                       |
-| Rejected as not questions            | 5                                        |
-| Normalized questions                 | 36 (15 required)                         |
-| Filled and verified                  | 28                                       |
-| Documents attached                   | 2 (tailored résumé and cover letter)     |
-| Correctly left blank (optional)      | 2                                        |
-| Failed execution                     | 0                                        |
-| Outstanding, by policy               | 4 — login, both passwords, policy consent |
-| Analysis requests                    | 1                                        |
-| First saved value visible on the page| 451 ms                                   |
-| Whole run, click to terminal state   | 3.8 s                                    |
+| Measure                               | Value                                     |
+| ------------------------------------- | ----------------------------------------- |
+| Raw controls matched                  | 41                                        |
+| Rejected as not questions             | 5                                         |
+| Normalized questions                  | 36 (15 required)                          |
+| Filled and verified                   | 28                                        |
+| Documents attached                    | 2 (tailored résumé and cover letter)      |
+| Correctly left blank (optional)       | 2                                         |
+| Failed execution                      | 0                                         |
+| Outstanding, by policy                | 4 — login, both passwords, policy consent |
+| Analysis requests                     | 1                                         |
+| First saved value visible on the page | 451 ms                                    |
+| Whole run, click to terminal state    | 3.8 s                                     |
 
 ## 7. What this diagnostic does not claim
 

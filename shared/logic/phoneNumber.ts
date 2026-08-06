@@ -44,7 +44,9 @@ export function resolveDialCode(personal: {
   phoneCountryCode?: string | undefined;
   address: { country?: string | undefined };
 }): string | null {
-  return normalizeDialCode(personal.phoneCountryCode) ?? dialCodeForCountry(personal.address.country);
+  return (
+    normalizeDialCode(personal.phoneCountryCode) ?? dialCodeForCountry(personal.address.country)
+  );
 }
 
 /** Digits only, so "+1 (929) 264-3117" and "9292643117" compare equal. */

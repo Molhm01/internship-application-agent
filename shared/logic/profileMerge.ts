@@ -81,7 +81,12 @@ function pick<T>(ordered: readonly ProfileSource[], read: (profile: Profile) => 
 /** Normalized text for comparing two entries that describe the same thing. */
 function identity(...parts: ReadonlyArray<string | undefined>): string {
   return parts
-    .map((part) => (part ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim())
+    .map((part) =>
+      (part ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim(),
+    )
     .filter(Boolean)
     .join('|');
 }
@@ -105,9 +110,7 @@ function unionEntries<T extends { id: string }>(
 
   for (const list of lists) {
     for (const entry of list) {
-      const keys = [`id:${entry.id}`, `key:${naturalKey(entry)}`].filter(
-        (key) => key !== 'key:',
-      );
+      const keys = [`id:${entry.id}`, `key:${naturalKey(entry)}`].filter((key) => key !== 'key:');
       const existingIndex = keys
         .map((key) => byIdentity.get(key))
         .find((index) => index !== undefined);
@@ -332,8 +335,7 @@ export function mergeProfiles(
     // A policy is a disclosure decision, so the most recent source wins outright
     // rather than being unioned: two stores disagreeing about whether the user
     // declined must not resolve into "both".
-    sensitivePolicies:
-      pick(ordered, (p) => p.sensitivePolicies) ?? destination.sensitivePolicies,
+    sensitivePolicies: pick(ordered, (p) => p.sensitivePolicies) ?? destination.sensitivePolicies,
   });
 
   const report: ProfileSyncEntry[] = REPORTED_SCALARS.map(({ key, read }) => ({
@@ -346,7 +348,8 @@ export function mergeProfiles(
     ['experience', destination.experience, merged.experience],
     ['projects', destination.projects, merged.projects],
   ] as const) {
-    const label = section === 'education' ? 'school' : section === 'experience' ? 'employer' : 'projectName';
+    const label =
+      section === 'education' ? 'school' : section === 'experience' ? 'employer' : 'projectName';
     after.forEach((entry, index) => {
       const existed = before.some((candidate) => candidate.id === entry.id);
       report.push({
@@ -360,6 +363,8 @@ export function mergeProfiles(
   return {
     profile: merged,
     report,
-    changed: JSON.stringify({ ...merged, updatedAt: '' }) !== JSON.stringify({ ...destination, updatedAt: '' }),
+    changed:
+      JSON.stringify({ ...merged, updatedAt: '' }) !==
+      JSON.stringify({ ...destination, updatedAt: '' }),
   };
 }

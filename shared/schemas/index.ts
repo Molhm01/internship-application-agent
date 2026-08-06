@@ -3,6 +3,7 @@ export * from './error.js';
 export * from './health.js';
 export * from './profile.js';
 export * from './documents.js';
+export * from './latestDocuments.js';
 export * from './answers.js';
 export * from './fields.js';
 export * from './scan.js';

@@ -257,6 +257,34 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE application_sessions ADD COLUMN start_autofill INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 7,
+    name: 'latest_generated_documents',
+    sql: `
+      -- The newest tailored résumé and cover letter Internship Pilot produced.
+      -- Kept apart from \`documents\`, which is the user's own hand-registered
+      -- library: these rows are machine-written, superseded rather than edited,
+      -- and are the only thing the document-only attachment path reads.
+      CREATE TABLE IF NOT EXISTS latest_documents (
+        id            TEXT PRIMARY KEY,
+        document_type TEXT NOT NULL CHECK (document_type IN ('resume', 'cover_letter')),
+        filename      TEXT NOT NULL,
+        mime_type     TEXT NOT NULL,
+        byte_length   INTEGER NOT NULL,
+        checksum      TEXT NOT NULL,
+        source        TEXT NOT NULL CHECK (source IN ('tailored', 'default')),
+        company       TEXT,
+        job_title     TEXT,
+        job_id        TEXT,
+        file_name     TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        received_at   TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_latest_documents_type_received
+        ON latest_documents (document_type, received_at DESC);
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(

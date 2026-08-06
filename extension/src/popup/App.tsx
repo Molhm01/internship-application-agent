@@ -7,6 +7,8 @@ import { usePopupState } from './usePopupState.js';
 import { useAutofillState } from './useAutofillState.js';
 import { usePortalRoute } from './usePortalRoute.js';
 import { AutofillPanel } from './AutofillPanel.js';
+import { DocumentsPanel } from './DocumentsPanel.js';
+import { useDocumentState } from './useDocumentState.js';
 
 const NOT_YET = 'Not analyzed yet';
 
@@ -43,6 +45,10 @@ export function App(): JSX.Element {
   const { status, tab, loading, refresh, scanState, scan, progress, scanError, cancel } =
     usePopupState();
   const autofill = useAutofillState(tab.url);
+  // Deliberately not conditioned on a bundle, a scan, or a route. The user's own
+  // documents are available on any application page, including one reached
+  // through a redirect that no bundle can be matched to.
+  const documents = useDocumentState(tab.url ?? undefined);
   // Asked before anything is offered. The worker performs the same comparison
   // against the content script when a run is accepted; between them the three
   // components are covered, and neither can reach a different verdict because
@@ -323,6 +329,13 @@ export function App(): JSX.Element {
           <p>No supported application form detected on this page</p>
         </section>
       )}
+      {/*
+        Always rendered, above the bundle-dependent panel. Whether an
+        application bundle could be matched to this page has nothing to do with
+        whether the user has a résumé, and letting the bundle's absence hide the
+        documents is what made a redirect look like data loss.
+      */}
+      <DocumentsPanel state={documents} eligible={eligible} />
       <section aria-label="Actions" className="popup__actions">
         <button type="button" className="primary" onClick={openSettings}>
           Open Settings

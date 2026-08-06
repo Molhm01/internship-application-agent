@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Document upload fixture</title>
+  </head>
+  <body>
+    <h1>Software Engineering Intern — Application</h1>
+    <form id="application" onsubmit="return false;">
+      <fieldset>
+        <legend>Resume</legend>
+        <label for="resume-upload">Resume / CV</label>
+        <input id="resume-upload" name="resume" type="file" accept=".pdf,.doc,.docx" />
+        <p class="filename" id="resume-upload-filename"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Resume — alternate upload control</legend>
+        <!--
+          The standard ATS control: the real input is hidden and a styled button
+          drives it. Its visibility says nothing about whether it can be filled.
+        -->
+        <input
+          id="hidden-resume"
+          name="resume_alternate"
+          type="file"
+          style="display: none"
+          accept=".pdf"
+        />
+        <button id="hidden-resume-button" type="button">Upload Resume</button>
+        <p class="filename" id="hidden-resume-filename"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Cover letter</legend>
+        <label for="cover-letter-upload">Cover Letter</label>
+        <input id="cover-letter-upload" name="cover_letter" type="file" accept=".pdf" />
+        <p class="filename" id="cover-letter-upload-filename"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Additional materials</legend>
+        <label for="generic-document">Attach a document</label>
+        <input id="generic-document" name="other_document" type="file" />
+        <p class="filename" id="generic-document-filename"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Academic records</legend>
+        <label for="transcript-upload">Official transcript</label>
+        <input id="transcript-upload" name="transcript" type="file" />
+        <p class="filename" id="transcript-upload-filename"></p>
+      </fieldset>
+
+      <button id="submit-application" type="submit">Submit application</button>
+    </form>
+
+    <script>
+      // Shows the filename the way a real upload widget does, so an attachment
+      // can be verified from what the page displays rather than from the call
+      // that made it.
+      for (const input of document.querySelectorAll('input[type="file"]')) {
+        input.addEventListener('change', () => {
+          const status = document.getElementById(`${input.id}-filename`);
+          if (status) status.textContent = input.files?.[0]?.name ?? '';
+        });
+      }
+
+      document.getElementById('hidden-resume-button').addEventListener('click', () => {
+        document.getElementById('hidden-resume').click();
+      });
+
+      // Records that submit was reached, so a test can assert it never was.
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__submitClicked = true;
+      });
+    </script>
+  </body>
+</html>

@@ -30,7 +30,12 @@ const agentServerCopy = profile(
       legalLastName: 'Ellis',
       email: 'jordan@example.com',
       phone: '+19295550142',
-      address: { line1: '1 Example Street', city: 'Clifton', state: 'New Jersey', country: 'United States' },
+      address: {
+        line1: '1 Example Street',
+        city: 'Clifton',
+        state: 'New Jersey',
+        country: 'United States',
+      },
     },
   },
   NEW,
@@ -40,7 +45,9 @@ const agentServerCopy = profile(
 const websiteCopy = profile(
   {
     personal: { legalFirstName: 'Jordan', legalLastName: 'Ellis', email: 'jordan@example.com' },
-    education: [{ id: 'edu-1', institution: 'Example University', degree: 'BS', major: 'Robotics' }],
+    education: [
+      { id: 'edu-1', institution: 'Example University', degree: 'BS', major: 'Robotics' },
+    ],
     experience: [{ id: 'exp-1', employer: 'Northwind Robotics', title: 'Intern' }],
     projects: [{ id: 'prj-1', name: 'Line Follower', technologies: ['C++'] }],
     skills: { technical: ['ROS', 'SolidWorks'] },

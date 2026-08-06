@@ -236,9 +236,9 @@ export function DiagnosticsSection(): JSX.Element {
         `profileSyncEntrySchema`, whose only fields are a key and a status.
       */}
       <p className="muted">
-        Imports the profile you maintain on Internship Pilot into this
-        extension. Nothing you have already entered here is overwritten, and no
-        value is shown below — only which keys were found.
+        Imports the profile you maintain on Internship Pilot into this extension. Nothing you have
+        already entered here is overwritten, and no value is shown below — only which keys were
+        found.
       </p>
       <button type="button" onClick={() => void syncProfile()} disabled={syncing}>
         {syncing ? 'Syncing profile…' : 'Sync profile now'}

@@ -127,6 +127,10 @@ export const ERROR_CODES = [
   'BUNDLE_REJECTED',
   'BUNDLE_STORAGE_FAILED',
   'BUNDLE_DOCUMENT_MISSING',
+  // Document-only attachment: the newest tailored résumé and cover letter.
+  'LATEST_DOCUMENT_MISSING',
+  'DOCUMENT_SYNC_FAILED',
+  'DOCUMENT_ATTACHMENT_FAILED',
   // Batched page-level form analysis.
   'ANALYSIS_FAILED',
   'ANALYSIS_REJECTED',
@@ -298,6 +302,12 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'The extension could not save the application bundle. Reload the extension and try again.',
   BUNDLE_DOCUMENT_MISSING:
     'A tailored document is missing from the saved bundle. Send it again from Internship Pilot.',
+  LATEST_DOCUMENT_MISSING:
+    'Generate a tailored résumé or cover letter on Internship Pilot, then press Refresh Documents.',
+  DOCUMENT_SYNC_FAILED:
+    'The extension could not copy the latest documents from the agent server. Check that the server is running, then press Refresh Documents.',
+  DOCUMENT_ATTACHMENT_FAILED:
+    'The document could not be attached to this page. Attach it yourself before continuing.',
   ANALYSIS_FAILED:
     'The local model could not analyze this page. Retry, or fill the highlighted fields yourself.',
   ANALYSIS_REJECTED:

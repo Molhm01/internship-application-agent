@@ -150,17 +150,15 @@ describe('POST /profile/import', () => {
     server = await createTestServer();
     await importFrom(WEBSITE_PROFILE);
     // A v1 record, as a build predating the current contract would have left it.
-    server.db.handle
-      .prepare('UPDATE profile SET data = ? WHERE id = ?')
-      .run(
-        JSON.stringify({
-          version: 1,
-          id: 'primary',
-          personal: { legalFirstName: 'Jordan', address: {} },
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        }),
-        'primary',
-      );
+    server.db.handle.prepare('UPDATE profile SET data = ? WHERE id = ?').run(
+      JSON.stringify({
+        version: 1,
+        id: 'primary',
+        personal: { legalFirstName: 'Jordan', address: {} },
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      'primary',
+    );
 
     const response = await importFrom(WEBSITE_PROFILE);
     expect(response.statusCode).toBe(200);

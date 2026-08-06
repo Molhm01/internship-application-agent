@@ -245,7 +245,9 @@ describe('popup never stays on "Checking…"', () => {
 
     await waitFor(() => expect(screen.getByText('Disconnected')).toBeDefined());
     expect(screen.queryByText('Checking…')).toBeNull();
-    expect(screen.getByText(/chrome:\/\/extensions/)).toBeDefined();
+    // The Documents section reports the same unreachable worker, so the remedy
+    // now appears more than once. Every occurrence is a real one.
+    expect(screen.getAllByText(/chrome:\/\/extensions/).length).toBeGreaterThan(0);
   });
 
   it('reports a thrown tab query instead of hanging', async () => {
@@ -256,6 +258,8 @@ describe('popup never stays on "Checking…"', () => {
     render(<PopupApp />);
 
     await waitFor(() => expect(screen.queryByText('Checking…')).toBeNull());
-    expect(screen.getByText(/could not read its own state|chrome:\/\/extensions/)).toBeDefined();
+    expect(
+      screen.getAllByText(/could not read its own state|chrome:\/\/extensions/).length,
+    ).toBeGreaterThan(0);
   });
 });

@@ -133,3 +133,38 @@ body {
   list-style: none;
   font-size: 12px;
 }
+
+.documents__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.documents__header h2 {
+  font-size: 13px;
+  margin: 0;
+}
+
+.documents .primary {
+  margin-top: 10px;
+  width: 100%;
+}
+
+.documents__hint,
+.documents__error {
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 6px 0 0;
+}
+
+.documents__error {
+  color: #b3261e;
+}
+
+.documents__result {
+  margin-top: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding-top: 8px;
+}

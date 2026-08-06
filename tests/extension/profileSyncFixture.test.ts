@@ -205,7 +205,9 @@ describe('the phone country code', () => {
   });
 
   it('is written before the number it reformats', () => {
-    const codeIndex = actions.findIndex((action) => action.id === actionFor('phone_country_code')?.id);
+    const codeIndex = actions.findIndex(
+      (action) => action.id === actionFor('phone_country_code')?.id,
+    );
     const phoneIndex = actions.findIndex((action) => action.id === actionFor('phone')?.id);
     expect(codeIndex).toBeGreaterThanOrEqual(0);
     expect(codeIndex).toBeLessThan(phoneIndex);

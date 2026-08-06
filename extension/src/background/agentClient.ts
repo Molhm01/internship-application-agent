@@ -24,6 +24,10 @@ import {
   generationCancelResponseSchema,
   documentExtractionSchema,
   documentContentResponseSchema,
+  latestDocumentListResponseSchema,
+  latestDocumentContentResponseSchema,
+  type LatestDocumentListResponse,
+  type LatestDocumentContentResponse,
   formAnalysisResponseSchema,
   type AgentError,
   type ApprovedAnswer,
@@ -452,6 +456,33 @@ export function getDocumentContent(
     method: 'GET',
     path: `/documents/${encodeURIComponent(documentId)}/content`,
     schema: documentContentResponseSchema,
+    timeoutMs: 30_000,
+  });
+}
+
+/**
+ * The newest tailored résumé and cover letter the agent holds.
+ *
+ * Metadata only — a listing must stay cheap enough to run every time the popup
+ * opens, and the bytes are fetched separately and only when they are actually
+ * newer than what this browser already has.
+ */
+export function listLatestDocuments(): Promise<AgentResult<LatestDocumentListResponse>> {
+  return request({
+    method: 'GET',
+    path: '/documents/latest',
+    schema: latestDocumentListResponseSchema,
+    timeoutMs: 10_000,
+  });
+}
+
+export function getLatestDocumentContent(
+  documentId: string,
+): Promise<AgentResult<LatestDocumentContentResponse>> {
+  return request({
+    method: 'GET',
+    path: `/documents/latest/${encodeURIComponent(documentId)}/content`,
+    schema: latestDocumentContentResponseSchema,
     timeoutMs: 30_000,
   });
 }

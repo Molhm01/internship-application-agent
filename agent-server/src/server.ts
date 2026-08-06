@@ -4,6 +4,7 @@ import { AUTH_HEADER, LIMITS } from '@internship-agent/shared';
 import { registerHealthRoutes } from './api/health.js';
 import { registerProfileRoutes } from './api/profile.js';
 import { registerDocumentRoutes } from './api/documents.js';
+import { registerLatestDocumentRoutes } from './api/latest-documents.js';
 import { registerAnswerRoutes } from './api/answers.js';
 import { registerPlannedRoutes } from './api/planned.js';
 import { registerAiRoutes } from './api/ai.js';
@@ -136,6 +137,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   await registerHealthRoutes(app, context);
   await registerProfileRoutes(app, context);
   await registerDocumentRoutes(app, context);
+  await registerLatestDocumentRoutes(app, context);
   await registerAnswerRoutes(app, context);
   await registerPlannedRoutes(app);
   registerAiRoutes(app, context);

@@ -342,11 +342,9 @@ test.describe('nothing was submitted', () => {
   test('the final Submit was never clicked', async () => {
     expect(report.submissionPrevented).toBe(true);
     const attempts = await application.evaluate(
-      () => (window as unknown as { __fixture: { submitAttempts: number } }).__fixture.submitAttempts,
+      () =>
+        (window as unknown as { __fixture: { submitAttempts: number } }).__fixture.submitAttempts,
     );
     expect(attempts).toBe(0);
   });
 });
-
-
-

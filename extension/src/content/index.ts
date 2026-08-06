@@ -14,7 +14,10 @@ import {
   type DeterministicFillAction,
   type FillExecutionResult,
   activateNavigationMessageSchema,
+  attachDocumentsMessageSchema,
+  attachDocumentsResponseSchema,
 } from '@internship-agent/shared';
+import { runDocumentAttachment } from '../uploads/attachRun.js';
 import { BUILD_ID } from '../generated/buildInfo.js';
 import { activateNavigation } from './navigate.js';
 import type { ContentPingResult, ExtensionMessage } from '../messaging/messages.js';
@@ -203,6 +206,49 @@ chrome.runtime.onMessage.addListener((raw: ExtensionMessage, _sender, sendRespon
     clearHighlights();
     sendResponse({ ok: true });
     return false;
+  }
+
+  if (raw?.type === 'ATTACH_DOCUMENTS_IN_PAGE') {
+    // The document-only path. It reads `input[type=file]` and nothing else — no
+    // text field is scanned, no model is consulted, and no control other than a
+    // file input is touched, so the Submit button is unreachable from here.
+    const parsed = attachDocumentsMessageSchema.safeParse(raw);
+    if (!parsed.success) {
+      sendResponse(
+        attachDocumentsResponseSchema.parse({
+          type: 'ATTACH_DOCUMENTS_FAILED',
+          runId: 'unknown',
+          error: scanError(
+            'VALIDATION_FAILED',
+            'The attachment request failed validation and was not acted on.',
+          ),
+        }),
+      );
+      return false;
+    }
+    const message = parsed.data;
+    void runDocumentAttachment(document, message.runId, window.location.href, message.documents)
+      .then((report) => {
+        sendResponse(
+          attachDocumentsResponseSchema.parse({ type: 'ATTACH_DOCUMENTS_COMPLETE', report }),
+        );
+      })
+      .catch((cause: unknown) => {
+        sendResponse(
+          attachDocumentsResponseSchema.parse({
+            type: 'ATTACH_DOCUMENTS_FAILED',
+            runId: message.runId,
+            error: scanError(
+              'DOCUMENT_ATTACHMENT_FAILED',
+              `The document attachment run failed: ${
+                cause instanceof Error ? cause.message : String(cause)
+              }`,
+              { runId: message.runId },
+            ),
+          }),
+        );
+      });
+    return true;
   }
 
   if (raw?.type === 'SCAN_CANCEL') {

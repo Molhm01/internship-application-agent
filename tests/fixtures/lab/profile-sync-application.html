@@ -296,9 +296,7 @@
         const input = document.getElementById(inputId);
         document.getElementById(buttonId).addEventListener('click', () => input.click());
         input.addEventListener('change', () => {
-          document.getElementById(outputId).textContent = input.files[0]
-            ? input.files[0].name
-            : '';
+          document.getElementById(outputId).textContent = input.files[0] ? input.files[0].name : '';
         });
       }
     </script>

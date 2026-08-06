@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Single generic upload fixture</title>
+  </head>
+  <body>
+    <h1>Operations Intern — Application</h1>
+    <form id="application" onsubmit="return false;">
+      <fieldset>
+        <legend>Documents</legend>
+        <!--
+          One unlabelled slot and nothing else. The résumé belongs here; the
+          cover letter must not also be pushed into it, because that would
+          either replace the résumé or attach a document the employer never
+          asked for.
+        -->
+        <label for="generic-document">Attach a document</label>
+        <input id="generic-document" name="document" type="file" />
+        <p class="filename" id="generic-document-filename"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Profile photo</legend>
+        <label for="photo-upload">Headshot</label>
+        <input id="photo-upload" name="photo" type="file" accept="image/*" />
+        <p class="filename" id="photo-upload-filename"></p>
+      </fieldset>
+
+      <button id="submit-application" type="submit">Submit application</button>
+    </form>
+
+    <script>
+      for (const input of document.querySelectorAll('input[type="file"]')) {
+        input.addEventListener('change', () => {
+          const status = document.getElementById(`${input.id}-filename`);
+          if (status) status.textContent = input.files?.[0]?.name ?? '';
+        });
+      }
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__submitClicked = true;
+      });
+    </script>
+  </body>
+</html>
