@@ -14,6 +14,8 @@ import {
   type DeterministicFillAction,
   type FillExecutionResult,
   activateNavigationMessageSchema,
+  awaitDependentOptionsMessageSchema,
+  dependentOptionsResultSchema,
   attachToControlMessageSchema,
   attachToControlResponseSchema,
   discoverUploadControlsMessageSchema,
@@ -28,6 +30,7 @@ import { ATS_ADAPTERS, selectAdapter } from '../scanner/adapters.js';
 import { completeReport, createRunningReport } from '../reporter/fillReporter.js';
 import { validatePageIdentity } from '../executor/pageProtection.js';
 import { startBundleBridge } from './bundleBridge.js';
+import { awaitDependentOptions } from './dependentOptions.js';
 import { clearHighlights, focusField, highlightField, reviewOrder } from './highlighter.js';
 
 /**
@@ -305,6 +308,18 @@ function handleMessage(
           }),
         );
       });
+    return true;
+  }
+
+  // The Country → State handoff, observed rather than slept through. Reads
+  // option sets and answers; it can neither open a control nor write to one.
+  if (raw?.type === 'AWAIT_DEPENDENT_OPTIONS') {
+    const message = awaitDependentOptionsMessageSchema.parse(raw);
+    void awaitDependentOptions(document, message.selectors, message.timeoutMs).then((outcome) => {
+      sendResponse(
+        dependentOptionsResultSchema.parse({ type: 'DEPENDENT_OPTIONS_RESULT', ...outcome }),
+      );
+    });
     return true;
   }
 

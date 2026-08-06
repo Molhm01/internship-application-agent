@@ -147,6 +147,13 @@ export type ExtensionMessage =
       }>;
       scrollToFirst: boolean;
     }
+  /**
+   * Waits, bounded, for a dependent control's choices to arrive — State after
+   * Country. Sent to every frame; a frame holding none of these controls
+   * answers immediately. Read-only: the frame observes option sets and can
+   * neither open a control nor write to one.
+   */
+  | { type: 'AWAIT_DEPENDENT_OPTIONS'; selectors: readonly string[]; timeoutMs?: number }
   | { type: 'FOCUS_REVIEW_FIELD'; fieldId: string }
   | { type: 'CLEAR_REVIEW_HIGHLIGHTS' }
   | { type: 'PROFILE_GET' }

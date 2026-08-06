@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Candidate profile — combined phone variant</title>
+    <!--
+      The second phone design, on its own page on purpose.
+
+      A portal either splits the dialling code into its own control or builds it
+      into the number's widget; no real page does both, and putting both on one
+      document would make "does this form have a separate country-code control?"
+      — a fact about the page — unanswerable. So the Phase 3 fixture carries the
+      separate design and this carries the combined one, and the same profile
+      fills both.
+
+      Here the country code is a listbox-style combobox rendered *inside* the
+      number input's control. Its menu exists only once opened, so a scan finds
+      a chooser with no choices on it: nothing the executor can ever write into.
+      The number arrives with its +1 intact, and that is what answers the
+      code control beside it.
+    -->
+    <style>
+      body {
+        font:
+          14px system-ui,
+          sans-serif;
+        margin: 24px;
+        max-width: 640px;
+      }
+      .field {
+        margin-bottom: 16px;
+      }
+      label,
+      .label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 6px;
+      }
+      .phone-widget {
+        display: flex;
+        align-items: stretch;
+        border: 1px solid #9ca3af;
+        border-radius: 4px;
+      }
+      .phone-widget [role='combobox'] {
+        padding: 6px 10px;
+        border-right: 1px solid #9ca3af;
+        white-space: nowrap;
+      }
+      .phone-widget input {
+        border: 0;
+      }
+      .required {
+        color: #b91c1c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Candidate profile</h1>
+    <form id="application">
+      <fieldset>
+        <legend>Legal name</legend>
+        <div class="field">
+          <label for="firstName">Legal First Name <span class="required">*</span></label>
+          <input id="firstName" name="firstName" type="text" required />
+        </div>
+        <div class="field">
+          <label for="lastName">Legal Last Name <span class="required">*</span></label>
+          <input id="lastName" name="lastName" type="text" required />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Phones</legend>
+        <div class="field">
+          <label for="phoneType">Contact Phone Type <span class="required">*</span></label>
+          <select id="phoneType" name="phoneType" required>
+            <option value="">Select One</option>
+            <option value="home">Home</option>
+            <option value="mobile">Mobile</option>
+            <option value="work">Work</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="label" id="phoneLabel">Phone Number <span class="required">*</span></span>
+          <div class="phone-widget">
+            <div
+              id="countryPhoneCode"
+              role="combobox"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-label="Country Phone Code"
+              tabindex="0"
+            >
+              US +1
+            </div>
+            <input
+              id="phoneNumber"
+              name="phoneNumber"
+              type="tel"
+              aria-labelledby="phoneLabel"
+              required
+            />
+          </div>
+        </div>
+      </fieldset>
+
+      <button id="submit" type="submit">Submit Application</button>
+    </form>
+
+    <script>
+      window.__fixture = { submitAttempts: 0 };
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__fixture.submitAttempts += 1;
+      });
+      document.getElementById('submit').addEventListener('click', () => {
+        window.__fixture.submitAttempts += 1;
+      });
+    </script>
+  </body>
+</html>

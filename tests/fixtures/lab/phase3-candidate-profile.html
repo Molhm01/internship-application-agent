@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Candidate profile — personal, phone and address</title>
+    <!--
+      The Phase 3 fixture: the candidate-profile step of a real portal.
+
+      Every failure in the Phase 3 brief is present here, in the shape the live
+      page had it:
+
+        * "Country/Region of Residence" — a country control whose label
+          contains the word "region", which is what used to make the classifier
+          read it as a State control.
+        * "State/Province" — empty until Country changes, and repopulated
+          asynchronously afterwards, so a fixed sleep between passes is not
+          enough to see the list.
+        * A *separate* phone country-code control beside the number.
+        * "Full Legal Name" — the whole name in one box, on the step after the
+          first- and last-name boxes.
+        * An optional "Address Line 2" for an applicant who has no second line.
+        * Pre-existing, stale "Information needed" marks, applied to controls
+          that this run fills — a run that fills a field must take its old mark
+          off it.
+        * A final Submit control, which nothing may ever click.
+    -->
+    <style>
+      body {
+        font:
+          14px system-ui,
+          sans-serif;
+        margin: 24px;
+        max-width: 720px;
+      }
+      fieldset {
+        margin-bottom: 20px;
+      }
+      .field {
+        margin-bottom: 14px;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 6px;
+      }
+      .required {
+        color: #b91c1c;
+      }
+      .hint {
+        font-weight: 400;
+        color: #4b5563;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Candidate profile</h1>
+    <form id="application">
+      <fieldset>
+        <legend>Legal name</legend>
+        <div class="field">
+          <label for="firstName">Legal First Name <span class="required">*</span></label>
+          <input id="firstName" name="firstName" type="text" required />
+        </div>
+        <div class="field">
+          <label for="middleName">Middle Name</label>
+          <input id="middleName" name="middleName" type="text" />
+        </div>
+        <div class="field">
+          <label for="lastName">Legal Last Name <span class="required">*</span></label>
+          <input id="lastName" name="lastName" type="text" required />
+        </div>
+        <div class="field">
+          <label for="preferredName">Preferred Name</label>
+          <input id="preferredName" name="preferredName" type="text" />
+        </div>
+        <div class="field">
+          <label for="fullLegalName">Full Legal Name <span class="required">*</span></label>
+          <input id="fullLegalName" name="fullLegalName" type="text" required />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Account</legend>
+        <div class="field">
+          <label for="email">Email Address <span class="required">*</span></label>
+          <input id="email" name="email" type="email" required />
+        </div>
+        <div class="field">
+          <label for="login">Login <span class="required">*</span></label>
+          <input id="login" name="login" type="email" required aria-describedby="loginHint" />
+          <div class="hint" id="loginHint">Your email address is your login.</div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Phones</legend>
+        <div class="field">
+          <label for="phoneType">Phone Type <span class="required">*</span></label>
+          <select id="phoneType" name="phoneType" required>
+            <option value="">Select One</option>
+            <option value="home">Home</option>
+            <option value="mobile">Mobile</option>
+            <option value="work">Work</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="phoneCountryCode">Phone Country Code <span class="required">*</span></label>
+          <select id="phoneCountryCode" name="phoneCountryCode" required>
+            <option value="">Select One</option>
+            <option value="61">Australia (+61)</option>
+            <option value="44">United Kingdom (+44)</option>
+            <option value="1">United States (+1)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="phoneNumber">Phone Number <span class="required">*</span></label>
+          <input id="phoneNumber" name="phoneNumber" type="tel" required />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Addresses</legend>
+        <div class="field">
+          <label for="addressType">Address Type <span class="required">*</span></label>
+          <select id="addressType" name="addressType" required>
+            <option value="">Select One</option>
+            <option value="work">Work</option>
+            <option value="home">Home</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="addressLine1">Address Line 1 <span class="required">*</span></label>
+          <input id="addressLine1" name="addressLine1" type="text" required />
+        </div>
+        <div class="field">
+          <label for="addressLine2">Address Line 2</label>
+          <input id="addressLine2" name="addressLine2" type="text" />
+        </div>
+        <div class="field">
+          <label for="city">City <span class="required">*</span></label>
+          <input id="city" name="city" type="text" required />
+        </div>
+        <div class="field">
+          <label for="postalCode">ZIP/Postal Code <span class="required">*</span></label>
+          <input id="postalCode" name="postalCode" type="text" required />
+        </div>
+        <div class="field">
+          <label for="country">Country/Region of Residence <span class="required">*</span></label>
+          <select id="country" name="country" required>
+            <option value="">Select One</option>
+            <option value="CA">Canada</option>
+            <option value="GB">United Kingdom</option>
+            <option value="US">United States of America</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="state">State/Province <span class="required">*</span></label>
+          <select id="state" name="state" required>
+            <option value="">Select a country first</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <button id="submit" type="submit">Submit Application</button>
+    </form>
+
+    <script>
+      // The dependency, as a portal actually builds it: the region list is
+      // fetched, so it arrives some time after Country changes rather than in
+      // the same tick. 600ms is deliberately longer than any fixed sleep the
+      // run could reasonably use, so only an observed wait can see it.
+      const REGIONS = {
+        US: [
+          ['NJ', 'New Jersey'],
+          ['NY', 'New York'],
+          ['CA', 'California'],
+        ],
+        CA: [
+          ['ON', 'Ontario'],
+          ['QC', 'Quebec'],
+        ],
+        GB: [['ENG', 'England']],
+      };
+      const state = document.getElementById('state');
+      document.getElementById('country').addEventListener('change', (event) => {
+        const chosen = event.target.value;
+        state.innerHTML = '<option value="">Loading…</option>';
+        window.setTimeout(() => {
+          const regions = REGIONS[chosen] ?? [];
+          state.innerHTML =
+            '<option value="">Select One</option>' +
+            regions.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+        }, 600);
+      });
+
+      // Stale marks from an earlier run, on controls this run fills. Each one
+      // has to be gone by the end, and that is a claim about the page rather
+      // than about the report.
+      for (const id of ['firstName', 'email', 'country', 'state', 'phoneNumber', 'addressLine2']) {
+        document
+          .getElementById(id)
+          .setAttribute('data-internship-agent-review', 'information_needed');
+      }
+
+      // Nothing may ever submit this form.
+      window.__fixture = { submitAttempts: 0 };
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__fixture.submitAttempts += 1;
+      });
+      document.getElementById('submit').addEventListener('click', () => {
+        window.__fixture.submitAttempts += 1;
+      });
+    </script>
+  </body>
+</html>

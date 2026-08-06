@@ -1373,12 +1373,70 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
   }
 
   fields.push(...byIdentity.values());
+  markEmbeddedPhoneCodeControls(fields, controlOwners);
 
   if (fields.length === 0) warnings.push('No eligible application fields were found.');
   if (fields.some((field) => field.sourceSignals.includes('unlabelled'))) {
     warnings.push('One or more controls have no accessible label.');
   }
   return { fields, warnings, census };
+}
+
+/**
+ * Records which phone country-code controls are part of the number's own widget.
+ *
+ * Two designs are indistinguishable from a field's own properties, and the
+ * difference decides what goes in the number box:
+ *
+ *  - a *split* control, which the applicant answers separately — Greenhouse
+ *    renders one as a `<button role="combobox">` in its own field block, whose
+ *    choices appear only when it is opened, so a scan legitimately finds it
+ *    with no options on it;
+ *  - a *combined* widget, whose country chooser is drawn inside the number's
+ *    control and cannot be answered on its own at all.
+ *
+ * Both are option controls with no scanned choices, so "has it any options?"
+ * cannot tell them apart — and reading a split control as combined leaves the
+ * dialling code off the application, while reading a combined one as split
+ * strips "+1" from the number and puts it nowhere.
+ *
+ * What does tell them apart is where they sit, and that is observable only here,
+ * with the elements in hand: the chooser and the number input are *siblings
+ * inside one wrapper element*, which is what "rendered inside the number's own
+ * control" means in markup. Deliberately that tight — a form or a fieldset also
+ * contains both, and every split phone block in existence would match if the
+ * search were allowed to walk that far up. Recorded as a fact about the page;
+ * what to do about it is the planner's decision.
+ */
+function markEmbeddedPhoneCodeControls(
+  fields: DetectedField[],
+  controlOwners: Map<HTMLElement, string>,
+): void {
+  const elementsByField = new Map<string, HTMLElement[]>();
+  for (const [element, fieldId] of controlOwners) {
+    const owned = elementsByField.get(fieldId);
+    if (owned) owned.push(element);
+    else elementsByField.set(fieldId, [element]);
+  }
+  const numbers = fields
+    .filter((field) => field.canonicalKey === 'phone')
+    .flatMap((field) => elementsByField.get(field.id) ?? []);
+  if (numbers.length === 0) return;
+
+  for (const [index, field] of fields.entries()) {
+    if (field.canonicalKey !== 'phone_country_code') continue;
+    const embedded = (elementsByField.get(field.id) ?? []).some((element) => {
+      if (numbers.some((number) => element.contains(number))) return true;
+      const wrapper = element.parentElement;
+      if (!wrapper || wrapper.matches('form, fieldset, section, body')) return false;
+      return numbers.some((number) => wrapper.contains(number));
+    });
+    if (!embedded) continue;
+    fields[index] = {
+      ...field,
+      metadata: { ...field.metadata, embeddedInPhoneControl: true },
+    };
+  }
 }
 
 async function waitForDomSettled(

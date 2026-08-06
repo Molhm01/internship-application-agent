@@ -132,6 +132,18 @@ export interface AutofillDependencies {
   isCancelled(): boolean;
   /** Lets a revealed field settle before the next scan. */
   waitForStability(): Promise<void>;
+  /**
+   * Waits, bounded, for controls whose choices another control produces.
+   *
+   * Called between passes with the selectors of the controls the planner
+   * reported as dependent — State/Province, in practice — so the next scan
+   * reads the list the page produced rather than the prompt it replaced.
+   * Optional: a dependency-free page never calls it, and a host without it
+   * falls back to `waitForStability`.
+   */
+  awaitDependentOptions?(
+    selectors: readonly string[],
+  ): Promise<{ populated: readonly string[]; pending: readonly string[] }>;
   now(): string;
 }
 
@@ -410,6 +422,12 @@ export async function runApplicationAutofill(
   /** How many passes re-read a control whose choices another field produces. */
   let dependentRescans = 0;
   /**
+   * Selectors of dependent controls whose choices never arrived, by the
+   * bounded wait's own account. A field left here ends the run naming that
+   * exact failure instead of the generic "no answer applies".
+   */
+  const unpopulatedDependents = new Set<string>();
+  /**
    * What each field already held when the run first looked at it.
    *
    * This is the only way to tell "the agent filled it" from "it was already
@@ -646,6 +664,27 @@ export async function runApplicationAutofill(
         finalizePendingResult(stale, analysisRan ? 'analysis_no_answer' : 'analysis_unavailable'),
       );
     }
+    // The authoritative record, before the results are read.
+    //
+    // Every counter below is a tally of these, and — more importantly — a field
+    // whose final status is settled must not still carry a review flag. Those
+    // flags are decided before the executor runs, and a phone country code that
+    // the number beside it answered ends `FILLED_VERIFIED` while still holding
+    // the "missing_information" the planner gave it. That contradiction is not
+    // cosmetic: the report schema refuses a completed run whose results claim
+    // fields are awaiting review, so it threw away an entire successful run
+    // rather than storing it.
+    const settledDiagnostics = buildDiagnostics(lastFields, lastPlan);
+    const settledFieldIds = new Set(
+      settledDiagnostics
+        .filter((entry) => isSettledStatus(entry.finalStatus))
+        .map((entry) => entry.fieldId),
+    );
+    for (const [fieldId, result] of resultsByField) {
+      if (!result.reviewReason || !settledFieldIds.has(fieldId)) continue;
+      const { reviewReason: _settled, ...rest } = result;
+      resultsByField.set(fieldId, autofillFieldResultSchema.parse(rest));
+    }
     const results = [...resultsByField.values()];
     // When almost nothing resolved, say why once, at the top — rather than
     // leaving the user to infer it from twenty-six identical cards. An empty
@@ -668,6 +707,8 @@ export async function runApplicationAutofill(
     // ended up printed above a list of fields the user still had to answer.
     // There is now a single authoritative record per question on the form, and
     // every counter is a tally of its final status.
+    // Rebuilt from the reconciled results, so the outcomes the popup renders
+    // agree with the results it lists.
     const diagnostics = buildDiagnostics(lastFields, lastPlan);
     const statusCounts = countFinalStatuses(toOutcomes(diagnostics));
     // Every required field ends in exactly one of three states. A field the run
@@ -1105,7 +1146,24 @@ export async function runApplicationAutofill(
     for (const field of revealed) ledger.observe(field);
     if (attemptedCount === 0 && revealed.length === 0) break;
 
-    await dependencies.waitForStability();
+    // Country was written this pass; State's list is produced by the page in
+    // response. Waiting for the list itself, rather than for a fixed interval,
+    // is what makes the next scan read choices instead of a prompt — the run
+    // used to sleep 350ms and rescan whatever happened to be there.
+    const dependentSelectors = scan.fields
+      .filter((field) => isDependentControl(field))
+      .map((field) => field.selector);
+    if (dependentSelectors.length > 0 && dependencies.awaitDependentOptions) {
+      emit('rescanning_dependencies', 'Waiting for the choices the page is producing');
+      const settled = await dependencies.awaitDependentOptions(dependentSelectors);
+      // Recorded per selector, so a control that never populated can be
+      // reported as `STATE_OPTIONS_NOT_POPULATED` rather than as an ordinary
+      // missing answer.
+      for (const selector of settled.pending) unpopulatedDependents.add(selector);
+      for (const selector of settled.populated) unpopulatedDependents.delete(selector);
+    } else {
+      await dependencies.waitForStability();
+    }
     if (dependencies.isCancelled()) {
       terminal = agentError('AUTOFILL_CANCELLED', 'Cancelled.');
       break;
@@ -1151,6 +1209,27 @@ export async function runApplicationAutofill(
       }),
     );
     selectorsByField.set(field.id, field.selector);
+  }
+
+  // A dependent control whose list never arrived says so.
+  //
+  // "No option on the page matched New Jersey" blames the profile for the
+  // page's ordering, and "waiting on the page analysis" blames a model that has
+  // nothing to do with it. The truthful account is that Country was answered,
+  // the run waited for the region list, and the page never produced one.
+  for (const field of lastFields) {
+    if (!isDependentControl(field) || !unpopulatedDependents.has(field.selector)) continue;
+    const existing = resultsByField.get(field.id);
+    if (!existing || existing.verification === 'verified') continue;
+    resultsByField.set(
+      field.id,
+      autofillFieldResultSchema.parse({
+        ...existing,
+        failureCode: 'STATE_OPTIONS_NOT_POPULATED',
+        reviewReason: 'missing_information' as const,
+        reason: `"${field.question}" never received its choices from the field it depends on. Choose it yourself before submitting.`,
+      }),
+    );
   }
 
   // The page's marks, redrawn one last time from the final statuses.

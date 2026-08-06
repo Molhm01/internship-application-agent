@@ -154,6 +154,13 @@ function applyValue(
       (option) => option.value === action.matchedOption?.value,
     );
     if (!exists) throw new Error('OPTION_NOT_FOUND');
+    // A control that already holds the intended option is left exactly as it
+    // is, and only verified. Rewriting it is not merely wasted work: selecting
+    // a country that is already selected fires `change`, and a page that
+    // repopulates its region list on that event throws away the state chosen
+    // moments earlier. A second run over a correctly filled form emptied
+    // State/Province for precisely that reason.
+    if (element.value === action.matchedOption.value) return;
     setNativeValue(element, action.matchedOption.value);
     dispatchValueEvents(element);
     return;
@@ -166,6 +173,7 @@ function applyValue(
       (radio) => radio.value === action.matchedOption?.value,
     );
     if (!target) throw new Error('OPTION_NOT_FOUND');
+    if (target.checked) return;
     setNativeChecked(target, true);
     dispatchValueEvents(target);
     return;
@@ -207,6 +215,10 @@ function applyValue(
   ) {
     throw new Error('UNSUPPORTED_CONTROL');
   }
+  // Same reasoning as the option branch: a box already holding the intended
+  // text is verified, not retyped. Retyping fires `input` and `change` at a
+  // framework that may reformat, revalidate, or clear a dependent control.
+  if (element.value === action.proposedValue) return;
   setNativeValue(element, action.proposedValue);
   dispatchValueEvents(element);
 }

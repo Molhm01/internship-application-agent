@@ -22,6 +22,7 @@ import {
   selectPortalRoute,
   portalRoutes,
   navigationActivationResultSchema,
+  dependentOptionsResultSchema,
   type PortalRouteResponse,
   type PortalStrategy,
   type AnswerGenerationRecord,
@@ -1799,6 +1800,41 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
       // Long enough for a framework to re-render a revealed section, short
       // enough that five passes stay responsive.
       waitForStability: () => new Promise((resolve) => setTimeout(resolve, 350)),
+      // The Country → State handoff. Every frame is asked at once — a 2s bound
+      // per frame taken one after another would be a long sleep wearing an
+      // observer's clothes — and a frame holding none of these controls answers
+      // immediately.
+      awaitDependentOptions: async (selectors) => {
+        const populated = new Set<string>();
+        const pending = new Set<string>(selectors);
+        try {
+          const tab = await activeApplicationTab(targetUrl);
+          const tabId = tab.id!;
+          const frames = await discoverFrames(tabId, tab.url);
+          const replies = await Promise.allSettled(
+            frames.map((frame) =>
+              chrome.tabs.sendMessage(
+                tabId,
+                { type: 'AWAIT_DEPENDENT_OPTIONS', selectors, timeoutMs: 2000 },
+                { frameId: frame.frameId },
+              ),
+            ),
+          );
+          for (const reply of replies) {
+            if (reply.status !== 'fulfilled') continue;
+            const parsed = dependentOptionsResultSchema.safeParse(reply.value);
+            if (!parsed.success) continue;
+            for (const selector of parsed.data.populated) {
+              populated.add(selector);
+              pending.delete(selector);
+            }
+          }
+        } catch {
+          // A frame that cannot be reached is reported as still pending, which
+          // is the truthful reading: nothing observed those options arriving.
+        }
+        return { populated: [...populated], pending: [...pending] };
+      },
       now: () => new Date().toISOString(),
     });
     await saveAutofillReport(report);

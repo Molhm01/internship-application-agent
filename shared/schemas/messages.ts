@@ -119,6 +119,30 @@ export const executeFillPlanMessageSchema = z.object({
    */
   frameUrl: z.string().max(2048).optional(),
 });
+/**
+ * Wait for a control whose choices another control produces.
+ *
+ * Sent between passes, after the pass that answered Country, naming only the
+ * controls the planner already reported as dependent. It carries selectors and
+ * a bound and nothing else: the frame observes, it never writes.
+ */
+export const awaitDependentOptionsMessageSchema = z.object({
+  type: z.literal('AWAIT_DEPENDENT_OPTIONS'),
+  selectors: z.array(z.string().min(1).max(2000)).max(50),
+  /** Bounded on both sides, so neither end can turn this into a long sleep. */
+  timeoutMs: z.number().int().min(100).max(5000).default(2000),
+});
+
+export const dependentOptionsResultSchema = z.object({
+  type: z.literal('DEPENDENT_OPTIONS_RESULT'),
+  populated: z.array(z.string()).max(50),
+  pending: z.array(z.string()).max(50),
+  missing: z.array(z.string()).max(50),
+  waitedMs: z.number().int().nonnegative(),
+});
+export type AwaitDependentOptionsMessage = z.infer<typeof awaitDependentOptionsMessageSchema>;
+export type DependentOptionsResult = z.infer<typeof dependentOptionsResultSchema>;
+
 export const fillProgressMessageSchema = z.object({
   type: z.literal('FILL_PROGRESS'),
   progress: fillProgressSchema,

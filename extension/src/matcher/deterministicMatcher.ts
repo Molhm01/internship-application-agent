@@ -4,6 +4,7 @@ import {
   degreeAnswersFor,
   fieldMatchSchema,
   formatValue,
+  fullLegalName,
   locationSearchText,
   normalizeLabel,
   resolveDialCode,
@@ -26,6 +27,14 @@ import {
 export interface MatchContext {
   /** True when the same form has a separate phone country-code control. */
   hasPhoneCountryCodeField?: boolean;
+  /**
+   * True when this page's account identifier may be answered with the saved
+   * email — an application form whose "Login" box the portal itself says is an
+   * email address. Never set on a sign-in or registration page: those are the
+   * account executor's, and typing an identifier into a login form is the one
+   * thing the ordinary plan must not do.
+   */
+  emailAsUsername?: boolean;
 }
 
 export const MATCH_CONFIDENCE = {
@@ -192,7 +201,22 @@ function profileValue(
     middle_name: { reference: 'profile.personal.legalMiddleName', value: personal.legalMiddleName },
     last_name: { reference: 'profile.personal.legalLastName', value: personal.legalLastName },
     preferred_name: { reference: 'profile.personal.preferredName', value: personal.preferredName },
+    // Assembled from the saved parts, never generated and never sent to a
+    // model: a legal name is a fact the applicant already wrote down. The
+    // preferred name is deliberately excluded — the name someone goes by is not
+    // the name on their documents.
+    full_name: {
+      reference: 'profile.personal.legalFirstName + legalMiddleName + legalLastName',
+      value: fullLegalName(personal) ?? undefined,
+    },
     email: { reference: 'profile.personal.email', value: personal.email },
+    // Only where the page has established that its account identifier *is* an
+    // email address, and only on an application form. Everywhere else this key
+    // stays unanswered and the account executor owns it.
+    account_username: {
+      reference: 'profile.personal.email',
+      value: context.emailAsUsername ? personal.email : undefined,
+    },
     // With a separate country-code control on the page, the dialling code goes
     // there and must not be repeated here. Without one, the whole saved number
     // is used unchanged. The stored profile value is never rewritten either way.
@@ -282,11 +306,11 @@ function profileValue(
         ? experience.responsibilities.join('\n')
         : undefined,
     },
-    // `account_username` is deliberately absent. It is classified so the page
-    // can be recognized as a login or a registration, but it is filled by the
-    // account executor alongside the password — never by the ordinary plan.
-    // Routing it through here would type an identifier into every *sign-in*
-    // form the agent lands on, which is the one page it must leave alone.
+    // `account_username` is answered above, and only under `emailAsUsername`.
+    // On a login or registration page that flag is never set and the account
+    // executor fills the identifier alongside the password, because routing it
+    // through here would type into every *sign-in* form the agent lands on —
+    // the one page it must leave alone.
     school: {
       reference: 'profile.education[0].institution',
       value: education?.institution,

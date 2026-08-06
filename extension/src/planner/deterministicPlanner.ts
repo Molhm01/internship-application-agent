@@ -37,11 +37,56 @@ export interface PlanContext {
   hasPhoneCountryCodeField?: boolean;
   /** The saved answer for "How did you hear about us?", when the user set one. */
   discoverySource?: string;
+  /** See `MatchContext.emailAsUsername`. Decided once, per page, below. */
+  emailAsUsername?: boolean;
 }
 
-/** True when the scan found a control that takes the dialling code by itself. */
+/**
+ * True when this page's account identifier may be answered with the saved email.
+ *
+ * Both halves matter. The page must be an ordinary application step — never a
+ * sign-in or a registration, which belong to the account executor and the
+ * credential vault — and the portal itself must have said the identifier is an
+ * email address, either by typing the control `email` or by labelling it so.
+ * Neither is inferred: a "Username" box on an application form that says nothing
+ * about email stays the applicant's to fill.
+ */
+export function isEmailBackedLoginField(field: DetectedField): boolean {
+  if (!isUsernameField(field) && field.canonicalKey !== 'account_username') return false;
+  return (
+    field.fieldType === 'email' ||
+    /\be-?mail\b/i.test(`${field.label} ${field.question} ${field.helpText ?? ''}`)
+  );
+}
+
+export function allowsEmailAsUsername(scan: ApplicationScanResult): boolean {
+  const kind = scan.navigation?.kind;
+  if (kind === 'login' || kind === 'account_creation') return false;
+  return scan.fields.some(isEmailBackedLoginField);
+}
+
+/**
+ * True when the scan found a control that takes the dialling code by itself.
+ *
+ * "By itself" is the whole of it. A combined phone widget renders its country
+ * chooser *inside* the number's control, where nobody — agent or applicant —
+ * can answer it separately; counting that as a split control made the planner
+ * strip "+1" from the number and put it nowhere, leaving the dialling code off
+ * the application entirely.
+ *
+ * The evidence is the scanner's, because it is the only place the two designs
+ * differ observably: `embeddedInPhoneControl` says the chooser shares the
+ * number's field container. A Greenhouse-style split control in its own block
+ * carries no such mark and stays a control of its own, even though its choices
+ * — like the combined one's — are not visible until it is opened.
+ */
 export function hasPhoneCountryCodeField(scan: ApplicationScanResult): boolean {
-  return scan.fields.some((field) => field.canonicalKey === 'phone_country_code');
+  return scan.fields.some(
+    (field) =>
+      field.canonicalKey === 'phone_country_code' &&
+      !field.disabled &&
+      field.metadata.embeddedInPhoneControl !== true,
+  );
 }
 
 /** True when a saved answer is a decline rather than a substantive value. */
@@ -279,7 +324,15 @@ function planAction(
   // analysis could not run, so this question was never interpreted" — which
   // tells the user to start a local model to fix something a local model has
   // nothing to do with.
-  if (isUsernameField(field) || isPasswordField(field)) {
+  //
+  // The one exception is an account identifier the portal has itself declared
+  // to be an email address, on a page that is not a sign-in — see
+  // `allowsEmailAsUsername`. That is the applicant's own email, which is
+  // already in the plan for the email box beside it, so nothing secret is added
+  // by letting it fill the login box too.
+  const usernameAnsweredByEmail =
+    Boolean(context.emailAsUsername) && isEmailBackedLoginField(field);
+  if ((isUsernameField(field) && !usernameAnsweredByEmail) || isPasswordField(field)) {
     const confirmation = isPasswordConfirmationField(field);
     return {
       ...base,
@@ -421,11 +474,22 @@ function planAction(
     existing !== '' &&
     existing !== false &&
     (!Array.isArray(existing) || existing.length > 0);
-  if (hasExistingValue && JSON.stringify(existing) !== JSON.stringify(match.formattedValue)) {
+  const alreadyDifferent = (): void => {
     base.requiresReview = true;
     base.warnings.push(
       'The field already contains a different value; it will not be overwritten without review.',
     );
+  };
+  // Only for controls that are typed into.
+  //
+  // A `<select>` holds an option *value* — "US", "NJ", "1" — and the saved
+  // value is "United States", "New Jersey", "+1". Comparing the two as strings
+  // says they differ every time, so on a second run over a correctly filled
+  // form Country, State and the dialling code were all escalated to
+  // "Information needed" for holding exactly the right answer. An option
+  // control is compared below instead, against the option that was matched.
+  if (hasExistingValue && !isOptionControl(field)) {
+    if (JSON.stringify(existing) !== JSON.stringify(match.formattedValue)) alreadyDifferent();
   }
   if (
     field.fieldType === 'select' ||
@@ -536,6 +600,18 @@ function planAction(
     // region-suffix match adds information the profile never stated, so it is
     // always confirmed by the user first.
     const inferredRegion = option.matchKind === 'region_suffix';
+    // Now that the form's own word for the saved value is known, a control that
+    // already holds something can be judged against it. Holding the matched
+    // option is the *correct* state and needs no confirmation; holding anything
+    // else is a value the agent did not write and will not overwrite unseen.
+    if (
+      hasExistingValue &&
+      existing !== option.option.value &&
+      existing !== option.option.label &&
+      !(Array.isArray(existing) && existing.includes(option.option.value))
+    ) {
+      alreadyDifferent();
+    }
     return {
       ...base,
       action: selectKind,
@@ -762,6 +838,7 @@ export function buildDeterministicPlan(
   const context: PlanContext = {
     location: locationOf(profile),
     hasPhoneCountryCodeField: hasPhoneCountryCodeField(scan),
+    emailAsUsername: allowsEmailAsUsername(scan),
     ...(profile.preferences?.discoverySource
       ? { discoverySource: profile.preferences.discoverySource }
       : {}),
@@ -773,6 +850,7 @@ export function buildDeterministicPlan(
         field,
         matchField(field, profile, answers, undefined, {
           ...(context.hasPhoneCountryCodeField ? { hasPhoneCountryCodeField: true } : {}),
+          ...(context.emailAsUsername ? { emailAsUsername: true } : {}),
         }),
         selectedDocument,
         context,

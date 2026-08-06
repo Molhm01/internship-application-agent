@@ -71,6 +71,10 @@ export const ERROR_CODES = [
   'OPTION_NOT_SELECTABLE',
   'OPTION_SELECTION_REVERTED',
   'OPTION_VALUE_NOT_VERIFIED',
+  // A control whose choices another control produces — State after Country —
+  // that never received them. Distinct from `OPTIONS_NOT_DISCOVERED`, which is
+  // a list that opened and was empty: this one was never populated at all.
+  'STATE_OPTIONS_NOT_POPULATED',
   'LOCATION_NOT_FOUND',
   'LOCATION_AMBIGUOUS',
   'PHONE_COUNTRY_CODE_NOT_FOUND',
@@ -255,6 +259,8 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'The page discarded the selection after it was made. Select it yourself and check it stays.',
   OPTION_VALUE_NOT_VERIFIED:
     'The control does not show the choice that was selected. Check its current value.',
+  STATE_OPTIONS_NOT_POPULATED:
+    'The country was set, but this control never produced its list of states or provinces. Choose one yourself.',
   LOCATION_NOT_FOUND:
     'This list offers no location matching your saved city, state, and country. Choose one yourself.',
   LOCATION_AMBIGUOUS:

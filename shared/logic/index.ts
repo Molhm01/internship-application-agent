@@ -2,6 +2,7 @@ export * from './profileCompleteness.js';
 export * from './profileMerge.js';
 export * from './normalizeQuestion.js';
 export * from './formatters.js';
+export * from './legalName.js';
 export * from './optionMatcher.js';
 export * from './locationMatcher.js';
 export * from './phoneNumber.js';

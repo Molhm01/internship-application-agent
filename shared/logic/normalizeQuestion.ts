@@ -92,10 +92,25 @@ const RULES: readonly Rule[] = [
       /\b(preferred|nick|chosen|goes by)\s?name\b/,
       /\bwhat (should|do) we call you\b/,
       /\bwhat name do you go by\b/,
+      /\bname you go by\b/,
     ],
   },
   { question: 'pronouns', patterns: [/\bpronouns?\b/] },
-  { question: 'full_name', patterns: [/\b(full|legal|your) name\b/, /^name$/] },
+  // The whole name in one box. Later steps of a Workday or iCIMS application
+  // ask for it again as "Name as it appears on legal documents" or as the name
+  // to type beside a signature, and neither wording contains "full name" — so
+  // both fell through as unrecognized and the control stayed blank.
+  {
+    question: 'full_name',
+    patterns: [
+      /\b(full|legal|your) name\b/,
+      /^name$/,
+      /\bname as it appears\b/,
+      /\bsignature name\b/,
+      /\bname (of )?applicant\b/,
+      /\bapplicant name\b/,
+    ],
+  },
 
   // Right to work. Before Contact: "permission to work in the country of
   // employment" names a country and is not the address-country question.
@@ -195,11 +210,24 @@ const RULES: readonly Rule[] = [
   },
   {
     question: 'address_line2',
-    patterns: [/\baddress (line )?2\b/, /\b(apt|apartment|suite|unit)\b/],
+    patterns: [
+      /\baddress (line )?2\b/,
+      // The secondary-address vocabulary in full. A floor or a building is the
+      // same kind of fact as an apartment number, and a form that asks for one
+      // was previously unrecognized — which made an optional second line look
+      // like an unanswered required question.
+      /\b(apt|apartment|suite|unit|floor|building)\b/,
+    ],
   },
   {
     question: 'address_line1',
-    patterns: [/\baddress (line )?1\b/, /\bstreet address\b/, /^address$/, /\bmailing address\b/],
+    patterns: [
+      /\baddress (line )?1\b/,
+      /\bstreet address\b/,
+      /^address$/,
+      /\bmailing address\b/,
+      /\bprimary address\b/,
+    ],
   },
   // Where a past job was. Before every personal-location rule, because those
   // contain the same word and one of them won: on the live page a work-history
@@ -242,10 +270,22 @@ const RULES: readonly Rule[] = [
       /\bmetro(politan)?\b/,
     ],
   },
+  // Country before state, and this ordering is the whole of the reported
+  // "Country/Region of Residence stays blank" failure.
+  //
+  // The state rule accepts "region", and every Workday-shaped form spells the
+  // country control "Country/Region" or "Country/Region of Residence". Tested
+  // in the old order, the residence *country* matched `state` — so the planner
+  // offered the saved "New Jersey" to a list of countries, found nothing,
+  // deferred the field, and the state list it gates was never populated. One
+  // misclassification, two blank controls.
+  //
+  // A genuine "State/Province/Region" control names no country, so it still
+  // reaches the rule below.
+  { question: 'country', patterns: [/\bcountry\b/] },
   { question: 'city', patterns: [/\b(city|town)\b/] },
   { question: 'state', patterns: [/\b(state|province|region)\b/] },
   { question: 'postal_code', patterns: [/\b(zip|postal)\s?code\b/, /\bpostcode\b/, /^zip$/] },
-  { question: 'country', patterns: [/\bcountry\b/] },
 
   // Education
   { question: 'school', patterns: [/\b(school|university|college|institution)\b/] },
