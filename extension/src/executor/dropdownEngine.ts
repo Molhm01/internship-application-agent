@@ -14,11 +14,14 @@ import {
   closeControl,
   findListbox,
   isVisible,
+  enumerateAllOptions,
   openControl,
   OPTION_ITEM_SELECTOR,
   pressPointer,
   readOptions,
   resolveTrigger,
+  revealOption,
+  typeSearch,
   waitFor,
 } from '../scanner/optionDiscovery.js';
 
@@ -65,6 +68,16 @@ export interface DropdownExecutionInput {
   root: HTMLElement;
   /** The answer to select. Never a pattern, never a position. */
   desiredSemanticValue: string;
+  /**
+   * Other wordings of the *same saved record*, tried in order after the first.
+   *
+   * Not synonyms and not guesses: a restatement of one fact for a form that
+   * asks for it in a different taxonomy. An education record supplies its
+   * degree ("Bachelor's Degree") and the kind of institution that implies
+   * ("College/University"), because one employer's "Education Type" list names
+   * programmes and the next one's names places.
+   */
+  alternativeValues?: readonly string[] | undefined;
   /** The canonical intent, so place-like questions may match a region suffix. */
   canonicalQuestion?: string | undefined;
   /** What to type into a searchable control. Derived only from saved values. */
@@ -122,6 +135,67 @@ export function classifyDropdown(root: HTMLElement): DropdownKind {
   if (root.getAttribute('role') === 'listbox') return 'listbox';
   if (trigger instanceof HTMLButtonElement) return 'button_menu';
   return 'unknown';
+}
+
+/**
+ * Matches the desired answer, then each documented alternative in turn.
+ *
+ * One question can be worded as two different taxonomies by two different
+ * employers, and only the page can say which it is using. "Education Type" is
+ * the case that forced this: one form lists *institutions* (High School,
+ * College/University, Trade School) and the next lists *degree programs*
+ * (Associate, Bachelor's Degree Program (or equivalent), Master's). A single
+ * proposed value answers one of them and matches nothing at all on the other —
+ * which is exactly what left the live control at "No Selection" while the right
+ * option sat in the open menu.
+ *
+ * So the resolver supplies both readings of the same saved record, most
+ * specific first, and the *page's own list* decides which one it is asking for.
+ * Nothing is invented: every candidate is a restatement of the same record, and
+ * the first that matches an offered option wins.
+ */
+function matchWithAlternatives(
+  input: DropdownExecutionInput,
+  options: readonly FieldOption[],
+): ReturnType<typeof matchDropdownOption> {
+  const candidates = [input.desiredSemanticValue, ...(input.alternativeValues ?? [])].filter(
+    (value) => value.trim().length > 0,
+  );
+  let firstOutcome: ReturnType<typeof matchDropdownOption> | null = null;
+  for (const candidate of candidates) {
+    const outcome = matchDropdownOption({
+      desiredSemanticValue: candidate,
+      options,
+      canonicalQuestion: input.canonicalQuestion,
+      // The "Other" escape hatch is tried only after every real reading of the
+      // record has failed, so a form that does list the answer is never sent to
+      // Other because the first wording missed.
+      allowOtherFallback: false,
+      locationTarget: input.locationTarget,
+    });
+    if (outcome.option) return outcome;
+    firstOutcome ??= outcome;
+    // An ambiguous list is a decision for the user, not a reason to try another
+    // wording and pick something else.
+    if (outcome.ambiguous) return outcome;
+  }
+  if (input.allowOtherFallback) {
+    const withOther = matchDropdownOption({
+      desiredSemanticValue: input.desiredSemanticValue,
+      options,
+      canonicalQuestion: input.canonicalQuestion,
+      allowOtherFallback: true,
+      locationTarget: input.locationTarget,
+    });
+    if (withOther.option) return withOther;
+  }
+  return (
+    firstOutcome ?? {
+      method: 'none' as const,
+      ambiguous: false,
+      reason: 'No value was proposed for this control.',
+    }
+  );
 }
 
 /** Native options, read from the control as it stands now. */
@@ -252,13 +326,7 @@ function executeNativeSelect(
     };
   }
 
-  const match = matchDropdownOption({
-    desiredSemanticValue: input.desiredSemanticValue,
-    options: live,
-    canonicalQuestion: input.canonicalQuestion,
-    allowOtherFallback: input.allowOtherFallback ?? false,
-    locationTarget: input.locationTarget,
-  });
+  const match = matchWithAlternatives(input, live);
   if (!match.option) {
     return {
       code: match.ambiguous
@@ -354,7 +422,15 @@ async function executeCustomDropdown(
     };
   }
 
-  let live = readOptions(container);
+  // The *complete* list, not the part of it that happens to be on screen.
+  //
+  // A long country or field-of-study menu is either scrollable — every option
+  // is in the DOM, most of them outside the visible box — or virtualized, where
+  // only the visible rows exist as elements at all. Reading what was rendered at
+  // the moment the menu opened reported `OPTION_NOT_FOUND` for "Electrical
+  // Engineering" because it sat below the fold, and the field then fell through
+  // to the "Other" box with the answer in hand.
+  let live = await enumerateAllOptions(container);
   if (live.length === 0) {
     // A menu that mounts empty and fills asynchronously. Waited for once, then
     // reported honestly — never guessed at.
@@ -362,7 +438,7 @@ async function executeCustomDropdown(
       const current = findListbox(trigger) ?? container;
       return readOptions(current).length > 0 ? current : null;
     }, SETTLE_WAIT_MS);
-    if (filled) live = readOptions(filled);
+    if (filled) live = await enumerateAllOptions(filled);
   }
   if (live.length === 0) {
     closeControl(trigger);
@@ -375,15 +451,38 @@ async function executeCustomDropdown(
     };
   }
 
-  const offered = asFieldOptions(live);
+  let offered = asFieldOptions(live);
+  let match = matchWithAlternatives(input, offered);
+
+  // A searchable control that did not offer the answer is asked for it.
+  //
+  // Some lists never render everything, however far they are scrolled: they
+  // fetch on a query and show a truncated set until they get one. Typing is the
+  // only way to reach the rest, and it is done only when the control declares
+  // itself searchable — typing into a control that is not leaves a query in a
+  // box and nothing selected, which is its own live failure.
+  if (!match.option && !match.ambiguous && trigger instanceof HTMLInputElement) {
+    for (const candidate of [input.desiredSemanticValue, ...(input.alternativeValues ?? [])]) {
+      if (candidate.trim().length === 0) continue;
+      await typeSearch(trigger, candidate);
+      const filtered = findListbox(trigger);
+      if (!filtered) continue;
+      const refreshed = await enumerateAllOptions(filtered);
+      if (refreshed.length === 0) continue;
+      const retry = matchWithAlternatives(
+        { ...input, desiredSemanticValue: candidate },
+        asFieldOptions(refreshed),
+      );
+      if (retry.option) {
+        live = refreshed;
+        offered = asFieldOptions(refreshed);
+        match = retry;
+        break;
+      }
+    }
+  }
+
   const choices = realChoices(offered);
-  const match = matchDropdownOption({
-    desiredSemanticValue: input.desiredSemanticValue,
-    options: offered,
-    canonicalQuestion: input.canonicalQuestion,
-    allowOtherFallback: input.allowOtherFallback ?? false,
-    locationTarget: input.locationTarget,
-  });
   if (!match.option) {
     closeControl(trigger);
     return {
@@ -398,7 +497,21 @@ async function executeCustomDropdown(
   }
 
   const current = findListbox(trigger) ?? container;
-  const target = optionElementFor(current, match.option);
+  // Scrolled back into existence if it has to be. Enumeration restores the
+  // list's scroll position, so on a virtualized menu the option that was just
+  // matched is no longer a rendered element — and clicking it failed over a
+  // list that had offered it a moment earlier.
+  const wantedLabel = normalizeOptionText(match.option.label);
+  const wantedValue = match.option.value;
+  const target =
+    optionElementFor(current, match.option) ??
+    (await revealOption(
+      current,
+      (element) =>
+        (Boolean(wantedValue) && element.getAttribute('data-value') === wantedValue) ||
+        normalizeOptionText(element.textContent ?? '') === wantedLabel,
+    )) ??
+    undefined;
   if (!target) {
     closeControl(trigger);
     return {

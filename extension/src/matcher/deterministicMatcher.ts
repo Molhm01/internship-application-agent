@@ -200,6 +200,30 @@ function resolvedCanonical(field: DetectedField): {
  * against High School / College / Trade School found nothing and left the
  * control at No Selection on every run.
  */
+/**
+ * The other readings of an education record that an "Education Type" list might
+ * be asking for, most specific first.
+ *
+ * Two employers ask this question with two different vocabularies. One lists
+ * places — High School, College/University, Trade School. The next lists
+ * programmes — "Associate Degree Program", "Bachelor's Degree Program (or
+ * equivalent)", "Master's Degree Program". A value that answers the first
+ * matches nothing at all on the second, and that is precisely what left the live
+ * control at "No Selection" with the correct option visible in the open menu.
+ *
+ * Both are restatements of the same saved record, so both are offered and the
+ * page's own list decides. Nothing here is inferred beyond the credential the
+ * applicant already recorded.
+ */
+export function educationTypeAlternatives(
+  education: { degree?: string; degreeLevel?: string } | undefined,
+): string[] {
+  const kind = educationTypeFor(education);
+  return [education?.degreeLevel, education?.degree, kind].filter(
+    (value): value is string => typeof value === 'string' && value.trim().length > 0,
+  );
+}
+
 function educationTypeFor(
   education: { degree?: string; degreeLevel?: string } | undefined,
 ): string | undefined {
@@ -227,7 +251,17 @@ function profileValue(
   // The record the applicant is actually in, never "the first row they typed".
   // Reading `profile.education[0]` is what answered "Current Degree Program"
   // with a completed high-school diploma and named the wrong school beside it.
-  const education = activeEducationEntry(profile);
+  // The block this control sits in, when the page repeats them.
+  //
+  // `activeEducationEntry` picks the record the applicant is *currently* in,
+  // which is the right answer for a page with one education block and the wrong
+  // answer for every block after the first: a second School block answered from
+  // the active record repeats the first school, its degree, and its graduation
+  // status, which is a fabricated education history.
+  const education =
+    field.recordIndex === undefined
+      ? activeEducationEntry(profile)
+      : profile.education[field.recordIndex];
   const educationIndex = education ? profile.education.indexOf(education) : -1;
   const educationRef = (key: string): string => `profile.education[${educationIndex}].${key}`;
   const degrees = degreeAnswersFor(profile);
@@ -242,6 +276,10 @@ function profileValue(
   const experienceIndex = field.recordIndex ?? 0;
   const experience = profile.experience[experienceIndex];
   const experienceRef = (key: string): string => `profile.experience[${experienceIndex}].${key}`;
+  // Projects are numbered by the same rule and for the same reason.
+  const projectIndex = field.recordIndex ?? 0;
+  const project = profile.projects[projectIndex];
+  const projectRef = (key: string): string => `profile.projects[${projectIndex}].${key}`;
   // The applicant's stored code first, the residence country only as a
   // fallback. Deriving it from the country meant a profile with a phone and no
   // address had nothing to put in a country-code control — and the phone number
@@ -363,6 +401,25 @@ function profileValue(
       reference: experienceRef('employmentType'),
       value: experience?.employmentType,
     },
+    // ---- Projects -------------------------------------------------------
+    //
+    // Read from the block's own record, exactly as experience is. A repeating
+    // Projects section that answered every block from `projects[0]` would list
+    // one project several times, which is the same fabrication the work-history
+    // blocks used to produce.
+    project_name: { reference: projectRef('name'), value: project?.name },
+    project_description: { reference: projectRef('description'), value: project?.description },
+    project_technologies: {
+      reference: projectRef('technologies'),
+      value: project?.technologies.length ? project.technologies.join(', ') : undefined,
+    },
+    project_url: { reference: projectRef('url'), value: project?.url },
+    project_start_date: { reference: projectRef('startDate'), value: project?.startDate },
+    project_end_date: { reference: projectRef('endDate'), value: project?.endDate },
+    // Deliberately unanswerable: the profile records what a project *was*, not
+    // what the applicant's title on it was called. Inventing one would be a
+    // claim about their responsibilities that nothing saved supports.
+    project_role: { reference: 'profile.projects', value: undefined },
     reason_for_leaving: {
       reference: experienceRef('reasonForLeaving'),
       value: experience?.reasonForLeaving,
@@ -450,13 +507,16 @@ function profileValue(
             ? false
             : undefined,
     },
-    // The *kind* of institution, read off the record the applicant is actually
-    // in. The option list ("High School", "College/University", "Trade School")
-    // is matched against this by the dropdown engine, which refuses anything
-    // that is not a defensible equivalent.
+    // The programme this record represents, in the record's own words.
+    //
+    // The *degree* leads, because that is what most forms mean by "Education
+    // Type" — "Bachelor's Degree Program (or equivalent)" is an option on the
+    // live application and "College/University" is not. `educationTypeAlternatives`
+    // supplies the institution-kind reading as a fallback, and the page's own
+    // list decides which vocabulary is being asked for.
     education_type: {
       reference: educationRef('degree'),
-      value: educationTypeFor(education),
+      value: educationTypeAlternatives(education)[0],
     },
     // Deliberately unanswerable. Whether the applicant will still be enrolled
     // during a term the employer has not stated is not something a graduation

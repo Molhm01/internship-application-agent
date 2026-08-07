@@ -453,6 +453,26 @@ const RULES: readonly Rule[] = [
       /\b(restriction|restricted|bound)\b.*\b(employer|employment|contract)\b/,
     ],
   },
+  // Projects. A repeating Projects block labels its columns with the same bare
+  // nouns a work-history block uses — Name, Role, Start Date — and a project is
+  // not a job. Each pattern therefore names the section explicitly rather than
+  // relying on position, so a "Name" outside a Projects block is never claimed.
+  {
+    question: 'project_name',
+    patterns: [/\bproject\s?(name|title)\b/, /\b(name|title) of (the )?project\b/],
+  },
+  { question: 'project_role', patterns: [/\bproject\s?role\b/, /\byour role\b.*\bproject\b/] },
+  {
+    question: 'project_description',
+    patterns: [/\bproject\s?(description|summary|details)\b/, /\bdescribe (the |this )?project\b/],
+  },
+  {
+    question: 'project_technologies',
+    patterns: [/\b(technologies|tech stack|tools used|languages used)\b/],
+  },
+  { question: 'project_url', patterns: [/\bproject\s?(url|link|website|repository|repo)\b/] },
+  { question: 'project_start_date', patterns: [/\bproject\s?start\s?date\b/] },
+  { question: 'project_end_date', patterns: [/\bproject\s?(end|completion)\s?date\b/] },
   { question: 'employer', patterns: [/\b(employer|company name|organization)\b/] },
   { question: 'job_title', patterns: [/\b(job|position|role)\s?title\b/, /^title$/, /^position$/] },
   {

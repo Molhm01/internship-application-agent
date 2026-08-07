@@ -17,6 +17,8 @@ import {
   locationSearchText,
   matchLocationOption,
   matchOption,
+  normalizeOptionText,
+  activeEducationEntry,
   type ApplicationScanResult,
   type ApprovedAnswer,
   type DeterministicFillAction,
@@ -28,7 +30,11 @@ import {
   type Profile,
   type SavedDocument,
 } from '@internship-agent/shared';
-import { isLegalAttestation, matchField } from '../matcher/deterministicMatcher.js';
+import {
+  educationTypeAlternatives,
+  isLegalAttestation,
+  matchField,
+} from '../matcher/deterministicMatcher.js';
 
 /**
  * Page-level facts the planner resolved once and every action may need. The
@@ -49,6 +55,29 @@ export interface PlanContext {
    * profile.
    */
   recordCount?: (field: DetectedField) => number | null;
+  /** Other wordings of the same saved record, for a differently-worded list. */
+  alternativeValues?: (field: DetectedField) => string[];
+}
+
+/**
+ * The alternative wordings each question can offer, built once per plan.
+ *
+ * Deliberately a short, closed list. Only `education_type` needs one today, and
+ * it needs it because two real employers ask that question with two different
+ * vocabularies. Everything else supplies one value, as before.
+ */
+export function alternativeValuesFor(profile: Profile): (field: DetectedField) => string[] {
+  return (field) => {
+    if (field.canonicalKey !== 'education_type') return [];
+    // The block's own record, by the same rule the matcher uses.
+    const education =
+      field.recordIndex === undefined
+        ? activeEducationEntry(profile)
+        : profile.education[field.recordIndex];
+    // The first entry is the value the matcher already proposed, so it is
+    // dropped here — the engine tries the proposed value first by construction.
+    return educationTypeAlternatives(education).slice(1);
+  };
 }
 
 /** "st", "nd", "rd", "th" — so a reason reads as a sentence rather than a log. */
@@ -73,6 +102,7 @@ export function recordCountFor(profile: Profile): (field: DetectedField) => numb
     const section = sectionForQuestion(canonical);
     if (section === 'experience') return profile.experience.length;
     if (section === 'education') return profile.education.length;
+    if (section === 'projects') return profile.projects.length;
     return null;
   };
 }
@@ -112,14 +142,17 @@ export function conditionalGateFor(
     const held = parent.currentValue;
     const answers = (Array.isArray(held) ? held : [held])
       .filter((value) => value !== undefined && value !== '')
-      .map((value) => String(value).trim().toLowerCase());
+      // Normalized the same way option labels are, so a page spelling its
+      // escape hatch "Other/Not Listed" and storing it as `other_not_listed`
+      // both reduce to the same words as the activation value "other".
+      .map((value) => normalizeOptionText(String(value)));
     const parentAnswered = answers.length > 0;
     // Matched against the option's value *and* its label, because a page
     // spelling "Other School" in the list stores it as `other`, and either is
     // the same answer.
     const chosenLabels = (parent.options ?? [])
-      .filter((option) => answers.includes(option.value.trim().toLowerCase()))
-      .map((option) => option.label.trim().toLowerCase());
+      .filter((option) => answers.includes(normalizeOptionText(option.value)))
+      .map((option) => normalizeOptionText(option.label));
     const active = [...answers, ...chosenLabels].some(
       (value) => value === dependency.value || value.startsWith(`${dependency.value} `),
     );
@@ -271,13 +304,21 @@ function locationOf(profile: Profile): LocationTarget {
  * selector, a script, or a position in a list.
  */
 function buildMatchHint(field: DetectedField, context: PlanContext): MatchHint | undefined {
+  // Other wordings of the same record, for a form whose list uses a different
+  // vocabulary than the first one. Supplied by the resolver, never by the page.
+  const alternatives = context.alternativeValues?.(field) ?? [];
   if (!isLocationQuestion(field.canonicalKey) || !context.location?.city) {
-    return field.canonicalKey ? { canonicalQuestion: field.canonicalKey } : undefined;
+    if (!field.canonicalKey) return undefined;
+    return {
+      canonicalQuestion: field.canonicalKey,
+      ...(alternatives.length > 0 ? { alternativeValues: alternatives } : {}),
+    };
   }
   return {
     canonicalQuestion: field.canonicalKey,
     location: context.location,
     searchText: locationSearchText(context.location),
+    ...(alternatives.length > 0 ? { alternativeValues: alternatives } : {}),
   };
 }
 
@@ -1061,6 +1102,7 @@ export function buildDeterministicPlan(
     emailAsUsername: allowsEmailAsUsername(scan),
     conditionalGate: conditionalGateFor(scan.fields),
     recordCount: recordCountFor(profile),
+    alternativeValues: alternativeValuesFor(profile),
     ...(profile.preferences?.discoverySource
       ? { discoverySource: profile.preferences.discoverySource }
       : {}),

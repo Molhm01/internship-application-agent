@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lincoln-style repeaters and long lists — fixture</title>
+    <style>
+      /* A menu with a real scroll box, so a long list genuinely has a below-the-fold. */
+      .menu {
+        max-height: 96px;
+        overflow-y: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      The two release-blocking shapes, reproduced together.
+
+      Long option lists whose answer sits below the initial scroll position, and
+      repeating sections that start with one block and grow through an Add
+      button. The employer name is fictional. Every value is fictional.
+
+      The submit button exists to be *not* clicked.
+    -->
+    <h1>Application</h1>
+    <form id="application" onsubmit="return false;">
+      <fieldset>
+        <legend>Profile</legend>
+
+        <label for="firstName">First Name *</label>
+        <input id="firstName" name="firstName" type="text" required />
+
+        <label for="lastName">Last Name *</label>
+        <input id="lastName" name="lastName" type="text" required />
+
+        <label for="email">Email Address *</label>
+        <input id="email" name="email" type="email" required />
+
+        <label for="country">Country *</label>
+        <select id="country" name="country" required></select>
+
+        <label for="state">State/Province *</label>
+        <select id="state" name="state" required>
+          <option value="">Select a country first</option>
+        </select>
+      </fieldset>
+
+      <fieldset id="experienceSection">
+        <legend>Work Experience</legend>
+        <div id="experienceBlocks"></div>
+        <button id="addExperience" type="button">Add Another Employer</button>
+      </fieldset>
+
+      <fieldset id="educationSection">
+        <legend>Education</legend>
+        <div id="educationBlocks"></div>
+        <button id="addEducation" type="button">Add Another School</button>
+      </fieldset>
+
+      <fieldset id="projectSection">
+        <legend>Projects</legend>
+        <div id="projectBlocks"></div>
+        <button id="addProject" type="button">Add Another Project</button>
+      </fieldset>
+
+      <button id="submit" type="submit">Submit Application</button>
+    </form>
+
+    <script>
+      (function () {
+        /** Many countries, so the list needs scrolling to reach the United States. */
+        var COUNTRIES = [
+          ['', 'No Selection'],
+          ['AR', 'Argentina'],
+          ['AU', 'Australia'],
+          ['BR', 'Brazil'],
+          ['CA', 'Canada'],
+          ['CN', 'China'],
+          ['DE', 'Germany'],
+          ['ES', 'Spain'],
+          ['FR', 'France'],
+          ['IN', 'India'],
+          ['IT', 'Italy'],
+          ['JP', 'Japan'],
+          ['KE', 'Kenya'],
+          ['MX', 'Mexico'],
+          ['NG', 'Nigeria'],
+          ['PL', 'Poland'],
+          ['SE', 'Sweden'],
+          ['UK', 'United Kingdom'],
+          ['US', 'United States of America'],
+          ['VN', 'Vietnam'],
+        ];
+
+        var STATES = {
+          US: [
+            ['', 'No Selection'],
+            ['CA', 'California'],
+            ['NJ', 'New Jersey'],
+            ['NY', 'New York'],
+          ],
+          CA: [
+            ['', 'No Selection'],
+            ['ON', 'Ontario'],
+          ],
+        };
+
+        /**
+         * Education Type, in the vocabulary the live application uses: degree
+         * programmes, not kinds of institution.
+         */
+        var EDUCATION_TYPES = [
+          ['', 'No Selection'],
+          ['hs', 'High School or GED'],
+          ['trade', 'Trade or Vocational'],
+          ['assoc', 'Associate Degree Program (or equivalent)'],
+          ['bach', "Bachelor's Degree Program (or equivalent)"],
+          ['mast', "Master's Degree Program (or equivalent)"],
+          ['doc', 'Doctorate Program (or equivalent)'],
+        ];
+
+        /**
+         * A long field-of-study list. "Electrical Engineering" sits well past
+         * the initial scroll position on purpose — that is the live failure.
+         */
+        var AREAS = ['', 'Other/Not Listed', 'A.E.E.T.', 'Accounting', 'Aeronautical Engineering'];
+        for (var a = 0; a < 40; a += 1) AREAS.push('Filler Discipline ' + a);
+        AREAS.push('Electrical Engineering');
+        for (var b = 0; b < 20; b += 1) AREAS.push('Later Discipline ' + b);
+
+        var SCHOOLS = [
+          '',
+          'Princeton University',
+          'Rowan University',
+          'Rutgers University',
+          'Other/Not Listed',
+        ];
+
+        function fill(select, rows) {
+          select.innerHTML = '';
+          rows.forEach(function (row) {
+            var option = document.createElement('option');
+            if (Array.isArray(row)) {
+              option.value = row[0];
+              option.textContent = row[1];
+            } else {
+              option.value = row === '' ? '' : row.toLowerCase().replace(/\W+/g, '_');
+              option.textContent = row === '' ? 'No Selection' : row;
+            }
+            select.append(option);
+          });
+        }
+
+        fill(document.getElementById('country'), COUNTRIES);
+
+        document.getElementById('country').addEventListener('change', function (event) {
+          var previous = document.getElementById('state');
+          var replacement = document.createElement('select');
+          replacement.id = 'state';
+          replacement.name = 'state';
+          replacement.required = true;
+          fill(replacement, STATES[event.target.value] || [['', 'Select a country first']]);
+          previous.replaceWith(replacement);
+        });
+
+        /** One Work Experience block. */
+        function experienceBlock(index) {
+          var wrap = document.createElement('div');
+          wrap.className = 'experience-block';
+          wrap.innerHTML =
+            '<h3>Employer ' +
+            (index + 1) +
+            '</h3>' +
+            '<label for="employer' +
+            index +
+            '">Company Name</label>' +
+            '<input id="employer' +
+            index +
+            '" type="text" />' +
+            '<label for="title' +
+            index +
+            '">Position Title</label>' +
+            '<input id="title' +
+            index +
+            '" type="text" />' +
+            '<label for="from' +
+            index +
+            '">From Date</label>' +
+            '<input id="from' +
+            index +
+            '" type="month" />' +
+            '<label for="to' +
+            index +
+            '">End Date</label>' +
+            '<input id="to' +
+            index +
+            '" type="month" />' +
+            '<label for="employmentType' +
+            index +
+            '">Employment Type</label>' +
+            '<select id="employmentType' +
+            index +
+            '"></select>' +
+            '<label for="reason' +
+            index +
+            '">Reason for Leaving</label>' +
+            '<select id="reason' +
+            index +
+            '"></select>';
+          fill(wrap.querySelector('#employmentType' + index), [
+            ['', 'No Selection'],
+            ['ft', 'Full-Time'],
+            ['pt', 'Part-Time'],
+            ['intern', 'Internship'],
+            ['contract', 'Contract'],
+          ]);
+          fill(wrap.querySelector('#reason' + index), [
+            ['', 'No Selection'],
+            ['still', 'Still employed'],
+            ['school', 'Returned to school'],
+            ['voluntary', 'Voluntary resignation'],
+          ]);
+          return wrap;
+        }
+
+        /** One Education block, with the two dropdown/"If other" pairs. */
+        function educationBlock(index) {
+          var wrap = document.createElement('div');
+          wrap.className = 'education-block';
+          wrap.innerHTML =
+            '<h3>School ' +
+            (index + 1) +
+            '</h3>' +
+            '<label for="educationType' +
+            index +
+            '">Education Type</label>' +
+            '<select id="educationType' +
+            index +
+            '"></select>' +
+            '<label for="educationCountry' +
+            index +
+            '">Education Country</label>' +
+            '<select id="educationCountry' +
+            index +
+            '"></select>' +
+            '<label for="educationState' +
+            index +
+            '">Education State/Province</label>' +
+            '<select id="educationState' +
+            index +
+            '"><option value="">Select a country first</option></select>' +
+            '<label for="school' +
+            index +
+            '">School/Institution Name</label>' +
+            '<select id="school' +
+            index +
+            '"></select>' +
+            '<label for="schoolOther' +
+            index +
+            '">If other, enter School/Institution Name</label>' +
+            '<input id="schoolOther' +
+            index +
+            '" type="text" />' +
+            '<label for="areaOfStudy' +
+            index +
+            '">Area of Study</label>' +
+            '<select id="areaOfStudy' +
+            index +
+            '"></select>' +
+            '<label for="areaOther' +
+            index +
+            '">If other, enter Area of Study</label>' +
+            '<input id="areaOther' +
+            index +
+            '" type="text" />' +
+            '<label for="graduated' +
+            index +
+            '">Graduated?</label>' +
+            '<select id="graduated' +
+            index +
+            '"></select>';
+          fill(wrap.querySelector('#educationType' + index), EDUCATION_TYPES);
+          fill(wrap.querySelector('#educationCountry' + index), COUNTRIES);
+          fill(wrap.querySelector('#school' + index), SCHOOLS);
+          fill(wrap.querySelector('#areaOfStudy' + index), AREAS);
+          fill(wrap.querySelector('#graduated' + index), [
+            ['', 'No Selection'],
+            ['yes', 'Yes'],
+            ['no', 'No'],
+          ]);
+          // The education cascade, replacing the dependent control outright.
+          wrap
+            .querySelector('#educationCountry' + index)
+            .addEventListener('change', function (event) {
+              var previous = document.getElementById('educationState' + index);
+              var replacement = document.createElement('select');
+              replacement.id = 'educationState' + index;
+              fill(replacement, STATES[event.target.value] || [['', 'Select a country first']]);
+              previous.replaceWith(replacement);
+            });
+          return wrap;
+        }
+
+        function projectBlock(index) {
+          var wrap = document.createElement('div');
+          wrap.className = 'project-block';
+          wrap.innerHTML =
+            '<h3>Project ' +
+            (index + 1) +
+            '</h3>' +
+            '<label for="projectName' +
+            index +
+            '">Project Name</label>' +
+            '<input id="projectName' +
+            index +
+            '" type="text" />' +
+            '<label for="projectDescription' +
+            index +
+            '">Project Description</label>' +
+            '<textarea id="projectDescription' +
+            index +
+            '"></textarea>' +
+            '<label for="projectUrl' +
+            index +
+            '">Project URL</label>' +
+            '<input id="projectUrl' +
+            index +
+            '" type="text" />';
+          return wrap;
+        }
+
+        /** Each section starts with exactly one block; Add appends the next. */
+        function repeater(hostId, buttonId, build) {
+          var host = document.getElementById(hostId);
+          var count = 0;
+          function add() {
+            host.append(build(count));
+            count += 1;
+          }
+          add();
+          document.getElementById(buttonId).addEventListener('click', add);
+        }
+
+        repeater('experienceBlocks', 'addExperience', experienceBlock);
+        repeater('educationBlocks', 'addEducation', educationBlock);
+        repeater('projectBlocks', 'addProject', projectBlock);
+
+        document.getElementById('submit').addEventListener('click', function () {
+          document.body.setAttribute('data-submitted', 'true');
+        });
+      })();
+    </script>
+  </body>
+</html>

@@ -8,6 +8,7 @@ import {
   normalizeLabel,
   questionIdentity,
   sectionForQuestion,
+  type CanonicalQuestion,
   sectionFromHeading,
   type DetectedField,
   type FieldOption,
@@ -1308,6 +1309,43 @@ function claimControls(
   }
 }
 
+/**
+ * One synchronous pass over the page.
+ *
+ * Exported because counting how many blocks a repeating section is showing has
+ * to happen *between* two DOM mutations, and the asynchronous `scanDom` waits
+ * for the page to settle first — so by the time it answered, the question had
+ * moved on. A caller polling for a newly added block needs the answer now.
+ */
+export function scanDomOnce(document: Document, pageId: string): DomScanResult {
+  return scanOnce(document, pageId);
+}
+
+/**
+ * How many blocks of a repeating section the page is currently showing.
+ *
+ * Counted by the same rule that numbers them: the Nth "Company Name" belongs to
+ * the Nth employer, so the highest record index any of this section's questions
+ * carries, plus one, is the block count. Synchronous, because it is polled
+ * while an Add button's effect is being waited for.
+ */
+export function countRepeatedBlocks(
+  document: Document,
+  section: 'experience' | 'education' | 'projects',
+  pageId = 'repeat-count',
+): number {
+  const { fields } = scanOnce(document, pageId);
+  let highest = -1;
+  let seen = false;
+  for (const field of fields) {
+    if (!field.canonicalKey) continue;
+    if (sectionForQuestion(field.canonicalKey) !== section) continue;
+    seen = true;
+    highest = Math.max(highest, field.recordIndex ?? 0);
+  }
+  return seen ? highest + 1 : 0;
+}
+
 function scanOnce(document: Document, pageId: string): DomScanResult {
   const warnings: string[] = [];
   const roots = collectRoots(document, warnings);
@@ -1394,7 +1432,7 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
   // Children first: a conditional child must already be marked as one before
   // the records are numbered, because it must not consume a slot.
   markConditionalChildren(fields);
-  markRepeatedRecords(fields);
+  markRepeatedRecords(document, fields);
 
   if (fields.length === 0) warnings.push('No eligible application fields were found.');
   if (fields.some((field) => field.sourceSignals.includes('unlabelled'))) {
@@ -1404,39 +1442,132 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
 }
 
 /**
+ * The question a block of each kind cannot be without, most reliable first.
+ *
+ * An employer block always names the employer; an education block always names
+ * the school. When a form omits the first, the next is tried — a work-history
+ * block with only a job title is still a block.
+ */
+const ANCHOR_QUESTIONS: Record<
+  'experience' | 'education' | 'projects',
+  readonly CanonicalQuestion[]
+> = {
+  experience: ['employer', 'job_title', 'employment_start_date'],
+  education: ['school', 'education_type', 'degree', 'major'],
+  projects: ['project_name', 'project_description'],
+};
+
+/** The element a selector names, in any of this document's roots. */
+function findBySelector(document: Document, selector: string): HTMLElement | null {
+  for (const root of collectRoots(document, [])) {
+    try {
+      const found = root.querySelector<HTMLElement>(selector);
+      if (found) return found;
+    } catch {
+      // A selector the browser will not parse names nothing. Not an error here:
+      // the field simply gets no record index and is answered as a single block.
+    }
+  }
+  return null;
+}
+
+/**
+ * The element that holds this anchor and no other anchor of the same kind.
+ *
+ * Walks up from the control while the ancestor still contains exactly one
+ * anchor, and stops at the last one that does — which is the repeated block,
+ * whatever tag the vendor wrapped it in.
+ */
+function blockContainerFor(
+  document: Document,
+  anchorElement: HTMLElement,
+  anchorElements: readonly HTMLElement[],
+): HTMLElement | null {
+  let best: HTMLElement | null = null;
+  let current: HTMLElement | null = anchorElement.parentElement;
+  while (current && current !== document.body) {
+    const holder = current;
+    const held = anchorElements.filter((element) => holder.contains(element)).length;
+    if (held !== 1) break;
+    best = holder;
+    current = holder.parentElement;
+  }
+  return best;
+}
+
+/**
  * Numbers the controls of a repeating block, so the second Employer block is
  * answered from the second saved job rather than from the first one again.
  *
- * Counted by occurrence rather than by container. A repeating block has no
- * reliable markup signature — iCIMS wraps each in a `<div>`, Taleo in a
- * `<fieldset>`, Workday in neither — but it does have a reliable *ordering*: the
- * Nth "Company Name" on a page belongs to the Nth employer, and so does the Nth
- * "From Date" beside it. Counting each canonical question's own occurrences
- * therefore numbers the blocks without having to recognise one.
+ * A block is found from its *anchor* — the one question a block of this kind
+ * cannot be without: an employer for a job, a school for an education row, a
+ * name for a project. Every field inside the element that holds the Nth anchor
+ * belongs to the Nth record.
  *
- * Restricted to the two sections that genuinely repeat. A page with two
+ * This used to count raw occurrences instead, on the reasoning that the Nth
+ * "Company Name" belongs to the Nth employer. It does — but the Nth *graduation
+ * date* does not necessarily belong to the Nth school: a form that asks for one
+ * graduation twice, once as a date picker and once as free text, was read as two
+ * education records, and the second control was reported as a block the
+ * applicant had no record for. Anchors are what tell a repeated block from a
+ * repeated question.
+ *
+ * Restricted to the three sections that genuinely repeat. A page with two
  * "Email Address" controls is a page with a confirmation box, not a second
  * applicant, and numbering those would invent a record that does not exist.
  */
-function markRepeatedRecords(fields: DetectedField[]): void {
-  const seen = new Map<string, number>();
+function markRepeatedRecords(document: Document, fields: DetectedField[]): void {
+  for (const section of ['experience', 'education', 'projects'] as const) {
+    const anchorKey = ANCHOR_QUESTIONS[section].find((candidate) =>
+      fields.some((field) => field.canonicalKey === candidate && !field.dependsOn),
+    );
+    if (!anchorKey) continue;
+
+    const anchors = fields.filter((field) => field.canonicalKey === anchorKey && !field.dependsOn);
+    // One anchor is one block, and a page with one block needs no numbering at
+    // all. This is also what keeps a form that asks the *same* question twice
+    // in two formats — "Degree Completion Date" beside "Anticipated Degree
+    // Completion Date" — from being read as two education records.
+    if (anchors.length < 2) continue;
+
+    const anchorElements = anchors
+      .map((anchor) => findBySelector(document, anchor.selector))
+      .filter((element): element is HTMLElement => element !== null);
+    const blocks: HTMLElement[] = [];
+    for (const anchor of anchors) {
+      const element = findBySelector(document, anchor.selector);
+      if (!element) continue;
+      const block = blockContainerFor(document, element, anchorElements);
+      if (block && !blocks.includes(block)) blocks.push(block);
+    }
+    if (blocks.length < 2) continue;
+
+    for (const [index, field] of fields.entries()) {
+      if (field.dependsOn) continue;
+      if (!field.canonicalKey || sectionForQuestion(field.canonicalKey) !== section) continue;
+      const element = findBySelector(document, field.selector);
+      if (!element) continue;
+      const blockIndex = blocks.findIndex((block) => block.contains(element));
+      // Index 0 is left implicit: nothing downstream has to special-case a page
+      // whose sections each hold one block.
+      if (blockIndex <= 0) continue;
+      fields[index] = detectedFieldSchema.parse({ ...field, recordIndex: blockIndex });
+    }
+  }
+
+  // A conditional child belongs to the block its parent is in.
+  //
+  // It was skipped above so it could not *consume* a slot — "If other, enter
+  // School" is the same question as the School dropdown, not a second school —
+  // but it still has to be answered from the same record. Without this it fell
+  // back to the first education row, so the second block's "If other" box was
+  // filled with the first block's school.
+  const byId = new Map(fields.map((field) => [field.id, field]));
   for (const [index, field] of fields.entries()) {
-    const canonical = field.canonicalKey;
-    if (!canonical) continue;
-    // "If other, enter School/Institution Name" is the *same* question as the
-    // School dropdown above it, asked a second way — not a second school. It
-    // was counted as one, so it resolved to `education[1]`, which does not
-    // exist, and the box the applicant's school belongs in was reported as a
-    // block correctly left empty.
-    if (field.dependsOn) continue;
-    const section = sectionForQuestion(canonical);
-    if (section !== 'experience' && section !== 'education') continue;
-    const occurrence = seen.get(canonical) ?? 0;
-    seen.set(canonical, occurrence + 1);
-    // Index 0 is left implicit: a form with one block of each kind carries no
-    // record indices at all, and nothing downstream has to special-case it.
-    if (occurrence === 0) continue;
-    fields[index] = detectedFieldSchema.parse({ ...field, recordIndex: occurrence });
+    if (!field.dependsOn || field.recordIndex !== undefined) continue;
+    const parentIndex = byId.get(field.dependsOn.fieldId)?.recordIndex;
+    if (parentIndex === undefined) continue;
+    fields[index] = detectedFieldSchema.parse({ ...field, recordIndex: parentIndex });
   }
 }
 

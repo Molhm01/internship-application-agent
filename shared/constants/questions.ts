@@ -100,6 +100,16 @@ export const CANONICAL_QUESTIONS = [
   // structured employer/title controls above.
   'employment_history',
   'project_experience',
+  // The structured columns a repeating Projects block asks for, distinct from
+  // the free-text 'project_experience' summary above. Without these a Projects
+  // section had no questions at all, so no saved project could reach one.
+  'project_name',
+  'project_role',
+  'project_description',
+  'project_technologies',
+  'project_url',
+  'project_start_date',
+  'project_end_date',
   // Documents
   'resume',
   'cover_letter',
@@ -275,6 +285,13 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   years_of_experience: 'experience',
   employment_history: 'experience',
   project_experience: 'projects',
+  project_name: 'projects',
+  project_role: 'projects',
+  project_description: 'projects',
+  project_technologies: 'projects',
+  project_url: 'projects',
+  project_start_date: 'projects',
+  project_end_date: 'projects',
 
   resume: 'documents',
   cover_letter: 'documents',

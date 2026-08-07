@@ -5,6 +5,7 @@ export * from './formatters.js';
 export * from './legalName.js';
 export * from './optionMatcher.js';
 export * from './dropdownOptionMatch.js';
+export * from './repeatedSections.js';
 export * from './locationMatcher.js';
 export * from './phoneNumber.js';
 export * from './phoneGroup.js';

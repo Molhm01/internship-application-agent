@@ -35,6 +35,8 @@ import {
   type AnnotationKind,
   type FieldRunStatus,
   type DropdownTrace,
+  type RecordMapping,
+  type RepeatedSectionKind,
   type FinalFieldOutcome,
   type FinalFieldStatus,
   type RequiredSource,
@@ -145,7 +147,26 @@ export interface AutofillDependencies {
   awaitDependentOptions?(
     selectors: readonly string[],
   ): Promise<{ populated: readonly string[]; pending: readonly string[] }>;
+  /**
+   * Presses each repeating section's Add control until the page holds one block
+   * per saved record, and reports what happened to each record.
+   *
+   * Optional: a host without it simply fills the blocks the page already has,
+   * which is the behaviour that shipped one job out of three. Counts only —
+   * nothing here carries a record's contents.
+   */
+  growRepeatedSections?(scan: ApplicationScanResult): Promise<RepeatedSectionOutcome[]>;
   now(): string;
+}
+
+/** What became of one repeating section. Counts and statuses only. */
+export interface RepeatedSectionOutcome {
+  kind: RepeatedSectionKind;
+  recordCount: number;
+  blocksBefore: number;
+  blocksAfter: number;
+  addPressesPerformed: number;
+  mappings: readonly RecordMapping[];
 }
 
 export interface HighlightPlan {
@@ -442,6 +463,8 @@ export async function runApplicationAutofill(
    */
   const preexisting = new Map<string, string>();
   /** True once a CAPTCHA, MFA, or verification step stopped the run. */
+  /** What the repeater engine did, for the report and the trace. */
+  let repeatOutcomes: RepeatedSectionOutcome[] = [];
   let pageBlocked = false;
   /**
    * False while the loop is still moving.
@@ -850,7 +873,7 @@ export async function runApplicationAutofill(
       terminal = scanned.error ?? agentError('SCAN_FAILED', 'The application could not be read.');
       break;
     }
-    const scan = scanned.scan;
+    let scan = scanned.scan;
     scanIds.push(scan.id);
     url = scan.url;
     ats = scan.ats.id;
@@ -882,6 +905,44 @@ export async function runApplicationAutofill(
     if (dependencies.isCancelled()) {
       terminal = agentError('AUTOFILL_CANCELLED', 'Cancelled.');
       break;
+    }
+
+    // Before anything is planned: make the page hold as many blocks as the
+    // applicant has records.
+    //
+    // A form offers one Work Experience block and an Add button. Nothing ever
+    // pressed it, so an applicant with three jobs submitted one — and the two
+    // that were missing did not appear in the report either, because a block
+    // that does not exist has no field to be unanswered. Pressed once per
+    // missing record, each press observed before the next, and only on the
+    // first pass: the blocks it creates are then scanned by the pass that
+    // follows, like every other control on the page.
+    if (pass === 1 && dependencies.growRepeatedSections) {
+      emit('normalizing', 'Adding sections for your saved records');
+      const grown = await dependencies.growRepeatedSections(scan);
+      repeatOutcomes = grown;
+      if (grown.some((outcome) => outcome.addPressesPerformed > 0)) {
+        // Re-read once, here, rather than after every individual press. The
+        // blocks are new and empty; the rest of the page is as it was.
+        const regrown = await timed(
+          'scan',
+          pass,
+          timings,
+          () => dependencies.scan(),
+          (value) => (value.scan ? value.scan.fields.length : 0),
+        );
+        if (regrown.scan) {
+          scan = regrown.scan;
+          lastFields = scan.fields;
+          lastScan = scan;
+          for (const field of scan.fields) {
+            fieldSelectors.set(field.id, field.selector);
+            if (!preexisting.has(field.id)) {
+              preexisting.set(field.id, valueKey(field.currentValue));
+            }
+          }
+        }
+      }
     }
 
     emit('normalizing', 'Reading the questions');
@@ -1302,6 +1363,26 @@ export async function runApplicationAutofill(
               .map((result) => result.fieldId),
           ),
         ),
+      ),
+    );
+  }
+
+  // How many saved records each repeating section had, how many blocks the page
+  // ended up with, and what became of each record.
+  //
+  // This is the line that separates the two ways a work history goes missing: a
+  // profile that only holds one job, and a page whose Add button was never
+  // pressed. They produce the same one-block application and need completely
+  // different responses. Counts, indices, and statuses only — never a record's
+  // contents.
+  if (repeatOutcomes.length > 0) {
+    console.info(
+      '[agent] autofill records',
+      repeatOutcomes.map(
+        (outcome) =>
+          `${outcome.kind}: ${outcome.recordCount} record(s), blocks ${outcome.blocksBefore}→${outcome.blocksAfter}, ` +
+          `${outcome.addPressesPerformed} add press(es), ` +
+          outcome.mappings.map((mapping) => `#${mapping.recordIndex}=${mapping.status}`).join(' '),
       ),
     );
   }

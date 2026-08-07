@@ -97,6 +97,15 @@ export const matchHintSchema = z.object({
     .optional(),
   /** Search text for an autocomplete, derived only from saved values. */
   searchText: z.string().max(300).optional(),
+  /**
+   * Other wordings of the same saved fact, tried in order after the first.
+   *
+   * Values only — restatements of one record for a form that asks for it in a
+   * different vocabulary. There is no field here able to express a selector, an
+   * index, or an instruction, so nothing that arrives through this can direct
+   * the executor at an arbitrary element.
+   */
+  alternativeValues: z.array(z.string().min(1).max(300)).max(6).optional(),
 });
 
 export type MatchHint = z.infer<typeof matchHintSchema>;

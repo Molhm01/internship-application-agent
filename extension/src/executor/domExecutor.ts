@@ -2,6 +2,7 @@ import {
   DEFAULT_ERROR_GUIDANCE,
   contractViolation,
   fillExecutionResultSchema,
+  normalizeOptionText,
   type AgentError,
   type DeterministicFillAction,
   type DetectedField,
@@ -175,7 +176,10 @@ function conditionalGateViolation(document: Document, field: DetectedField): str
 
   const wanted = dependency.value;
   const activated = held
-    .map((value) => value.replace(/\s+/g, ' ').trim().toLowerCase())
+    // The same normalizer the option matcher uses, so a page spelling its
+    // escape hatch "Other/Not Listed" and storing it as `other_not_listed`
+    // both reduce to the same words as the activation value "other".
+    .map((value) => normalizeOptionText(value))
     .some((value) => value === wanted || value.startsWith(`${wanted} `));
   if (activated) return null;
   return `"${field.question}" applies only when the question above it is answered "${wanted}". It is not, so nothing was written here — a conditional answer is never stated on your behalf.`;
@@ -576,6 +580,9 @@ export async function executeDomAction(
             // Saved city/state/country, so a location list is matched on all
             // three together rather than on the city alone.
             ...(action.matchHint?.location ? { locationTarget: action.matchHint.location } : {}),
+            ...(action.matchHint?.alternativeValues?.length
+              ? { alternativeValues: action.matchHint.alternativeValues }
+              : {}),
             allowOtherFallback: allowsOtherFallback(field.canonicalKey),
             fieldTypeHint: field.fieldType,
             dependsOnAnotherField: action.warnings.some((warning) =>

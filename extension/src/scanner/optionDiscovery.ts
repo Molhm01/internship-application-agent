@@ -163,6 +163,130 @@ export const OPTION_CONTAINER_SELECTOR =
 export const OPTION_ITEM_SELECTOR =
   '[role="option"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"]';
 
+/**
+ * The scrollable element inside (or being) an open popup.
+ *
+ * A long menu is routinely not scrollable itself: the popup is a positioning
+ * wrapper and the overflow lives on a child. Whichever element actually scrolls
+ * is the one whose `scrollHeight` exceeds its `clientHeight`.
+ */
+function scrollableOf(container: HTMLElement): HTMLElement | null {
+  const candidates = [container, ...Array.from(container.querySelectorAll<HTMLElement>('*'))];
+  return (
+    candidates.find(
+      (candidate) =>
+        candidate.scrollHeight > candidate.clientHeight + 4 && candidate.clientHeight > 0,
+    ) ?? null
+  );
+}
+
+/** How many times a long list may be scrolled while being read. */
+const MAX_SCROLL_STEPS = 40;
+
+/**
+ * Every choice a control offers, including the ones below the fold.
+ *
+ * The reason this is not just `readOptions`: a long list is either *scrollable*
+ * — every option is in the DOM and most are simply outside the visible box — or
+ * *virtualized*, where only the visible rows exist as elements at all and the
+ * rest are created as the list scrolls. The second kind is common on the
+ * country and field-of-study controls that failed, and no amount of querying
+ * finds an option the page has not built yet.
+ *
+ * So the list is read, scrolled, and read again until it stops producing new
+ * entries or the step budget runs out — and the scroll position is put back
+ * afterwards, because leaving a menu scrolled to the bottom changes what the
+ * applicant sees if they open it themselves.
+ *
+ * Bounded twice over: by `MAX_SCROLL_STEPS`, and by "a step that revealed
+ * nothing new ends it". A list that is already complete costs one read and no
+ * scrolling at all.
+ */
+export async function enumerateAllOptions(container: HTMLElement): Promise<DiscoveredOption[]> {
+  const collected = new Map<string, DiscoveredOption>();
+  const absorb = (): number => {
+    let added = 0;
+    for (const option of readOptions(container)) {
+      const key = `${option.label} ${option.value}`;
+      if (collected.has(key)) continue;
+      collected.set(key, option);
+      added += 1;
+    }
+    return added;
+  };
+
+  absorb();
+  const scroller = scrollableOf(container);
+  if (!scroller) return [...collected.values()];
+
+  const originalTop = scroller.scrollTop;
+  try {
+    for (let step = 0; step < MAX_SCROLL_STEPS; step += 1) {
+      const before = scroller.scrollTop;
+      // A page at a time rather than to the bottom: a virtualized list only
+      // renders what it passes, so jumping straight to the end would skip
+      // everything in between — which is exactly the option being looked for.
+      scroller.scrollTop = before + Math.max(scroller.clientHeight, 1);
+      if (scroller.scrollTop === before) break;
+      // Let a virtualized list render the rows it just scrolled into.
+      await sleep(POLL_MS);
+      const added = absorb();
+      const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
+      if (atBottom) {
+        // One last read at the very bottom, then stop.
+        absorb();
+        break;
+      }
+      // A step that revealed nothing and moved nothing is the end of a list
+      // whose height lied about it.
+      if (added === 0 && scroller.scrollTop === before) break;
+    }
+  } finally {
+    scroller.scrollTop = originalTop;
+  }
+  return [...collected.values()];
+}
+
+/**
+ * Scrolls a virtualized list until the wanted option is rendered, and returns it.
+ *
+ * Enumeration puts the scroll position back where it found it, which is the
+ * right thing to do for a read — and it means that on a virtualized list the
+ * option that was just *matched* no longer exists as an element. Clicking it
+ * then failed with `OPTION_CLICK_FAILED` over a list that had offered it a
+ * moment earlier.
+ *
+ * So the match is re-found by scrolling to it. Bounded by the same step budget
+ * as enumeration, and it gives up rather than scrolling forever.
+ */
+export async function revealOption(
+  container: HTMLElement,
+  matches: (element: HTMLElement) => boolean,
+): Promise<HTMLElement | null> {
+  const find = (): HTMLElement | null =>
+    Array.from(container.querySelectorAll<HTMLElement>(OPTION_ITEM_SELECTOR)).find(matches) ?? null;
+
+  const already = find();
+  if (already) return already;
+
+  const scroller = scrollableOf(container);
+  if (!scroller) return null;
+
+  const originalTop = scroller.scrollTop;
+  scroller.scrollTop = 0;
+  for (let step = 0; step < MAX_SCROLL_STEPS; step += 1) {
+    const found = find();
+    if (found) return found;
+    const before = scroller.scrollTop;
+    scroller.scrollTop = before + Math.max(scroller.clientHeight, 1);
+    if (scroller.scrollTop === before) break;
+    await sleep(POLL_MS);
+  }
+  const last = find();
+  if (!last) scroller.scrollTop = originalTop;
+  return last;
+}
+
 /** Reads the selectable entries of an open popup, whatever role it uses. */
 export function readOptions(listbox: HTMLElement): DiscoveredOption[] {
   return Array.from(listbox.querySelectorAll<HTMLElement>(OPTION_ITEM_SELECTOR))
