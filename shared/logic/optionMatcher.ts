@@ -80,6 +80,26 @@ const OPTION_ALIASES: ReadonlyArray<readonly string[]> = [
   ['associates', "associate's", "associate's degree", 'associate degree', 'aa', 'as'],
   ['high school', 'high school diploma', 'secondary school', 'ged'],
 
+  // Phone type, as split phone controls actually word it. A saved "Mobile"
+  // against a dropdown offering only "Cell" left the phone type unset, and the
+  // control is required on most iCIMS and Taleo forms.
+  ['mobile', 'cell', 'cellular', 'cell phone', 'mobile phone'],
+  ['home', 'home phone', 'residence', 'landline'],
+  ['work', 'work phone', 'business', 'office'],
+
+  // Employment type, as work-history sections word it. Never inferred — these
+  // only ever rename a fact the profile already states.
+  ['full time', 'full time employee', 'permanent', 'regular full time'],
+  ['part time', 'part time employee', 'regular part time'],
+  ['internship', 'intern', 'co op', 'coop', 'internship co op'],
+  ['contract', 'contractor', 'temporary', 'temp', 'contract temporary'],
+
+  // The escape hatch every long dropdown offers. Kept as an alias group so
+  // "Other" and "Other (please specify)" are the same choice, and *only*
+  // reachable through the explicit `other` fallback in the dropdown matcher —
+  // never as a substitute for an answer the page actually offers.
+  ['other', 'other please specify', 'others', 'not listed', 'none of the above'],
+
   // Phone dialling codes as split phone controls actually spell them.
   //
   // `normalized` has already stripped punctuation and turned "+" into a space,

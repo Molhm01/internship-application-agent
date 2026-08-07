@@ -75,6 +75,21 @@ export const ERROR_CODES = [
   // that never received them. Distinct from `OPTIONS_NOT_DISCOVERED`, which is
   // a list that opened and was empty: this one was never populated at all.
   'STATE_OPTIONS_NOT_POPULATED',
+  // The universal dropdown engine's own stages. Every one of these used to be
+  // the same red "Autofill failed" badge, which named no stage and suggested no
+  // repair — the reason a State control that simply had not been repopulated
+  // yet was indistinguishable from a page the agent could not drive at all.
+  'DROPDOWN_OPEN_FAILED',
+  'DROPDOWN_NO_OPTIONS_FOUND',
+  'NO_SEMANTIC_OPTION_MATCH',
+  'OPTION_DISABLED',
+  'OPTION_CLICK_FAILED',
+  'SELECTION_NOT_ACCEPTED',
+  'DEPENDENT_CONTROL_NOT_REFRESHED',
+  // Not a dropdown failure at all: nobody knows the answer. Carried as a code so
+  // the difference between "the page would not take it" and "you have to answer
+  // this one" survives all the way to the badge.
+  'ANSWER_UNKNOWN',
   'LOCATION_NOT_FOUND',
   'LOCATION_AMBIGUOUS',
   'PHONE_COUNTRY_CODE_NOT_FOUND',
@@ -261,6 +276,22 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'The control does not show the choice that was selected. Check its current value.',
   STATE_OPTIONS_NOT_POPULATED:
     'The country was set, but this control never produced its list of states or provinces. Choose one yourself.',
+  DROPDOWN_OPEN_FAILED:
+    'This dropdown did not open for a click, a keypress, or typing. Open it yourself and choose a value.',
+  DROPDOWN_NO_OPTIONS_FOUND:
+    'The dropdown opened and offered nothing to choose. It may still be loading — retry, or choose a value yourself.',
+  NO_SEMANTIC_OPTION_MATCH:
+    'No choice on this control is defensibly equivalent to your saved answer, and one is never guessed for you. Choose it yourself.',
+  OPTION_DISABLED:
+    'The right choice is on the list and the page will not let it be selected. Complete whatever unlocks it, then retry.',
+  OPTION_CLICK_FAILED:
+    'The choice disappeared from the list before it could be clicked. Retry, or select it yourself.',
+  SELECTION_NOT_ACCEPTED:
+    'The choice was clicked and the control never took it. Select it yourself and check it stays.',
+  DEPENDENT_CONTROL_NOT_REFRESHED:
+    'This control still has no choices, because the field it depends on has not populated it yet. Retry once that field is set.',
+  ANSWER_UNKNOWN:
+    'Nothing saved answers this question, so nothing was selected. Answer it yourself, or save the fact in your profile and retry.',
   LOCATION_NOT_FOUND:
     'This list offers no location matching your saved city, state, and country. Choose one yourself.',
   LOCATION_AMBIGUOUS:

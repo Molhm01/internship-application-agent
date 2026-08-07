@@ -34,6 +34,7 @@ import {
   type PhoneControlObservation,
   type AnnotationKind,
   type FieldRunStatus,
+  type DropdownTrace,
   type FinalFieldOutcome,
   type FinalFieldStatus,
   type RequiredSource,
@@ -303,6 +304,8 @@ export interface FieldDiagnostic {
   finalStatus: FinalFieldStatus;
   annotation: AnnotationKind;
   failureCode?: string;
+  /** The dropdown stage record, when this field drove one. Values stripped. */
+  dropdown?: DropdownTrace;
   durationMs?: number;
 }
 
@@ -552,6 +555,10 @@ export async function runApplicationAutofill(
         finalStatus,
         annotation: annotationFor(finalStatus, sensitive),
         ...(result?.failureCode ? { failureCode: result.failureCode } : {}),
+        // The dropdown stage record, values already stripped by the engine.
+        // "Phone Type, aria_combobox, 3 options, matched by alias, verified" is
+        // a diagnosis; "Autofill failed" was homework.
+        ...(result?.dropdown ? { dropdown: result.dropdown } : {}),
         ...(durationByField.has(field.id) ? { durationMs: durationByField.get(field.id)! } : {}),
       };
     });
@@ -977,6 +984,12 @@ export async function runApplicationAutofill(
           reason: 'No decision was recorded for this action.',
         };
         const reported = run?.results.find((result) => result.actionId === action.id);
+        // The executor reached the control, found it could not be answered yet,
+        // and deliberately wrote nothing: a dropdown whose parent has not
+        // populated it, or a question nothing saved answers. That is the user's
+        // to settle, not a write the page rejected — and calling it `unverified`
+        // below would paint it red as a failed execution.
+        const declinedToWrite = reported?.status === 'needs_review';
         // A result the executor produced without touching the page is not an
         // attempt, and must not overwrite what an earlier pass verified.
         const outcome = reported && wasExecuted(reported.status) ? reported : undefined;
@@ -992,6 +1005,16 @@ export async function runApplicationAutofill(
         // the deterministic results from being overwritten by the AI stage's
         // view of a field it had nothing to say about.
         if (previous?.verification === 'verified' && !executed) continue;
+        // The same reasoning, for the other observed outcome.
+        //
+        // A pass that did not touch this field has observed nothing about it,
+        // and overwriting an earlier pass's `failed` with a bare `unverified`
+        // threw away the only record of *why*: "Country of Birth" was reported
+        // as a failed execution carrying no error code at all, so the run could
+        // say the write did not stick and not say that the answer is simply not
+        // one of the choices this form offers. The verdict is unchanged; the
+        // diagnosis survives.
+        if (previous?.verification === 'failed' && !executed) continue;
         // The planner skips an optional question whose correct answer is
         // silence. Nothing was attempted, and nothing should have been.
         const optionalLeftBlank =
@@ -1014,11 +1037,13 @@ export async function runApplicationAutofill(
               ? executed.verified
                 ? 'verified'
                 : 'failed'
-              : decision.approved
-                ? 'unverified'
-                : optionalLeftBlank
-                  ? 'optional_left_blank'
-                  : 'not_attempted',
+              : declinedToWrite
+                ? 'not_attempted'
+                : decision.approved
+                  ? 'unverified'
+                  : optionalLeftBlank
+                    ? 'optional_left_blank'
+                    : 'not_attempted',
             // An optional field the planner deliberately left empty is settled,
             // not outstanding. Giving it a review reason is what put "Middle
             // Name" and "Address 2" on a list of things needing the user.
@@ -1029,6 +1054,10 @@ export async function runApplicationAutofill(
             attemptedAction: action.action,
             ...(outcome?.durationMs !== undefined ? { durationMs: outcome.durationMs } : {}),
             ...(outcome?.error?.code ? { failureCode: outcome.error.code } : {}),
+            // Taken from `reported` rather than `outcome`: a dropdown the
+            // executor deliberately declined to write is not "executed", and
+            // its stage record is exactly the one worth keeping.
+            ...(reported?.dropdown ? { dropdown: reported.dropdown } : {}),
             // The executor's own words when it failed, the policy's when it
             // declined to act, and the planner's otherwise.
             reason:
@@ -1403,6 +1432,7 @@ function buildRunTrace(input: {
     finalStatus: entry.finalStatus,
     annotation: entry.annotation,
     ...(entry.failureCode ? { errorCode: entry.failureCode } : {}),
+    ...(entry.dropdown ? { dropdown: entry.dropdown } : {}),
     ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
   }));
 

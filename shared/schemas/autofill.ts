@@ -4,6 +4,7 @@ import { agentErrorSchema } from './error.js';
 import { confidenceSchema, idSchema, isoDateTimeSchema } from './common.js';
 import { canonicalQuestionSchema } from './fields.js';
 import { deterministicAnswerSourceSchema, deterministicFillActionKindSchema } from './fill.js';
+import { dropdownTraceSchema } from './dropdownExecution.js';
 import { REQUIRED_FIELD_OUTCOMES } from '../logic/requiredFieldAudit.js';
 import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatus.js';
 
@@ -183,6 +184,8 @@ export const autofillFieldResultSchema = z.object({
   reviewReason: reviewReasonSchema.optional(),
   reviewed: z.boolean().default(false),
   failureCode: z.string().max(80).optional(),
+  /** How the dropdown engine got on, when this field drove one. Values stripped. */
+  dropdown: dropdownTraceSchema.optional(),
   reason: z.string().max(2000).default(''),
   /**
    * The action actually attempted, and how long it took.

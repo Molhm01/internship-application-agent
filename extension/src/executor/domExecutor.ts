@@ -1,6 +1,5 @@
 import {
   DEFAULT_ERROR_GUIDANCE,
-  allowsRegionSuffix,
   contractViolation,
   fillExecutionResultSchema,
   type AgentError,
@@ -8,6 +7,8 @@ import {
   type DetectedField,
   type FillExecutionResult,
   type DocumentContentResponse,
+  toDropdownTrace,
+  type DropdownFailureCode,
 } from '@internship-agent/shared';
 import {
   allDocumentRoots,
@@ -15,8 +16,82 @@ import {
   findScannedElement,
   verifyDomAction,
 } from '../verifier/domVerifier.js';
-import { selectComboboxOption } from './comboboxExecutor.js';
+import { executeDropdownWithRetry } from './dropdownEngine.js';
 import { answersFromList } from '../scanner/domScanner.js';
+
+/**
+ * The engine's stage names, in the error vocabulary the report speaks.
+ *
+ * Deliberately one-to-one. Collapsing several stages onto one code is how every
+ * dropdown outcome became "Autofill failed" — the mapping is the place that
+ * damage would reappear, so it is written out rather than defaulted.
+ */
+const DROPDOWN_ERROR_CODES: Record<DropdownFailureCode, AgentError['code']> = {
+  CONTROL_NOT_FOUND: 'CONTROL_NOT_FOUND',
+  CONTROL_DISABLED: 'CONTROL_DISABLED',
+  OPEN_FAILED: 'DROPDOWN_OPEN_FAILED',
+  OPTION_CONTAINER_NOT_FOUND: 'LISTBOX_NOT_FOUND',
+  NO_OPTIONS_FOUND: 'DROPDOWN_NO_OPTIONS_FOUND',
+  OPTION_NOT_FOUND: 'OPTION_NOT_FOUND',
+  AMBIGUOUS_OPTION_MATCH: 'AMBIGUOUS_OPTION_MATCH',
+  NO_SEMANTIC_OPTION_MATCH: 'NO_SEMANTIC_OPTION_MATCH',
+  OPTION_DISABLED: 'OPTION_DISABLED',
+  OPTION_CLICK_FAILED: 'OPTION_CLICK_FAILED',
+  SELECTION_NOT_ACCEPTED: 'SELECTION_NOT_ACCEPTED',
+  VERIFICATION_FAILED: 'OPTION_VALUE_NOT_VERIFIED',
+  DEPENDENT_CONTROL_NOT_REFRESHED: 'DEPENDENT_CONTROL_NOT_REFRESHED',
+  ANSWER_UNKNOWN: 'ANSWER_UNKNOWN',
+};
+
+/**
+ * Failures that mean "nobody could have filled this yet", as opposed to "the
+ * page refused a known answer".
+ *
+ * The distinction is the whole point of the split between answer resolution and
+ * dropdown execution: a State control the page has not repopulated, and a
+ * question whose answer nothing saved holds, are the user's to settle. Marking
+ * them red said the agent had tried and been beaten, which was untrue and sent
+ * people looking for a bug in the extension.
+ */
+const NOT_AN_EXECUTION_FAILURE: readonly DropdownFailureCode[] = [
+  'ANSWER_UNKNOWN',
+  'DEPENDENT_CONTROL_NOT_REFRESHED',
+];
+
+/**
+ * Actions the dropdown engine owns.
+ *
+ * `choose_radio` is not one of them: a radio group's choices are all in the DOM
+ * already, there is nothing to open, and the group executor below drives it
+ * correctly. Routing it here would be complexity with no failure behind it.
+ */
+function isOptionAction(action: string): boolean {
+  return (
+    action === 'select_option' ||
+    action === 'select_suggested_option' ||
+    action === 'select_resolved_option'
+  );
+}
+
+/**
+ * Questions where the form's own "Other" entry is the *true* answer when the
+ * saved value is not listed, rather than a way to get something selected.
+ *
+ * Deliberately short. On Country, "Other" is a lie; on Area of Study it is what
+ * an applicant would honestly pick for a subject the form does not enumerate,
+ * and the free-text box beside it carries the real answer. Everything absent
+ * from this list reports `OPTION_NOT_FOUND` and stays the user's to settle.
+ */
+function allowsOtherFallback(canonical: string | undefined): boolean {
+  return (
+    canonical === 'field_of_study' ||
+    canonical === 'area_of_study' ||
+    canonical === 'major' ||
+    canonical === 'school' ||
+    canonical === 'institution' ||
+    canonical === 'how_did_you_hear'
+  );
+}
 
 /**
  * The DOM types a browser lets a person type into.
@@ -146,25 +221,13 @@ function applyValue(
   action: DeterministicFillAction,
 ): void {
   element.focus();
-  if (action.action === 'select_option') {
-    if (!(element instanceof HTMLSelectElement) || !action.matchedOption) {
-      throw new Error('UNSUPPORTED_CONTROL');
-    }
-    const exists = Array.from(element.options).some(
-      (option) => option.value === action.matchedOption?.value,
-    );
-    if (!exists) throw new Error('OPTION_NOT_FOUND');
-    // A control that already holds the intended option is left exactly as it
-    // is, and only verified. Rewriting it is not merely wasted work: selecting
-    // a country that is already selected fires `change`, and a page that
-    // repopulates its region list on that event throws away the state chosen
-    // moments earlier. A second run over a correctly filled form emptied
-    // State/Province for precisely that reason.
-    if (element.value === action.matchedOption.value) return;
-    setNativeValue(element, action.matchedOption.value);
-    dispatchValueEvents(element);
-    return;
-  }
+  // Option-selecting actions never reach here: `executeDomAction` routes every
+  // one of them to the dropdown engine, which reads the choices the control is
+  // offering *now* rather than the ones the scan recorded. This branch used to
+  // hold a second, snapshot-based implementation, and it is the reason a State
+  // control the page had rebuilt reported OPTION_NOT_FOUND for an option that
+  // was sitting in the list. There is one implementation.
+  if (isOptionAction(action.action)) throw new Error('UNSUPPORTED_CONTROL');
   if (action.action === 'choose_radio') {
     if (!(element instanceof HTMLInputElement) || !action.matchedOption) {
       throw new Error('UNSUPPORTED_CONTROL');
@@ -410,24 +473,39 @@ export async function executeDomAction(
           attempts,
         );
       }
-      // A custom combobox has its own open → read → match → click → verify
-      // sequence, and verifies itself against what the control displays.
-      if (
-        action.action === 'select_suggested_option' ||
-        action.action === 'select_resolved_option'
-      ) {
-        const outcome = await selectComboboxOption({
-          root: currentElement,
-          field,
-          proposedValue: String(action.matchedOption?.value ?? action.proposedValue ?? ''),
-          ...(action.matchedOption ? { matchedLabel: action.matchedOption.label } : {}),
-          allowRegionSuffix: allowsRegionSuffix(field.canonicalKey),
-          // Saved city/state/country, so the executor rejects the same wrong
-          // regions the planner would have rejected.
-          ...(action.matchHint?.location ? { locationTarget: action.matchHint.location } : {}),
-          ...(action.matchHint?.searchText ? { searchText: action.matchHint.searchText } : {}),
-        });
-        if (outcome.ok) {
+      // Every option control, whatever its widget shape, goes through the one
+      // engine: open → enumerate the choices it is offering *now* → match →
+      // click → verify. Nothing here matches against the scan snapshot, which
+      // is what a rebuilt State list and a lazily-populated Country list both
+      // made stale.
+      if (isOptionAction(action.action)) {
+        const outcome = await executeDropdownWithRetry(
+          {
+            fieldId: field.id,
+            root: currentElement,
+            // The label, not the value: a `<select>` option's value is a machine
+            // code, and the engine matches against what the page *displays* as
+            // well as what it stores.
+            desiredSemanticValue: String(
+              action.matchedOption?.label ??
+                action.matchedOption?.value ??
+                action.proposedValue ??
+                '',
+            ),
+            ...(field.canonicalKey ? { canonicalQuestion: field.canonicalKey } : {}),
+            ...(action.matchHint?.searchText ? { searchText: action.matchHint.searchText } : {}),
+            // Saved city/state/country, so a location list is matched on all
+            // three together rather than on the city alone.
+            ...(action.matchHint?.location ? { locationTarget: action.matchHint.location } : {}),
+            allowOtherFallback: allowsOtherFallback(field.canonicalKey),
+            fieldTypeHint: field.fieldType,
+            dependsOnAnotherField: action.warnings.some((warning) =>
+              /depends on|field it depends on/i.test(warning),
+            ),
+          },
+          () => findScannedElement(document, field),
+        );
+        if (outcome.verified) {
           return fillExecutionResultSchema.parse({
             actionId: action.id,
             fieldId: field.id,
@@ -436,23 +514,45 @@ export async function executeDomAction(
             ...(outcome.observedValue ? { actualValue: outcome.observedValue } : {}),
             attempts,
             durationMs: Math.round(performance.now() - started),
+            dropdown: toDropdownTrace(outcome),
           });
         }
-        if (attempts === 2) {
-          // The executor names the stage it stopped at, so the report can say
-          // "the list never opened" rather than a generic option failure.
-          return failure(
+        const code = outcome.failureCode ?? 'NO_OPTION_MATCH';
+        // "Nobody knows the answer yet" and "the page refused a known answer"
+        // are different outcomes and get different statuses. Only the second is
+        // a failed execution.
+        if (NOT_AN_EXECUTION_FAILURE.includes(code as DropdownFailureCode)) {
+          return fillExecutionResultSchema.parse({
+            actionId: action.id,
+            fieldId: field.id,
+            status: 'needs_review',
+            expectedValue: action.proposedValue,
+            attempts,
+            durationMs: Math.round(performance.now() - started),
+            dropdown: toDropdownTrace(outcome),
+            error: {
+              code: DROPDOWN_ERROR_CODES[code as DropdownFailureCode],
+              message: outcome.reason,
+              fieldId: field.id,
+              recoverable: true,
+              suggestedAction:
+                DEFAULT_ERROR_GUIDANCE[DROPDOWN_ERROR_CODES[code as DropdownFailureCode]],
+              debugContext: { dropdownKind: outcome.dropdownKind },
+            },
+          });
+        }
+        // The engine names the stage it stopped at, so the report can say "the
+        // list never opened" rather than a generic option failure.
+        return {
+          ...failure(
             action,
-            outcome.code ??
-              (outcome.discoveredOptions.length === 0
-                ? 'OPTIONS_NOT_DISCOVERED'
-                : 'NO_OPTION_MATCH'),
+            DROPDOWN_ERROR_CODES[code as DropdownFailureCode] ?? 'NO_OPTION_MATCH',
             outcome.reason,
             started,
             attempts,
-          );
-        }
-        continue;
+          ),
+          dropdown: toDropdownTrace(outcome),
+        };
       }
 
       const uploadedFileName =

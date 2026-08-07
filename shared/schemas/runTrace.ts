@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatus.js';
 import { requiredSourceSchema } from './fields.js';
+import { dropdownTraceSchema } from './dropdownExecution.js';
 
 /**
  * One autofill run, described in counts and outcomes only.
@@ -115,6 +116,16 @@ export const fieldTraceSchema = z
     annotation: z.enum(ANNOTATION_KINDS),
     /** An `ERROR_CODES` member. Never a message, which can quote a value. */
     errorCode: z.string().max(60).optional(),
+    /**
+     * What the dropdown engine did, for a field that drove one.
+     *
+     * The widget shape, how many choices it offered, how a match was reached,
+     * and the stage it stopped at — and no answer, because `dropdownTraceSchema`
+     * has no field able to hold one. This is the record that tells "the list
+     * never opened" from "the list had nothing in it" from "the answer is not
+     * on this form", which were one red badge between them.
+     */
+    dropdown: dropdownTraceSchema.optional(),
     /** How long this field spent in the executor, when it reached one. */
     durationMs: z.number().nonnegative().max(600_000).optional(),
   })

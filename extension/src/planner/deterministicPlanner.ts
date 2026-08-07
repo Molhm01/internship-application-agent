@@ -553,7 +553,22 @@ function planAction(
         action: 'select_suggested_option',
         proposedValue: deferred,
         matchedOption: { label: deferred, value: deferred },
-        requiresReview: true,
+        // Inherited, not forced.
+        //
+        // This used to be `true`, and the reasoning was sound at the time: the
+        // scanner had seen no options, so nothing had confirmed the answer was
+        // on the list, and a person should look first. What that produced in
+        // practice was a form where every custom dropdown sat unfilled behind a
+        // confirmation the user had no way to give without doing the work
+        // themselves — Education Country, Education State, School, Phone Type,
+        // all of them, on every run.
+        //
+        // The confirmation now happens, and it happens against better evidence:
+        // the executor opens the control, reads the choices it is actually
+        // offering, and refuses anything that is not a literal, documented, or
+        // defensible match — then verifies what the control displays afterwards.
+        // A question the agent may not reason about never reaches here.
+        requiresReview: base.requiresReview,
         warnings: [
           ...base.warnings,
           'Options are read when the list opens; the exact match is confirmed at fill time.',
@@ -591,14 +606,52 @@ function planAction(
       allowRegionSuffix: allowsRegionSuffix(field.canonicalKey),
     });
     if (!option.matched || !option.option) {
+      // Two very different situations, and treating them alike is what turned
+      // working dropdowns into dead ends.
+      //
+      // *Ambiguous* means the page offers several equally good answers, and
+      // picking one would be a guess — that is genuinely the user's.
+      //
+      // *Not found* means it was not in the list the **scanner** recorded, which
+      // is not evidence about the list the control is offering now. A State
+      // select the page rebuilt after Country was chosen, an Education Country
+      // list populated by script after load, and a searchable School list that
+      // does not exist until it is opened all fail here, on a snapshot, with an
+      // answer that was known the whole time. So the field is handed to the
+      // executor, which opens the control, reads what it is *currently*
+      // offering, and refuses anything that is not an exact match there.
+      // A question nobody may reason about is not deferred either. Work
+      // authorization, sponsorship and the protected characteristics are
+      // answered from an exact saved fact in the form's own words or not at
+      // all: a saved "U.S. Citizen" against a Yes/No control is a legal
+      // conclusion the profile never stated, and the executor must not be
+      // handed it to "match semantically". It is the applicant's to confirm,
+      // and it is reported that way rather than as a dropdown that failed.
+      if (option.ambiguous || field.fieldType === 'radio' || !mayReasonAbout(field.canonicalKey)) {
+        return {
+          ...base,
+          action: 'manual_review',
+          requiresReview: true,
+          reason: option.reason,
+          warnings: [
+            ...base.warnings,
+            option.ambiguous ? 'Option match is ambiguous.' : 'No exact option exists.',
+          ],
+        };
+      }
+      const deferred = String(match.formattedValue);
       return {
         ...base,
-        action: 'manual_review',
-        requiresReview: true,
-        reason: option.reason,
+        action: 'select_suggested_option',
+        proposedValue: deferred,
+        matchedOption: { label: deferred, value: deferred },
+        // Same reasoning as the branch above: the live list is the evidence,
+        // and it is read by the executor rather than asked of the user.
+        requiresReview: base.requiresReview,
+        reason: `${option.reason} The control's own list is read again when it is opened.`,
         warnings: [
           ...base.warnings,
-          option.ambiguous ? 'Option match is ambiguous.' : 'No exact option exists.',
+          'The choices recorded during the scan did not include this answer; the live list is checked at fill time.',
         ],
       };
     }

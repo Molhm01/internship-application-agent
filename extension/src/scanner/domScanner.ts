@@ -222,6 +222,16 @@ export function opensOptionList(element: HTMLElement): boolean {
  */
 function isPageFurniture(element: HTMLElement): boolean {
   if (element.tagName !== 'BUTTON' && element.getAttribute('role') !== 'button') return false;
+  // `role="combobox"` is the element stating that it answers from a list of
+  // choices, and no accordion header carries it. That statement stands on its
+  // own, because the evidence `opensOptionList` looks for is exactly what a
+  // lazily-mounted dropdown does not have yet: its `aria-controls` names a
+  // listbox the page does not create until the control is opened. Such a
+  // control was classified as a disclosure and dropped from the scan entirely
+  // — the question never reached the planner, never reached the executor, and
+  // was simply absent from the report while sitting unanswered on the page.
+  const role = element.getAttribute('role');
+  if (role === 'combobox' || role === 'listbox') return false;
   // A disclosure that opens no list is an accordion header. Its fields are
   // scanned in their own right once it is expanded.
   if (element.hasAttribute('aria-expanded') && !opensOptionList(element)) return true;

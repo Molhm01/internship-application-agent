@@ -31,6 +31,11 @@ export function normalizeOptionLabel(value: string): string {
     .normalize('NFKD')
     .replace(/[‘’`´]/g, "'")
     .replace(/[“”]/g, '"')
+    // NFKD has just split every accented letter into a base letter and a
+    // combining mark, and the class filter below treats a combining mark as
+    // punctuation — so "México" reduced to "me xico" and met no option on any
+    // page. Dropping the marks folds the accent instead of exploding the word.
+    .replace(/\p{M}+/gu, '')
     .toLowerCase();
   for (const [pattern, replacement] of IRREGULAR_CONTRACTIONS) {
     text = text.replace(pattern, replacement);

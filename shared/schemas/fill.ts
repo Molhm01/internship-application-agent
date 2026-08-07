@@ -3,6 +3,7 @@ import { ATS_IDS } from '../constants/ats.js';
 import { agentErrorSchema } from './error.js';
 import { confidenceSchema, idSchema, isoDateTimeSchema } from './common.js';
 import { fieldTypeSchema, fieldValueSchema } from './fields.js';
+import { dropdownTraceSchema } from './dropdownExecution.js';
 
 export const deterministicAnswerSourceSchema = z.enum([
   'profile',
@@ -398,6 +399,14 @@ export const fillExecutionResultSchema = z.object({
   attempts: z.number().int().min(0).max(2),
   durationMs: z.number().nonnegative(),
   error: agentErrorSchema.optional(),
+  /**
+   * How the dropdown engine got on, when this action drove one.
+   *
+   * Carried on the result rather than derived later because only the executor
+   * knows what the control actually offered — by the time anything else looks,
+   * the menu has closed. Values are stripped; see `dropdownTraceSchema`.
+   */
+  dropdown: dropdownTraceSchema.optional(),
 });
 
 export type FillExecutionResult = z.infer<typeof fillExecutionResultSchema>;
