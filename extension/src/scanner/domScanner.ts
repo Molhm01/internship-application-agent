@@ -1177,6 +1177,13 @@ function fieldFromElements(elements: HTMLElement[], pageId: string): DetectedFie
           ...(first.maxLength >= 0 ? { maxLength: first.maxLength } : {}),
         }
       : {}),
+    // The control's stated format. Carried as text so a date formatter can tell
+    // a control that wants a day from one that does not, instead of guessing.
+    ...(cleanText(first.getAttribute('pattern'))
+      ? { pattern: cleanText(first.getAttribute('pattern')) }
+      : {}),
+    ...(cleanText(first.getAttribute('min')) ? { min: cleanText(first.getAttribute('min')) } : {}),
+    ...(cleanText(first.getAttribute('max')) ? { max: cleanText(first.getAttribute('max')) } : {}),
     ...(helpText ? { helpText } : {}),
     ...(validationText ? { validationText } : {}),
     confidence,

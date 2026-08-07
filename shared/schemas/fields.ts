@@ -232,6 +232,18 @@ export const detectedFieldSchema = z.object({
   placeholder: z.string().max(1000).optional(),
   minLength: z.number().int().nonnegative().max(50_000).optional(),
   maxLength: z.number().int().positive().max(50_000).optional(),
+  /**
+   * The control's own statement of the format it accepts.
+   *
+   * `pattern`, `min` and `max` are how a date control says whether it wants a
+   * day at all. Without them the only evidence was the placeholder, so a box
+   * whose `pattern` said `\d{2}/\d{4}` was written a full ISO date and rejected
+   * it — and a build that invented the missing day to satisfy a guess was
+   * stating a fact the applicant never gave. Read as text, never evaluated.
+   */
+  pattern: z.string().max(500).optional(),
+  min: z.string().max(100).optional(),
+  max: z.string().max(100).optional(),
   helpText: z.string().max(4000).optional(),
   validationText: z.string().max(2000).optional(),
   confidence: confidenceSchema,

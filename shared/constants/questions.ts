@@ -51,7 +51,15 @@ export const CANONICAL_QUESTIONS = [
   'minor',
   'gpa',
   'degree_level',
+  // "Are you currently a university student?" — a fact about enrolment now,
+  // answered from an active education record and from nothing else.
   'education_status',
+  /**
+   * "Will you be enrolled during the internship?" — a claim about a future term,
+   * which stored start and graduation dates do not prove. Its own question, so
+   * it can never be answered from the current-enrolment fact beside it.
+   */
+  'enrolled_during_internship',
   'education_start_date',
   'graduation_date',
   // Some forms split graduation into two controls; each is its own question so
@@ -223,6 +231,7 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   gpa: 'education',
   degree_level: 'education',
   education_status: 'education',
+  enrolled_during_internship: 'education',
   education_start_date: 'education',
   graduation_date: 'education',
   graduation_month: 'education',
@@ -320,6 +329,12 @@ export const CANONICAL_QUESTION_ALIASES: Readonly<Record<string, CanonicalQuesti
   region: 'state',
   cv: 'resume',
   enrollment_status: 'education_status',
+  current_student: 'education_status',
+  currently_enrolled: 'education_status',
+  highest_completed_degree: 'highest_degree_awarded',
+  current_degree: 'degree',
+  degree_type: 'degree',
+  expected_graduation_date: 'graduation_date',
   how_heard: 'how_did_you_hear',
   job_board: 'job_board_source',
   event_source: 'recruiting_event',

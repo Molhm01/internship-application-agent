@@ -113,6 +113,10 @@ const OPTIONAL_BLANK_QUESTIONS = new Set<string>([
   'name_suffix',
   'preferred_name',
   'pronouns',
+  // A minor is a credential you either have or do not. An optional "Minor" box
+  // on a profile that lists none is correctly empty, and asking the user to
+  // confirm an absence is the noise this set exists to remove.
+  'minor',
 ]);
 
 function leaveOptionalBlank(field: DetectedField): boolean {
@@ -125,6 +129,9 @@ function optionalBlankReason(field: DetectedField): string {
   }
   if (field.canonicalKey === 'address_line2') {
     return 'Optional, and your saved address has no second line. Address line 1 is never repeated here.';
+  }
+  if (field.canonicalKey === 'minor') {
+    return 'Optional, and your saved education records no minor, so it is correctly left blank.';
   }
   return 'Optional, and nothing saved answers it, so it is correctly left blank.';
 }
@@ -794,13 +801,17 @@ function withActions(
  * Controls that must be written before the controls that depend on them.
  *
  * The executor walks the plan in order, and document order is *usually* right —
- * but not always, and two pairs genuinely matter:
+ * but not always, and three pairs genuinely matter:
  *
  * - A phone country-code control reformats the number beside it when it
  *   changes. A number written first is silently rewritten, or wiped, by a code
  *   chosen afterwards.
  * - A country control repopulates the state list. A state written first is
  *   discarded when the country lands.
+ * - A current-student control reveals the anticipated-graduation control beside
+ *   it. A graduation date written into a box that is still hidden — or still
+ *   disabled — is written nowhere, and the run then reports a date the page
+ *   never took.
  *
  * Everything not named here keeps its document position exactly, so this cannot
  * reorder a form into an order the applicant would not recognize.
@@ -808,6 +819,7 @@ function withActions(
 const EXECUTION_PRECEDENCE: Readonly<Record<string, number>> = {
   phone_country_code: -2,
   country: -1,
+  education_status: -1,
 };
 
 function orderForExecution(

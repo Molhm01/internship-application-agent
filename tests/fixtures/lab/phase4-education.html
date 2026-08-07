@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Education and availability</title>
+    <!--
+      The Phase 4 fixture: the education step of a real portal.
+
+      Every failure in the Phase 4 brief is present here, in the shape the live
+      pages had it:
+
+        * "Highest Degree Completed" and "Current Degree Program" as two
+          separate controls whose lists overlap — the pair that produced
+          "Bachelor's" for a question about what has been awarded.
+        * "Anticipated Degree Completion Date" — wording that names neither
+          "graduation" nor an adjacent "expected completion", so it reached no
+          education rule at all and was answered by the model with today.
+        * A native input[type=date] for graduation, which demands a day the
+          profile does not hold and used to be given the first of the month.
+        * A free-text ATS date box whose placeholder states MM/YYYY.
+        * Separate month and year selects for the same graduation.
+        * "Are you currently a university student?" — a Yes/No that reveals a
+          dependent "Anticipated Graduation Date" only once Yes is chosen.
+        * "Earliest Internship Start Date" — a date with no saved preference
+          behind it, which became today's date on a live application.
+        * An optional Minor for an applicant who has none.
+        * Pre-existing, stale "Information needed" marks on controls this run
+          fills.
+        * A final Submit control, which nothing may ever click.
+    -->
+    <style>
+      body {
+        font:
+          14px system-ui,
+          sans-serif;
+        margin: 24px;
+        max-width: 720px;
+      }
+      fieldset {
+        margin-bottom: 20px;
+      }
+      .field {
+        margin-bottom: 14px;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 6px;
+      }
+      .required {
+        color: #b91c1c;
+      }
+      .hint {
+        font-weight: 400;
+        color: #4b5563;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Education and availability</h1>
+    <form id="application">
+      <fieldset>
+        <legend>Education</legend>
+        <div class="field">
+          <label for="school">School <span class="required">*</span></label>
+          <input id="school" name="school" type="text" required />
+        </div>
+
+        <div class="field">
+          <label for="highestDegree"
+            >Highest Degree Completed <span class="required">*</span></label
+          >
+          <select id="highestDegree" name="highestDegree" required>
+            <option value="">Select One</option>
+            <option value="hs">High School</option>
+            <option value="associate">Associate Degree</option>
+            <option value="bachelors">Bachelor's Degree</option>
+            <option value="masters">Master's Degree</option>
+            <option value="doctorate">Doctorate</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="currentDegree">Current Degree Program <span class="required">*</span></label>
+          <select id="currentDegree" name="currentDegree" required>
+            <option value="">Select One</option>
+            <option value="hs">High School</option>
+            <option value="associate">Associate Degree</option>
+            <option value="bachelors">Bachelor's Degree</option>
+            <option value="masters">Master's Degree</option>
+            <option value="doctorate">Doctorate</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="major">Field of Study <span class="required">*</span></label>
+          <input id="major" name="major" type="text" required />
+        </div>
+
+        <div class="field">
+          <label for="minor">Minor</label>
+          <input id="minor" name="minor" type="text" />
+        </div>
+
+        <div class="field">
+          <label for="gpa">Cumulative GPA <span class="required">*</span></label>
+          <input id="gpa" name="gpa" type="text" required />
+        </div>
+
+        <!--
+          A native date control. It demands a full day, month and year; the
+          profile holds a month and a year. The correct outcome is a question
+          for the user, never the first of the month.
+        -->
+        <div class="field">
+          <label for="gradDateNative">Degree Completion Date <span class="required">*</span></label>
+          <input id="gradDateNative" name="gradDateNative" type="date" required />
+        </div>
+
+        <!--
+          The same graduation, asked for as free text in a format the profile
+          can satisfy exactly.
+        -->
+        <div class="field">
+          <label for="gradDateText"
+            >Anticipated Degree Completion Date <span class="required">*</span></label
+          >
+          <input
+            id="gradDateText"
+            name="gradDateText"
+            type="text"
+            placeholder="MM/YYYY"
+            pattern="\d{2}/\d{4}"
+            required
+          />
+        </div>
+
+        <!-- The same graduation again, split across two controls. -->
+        <div class="field">
+          <label for="gradMonth">Graduation Month <span class="required">*</span></label>
+          <select id="gradMonth" name="gradMonth" required>
+            <option value="">Select One</option>
+            <option value="March">March</option>
+            <option value="April">April</option>
+            <option value="May">May</option>
+            <option value="June">June</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gradYear">Graduation Year <span class="required">*</span></label>
+          <select id="gradYear" name="gradYear" required>
+            <option value="">Select One</option>
+            <option value="2026">2026</option>
+            <option value="2027">2027</option>
+            <option value="2028">2028</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="currentStudent"
+            >Are you currently a university student? <span class="required">*</span></label
+          >
+          <select id="currentStudent" name="currentStudent" required>
+            <option value="">Select One</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+
+        <!--
+          Revealed only once Current Student is Yes. A run that captured this
+          control while it was hidden and wrote to it would write nowhere.
+        -->
+        <div class="field hidden" id="anticipatedGradRow">
+          <label for="anticipatedGrad"
+            >Anticipated Graduation Date <span class="required">*</span></label
+          >
+          <input
+            id="anticipatedGrad"
+            name="anticipatedGrad"
+            type="text"
+            placeholder="Month YYYY"
+            required
+          />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Availability</legend>
+        <div class="field">
+          <label for="earliestStart"
+            >Earliest Internship Start Date <span class="required">*</span></label
+          >
+          <input id="earliestStart" name="earliestStart" type="date" required />
+          <div class="hint">The first day you could begin the internship.</div>
+        </div>
+      </fieldset>
+
+      <button id="submit" type="submit">Submit Application</button>
+    </form>
+
+    <script>
+      // The dependency, as a portal builds it: the graduation control is
+      // revealed a moment after Yes lands, not in the same tick.
+      const row = document.getElementById('anticipatedGradRow');
+      document.getElementById('currentStudent').addEventListener('change', (event) => {
+        const enrolled = event.target.value === 'yes';
+        window.setTimeout(() => {
+          row.classList.toggle('hidden', !enrolled);
+        }, 400);
+      });
+
+      // Stale marks from an earlier run, on controls this run fills. Each one
+      // has to be gone by the end, and that is a claim about the page rather
+      // than about the report.
+      for (const id of [
+        'school',
+        'major',
+        'gpa',
+        'gradMonth',
+        'gradYear',
+        'currentDegree',
+        'highestDegree',
+        'minor',
+      ]) {
+        document
+          .getElementById(id)
+          .setAttribute('data-internship-agent-review', 'information_needed');
+      }
+
+      // Nothing may ever submit this form.
+      window.__fixture = { submitAttempts: 0 };
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__fixture.submitAttempts += 1;
+      });
+      document.getElementById('submit').addEventListener('click', () => {
+        window.__fixture.submitAttempts += 1;
+      });
+    </script>
+  </body>
+</html>

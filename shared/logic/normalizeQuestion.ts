@@ -288,40 +288,127 @@ const RULES: readonly Rule[] = [
   { question: 'postal_code', patterns: [/\b(zip|postal)\s?code\b/, /\bpostcode\b/, /^zip$/] },
 
   // Education
-  { question: 'school', patterns: [/\b(school|university|college|institution)\b/] },
-  // "Highest degree awarded" and "the degree you are pursuing" are different
-  // questions with different answers for anyone still studying, so the more
-  // specific one is tested first.
+  //
+  // Enrolment first, and both enrolment questions before every degree rule.
+  // "Are you pursuing a degree?" is a Yes/No about enrolment that contains the
+  // word "degree"; classified as `degree` it was offered a degree *name*, which
+  // no Yes/No control has ever accepted.
+  //
+  // "Will you be enrolled during the internship?" is separated from "Are you
+  // enrolled now?" because stored dates prove the second and not the first, and
+  // one canonical key for both would let a known fact answer an unknown one.
   {
-    question: 'highest_degree_awarded',
+    question: 'enrolled_during_internship',
     patterns: [
-      /\b(highest|most recent)\b.*\b(degree|education|qualification)\b/,
-      /\bdegree\b.*\b(awarded|attained|obtained|completed|earned|received)\b/,
-      /\b(awarded|attained|completed)\b.*\bdegree\b/,
+      /\b(enrolled|student|studying|in school)\b.*\b(during|throughout|for the duration of)\b.*\b(internship|co ?op|placement|program|term|summer)\b/,
+      /\b(during|throughout)\b.*\b(internship|co ?op|placement)\b.*\b(enrolled|student|studying)\b/,
+      /\bwill you (still )?be (a )?(enrolled|student)\b/,
+      /\bwill you (be )?(remain|continue)\b.*\b(enrolled|student)\b/,
+      /\breturn(ing)? to (school|university|college)\b.*\bafter\b/,
     ],
   },
-  { question: 'degree', patterns: [/\bdegree\b/, /\blevel of education\b/] },
-  { question: 'major', patterns: [/\b(major|discipline|field of study|concentration)\b/] },
-  { question: 'minor', patterns: [/\bminor\b/] },
-  { question: 'gpa', patterns: [/\bgpa\b/, /\bgrade point average\b/] },
-  // Split graduation controls, before the combined rule they would otherwise hit.
+  {
+    question: 'education_status',
+    patterns: [
+      /\b(currently|presently|now)\b.*\b(a )?(university |college |full[- ]time |part[- ]time )?student\b/,
+      /\bcurrent(ly)? (enrolled|enrolment|enrollment)\b/,
+      /\b(are|am) you (currently )?enrolled\b/,
+      /\bare you (currently )?(a )?(university |college )?student\b/,
+      /\bare you (currently )?pursuing (a|an|your)\b.*\b(degree|program)\b/,
+      /\b(enrolment|enrollment) status\b/,
+      /\bstudent status\b/,
+      /^current student$/,
+    ],
+  },
+  // The education *dates*, before every rule that matches on the word "degree".
+  //
+  // Ordering is the whole of the graduation-date failure. "Anticipated Degree
+  // Completion Date" contains "degree", so with the degree rules first it was
+  // classified `degree`, and a date control was offered the name of a
+  // qualification. Wordings that missed both rules fell through to `unknown`,
+  // which the model tier is allowed to answer — and a model asked for a date
+  // answers with today's.
+  //
+  // Split controls first, because each of them also satisfies the combined rule.
   {
     question: 'graduation_month',
-    patterns: [/\b(graduation|grad|completion)\b.*\bmonth\b/, /\bmonth of graduation\b/],
+    patterns: [
+      /\b(graduation|grad|completion)\b.*\bmonth\b/,
+      /\bmonth of graduation\b/,
+      /\bmonth\b.*\b(graduat|complet)/,
+    ],
   },
   {
     question: 'graduation_year',
-    patterns: [/\b(graduation|grad|completion)\b.*\byear\b/, /\byear of graduation\b/],
+    patterns: [
+      /\b(graduation|grad|completion)\b.*\byear\b/,
+      /\byear of graduation\b/,
+      /\byear\b.*\b(graduat|complet)/,
+    ],
   },
   {
     question: 'graduation_date',
     patterns: [
       /\b(graduation|grad)\b.*\b(date|year|month)\b/,
       /\bend date\b.*\beducation\b/,
-      /\b(expected|anticipated) (completion|graduation)\b/,
+      // The two words are routinely *not* adjacent, which the old
+      // `(expected|anticipated) (completion|graduation)` rule required.
+      /\b(expected|anticipated|projected|planned)\b.*\b(completion|graduation|grad)\b/,
+      /\b(degree|program|study|studies)\b.*\bcompletion\b/,
+      /\bcompletion date\b/,
+      /\bgraduat/,
     ],
   },
-  { question: 'education_start_date', patterns: [/\bstart date\b.*\b(school|education)\b/] },
+  {
+    question: 'education_start_date',
+    patterns: [
+      /\bstart date\b.*\b(school|education|program|degree|university|college)\b/,
+      /\b(school|education|program|degree|university|college)\b.*\bstart date\b/,
+      /\benrol(l)?ment date\b/,
+      /\bdate (of )?enrol/,
+    ],
+  },
+  { question: 'school', patterns: [/\b(school|university|college|institution)\b/] },
+  // "Highest degree awarded" and "the degree you are pursuing" are different
+  // questions with different answers for anyone still studying.
+  //
+  // The `current` rule is tested first: "The highest degree you are currently
+  // pursuing" wears the word "highest" and is still a question about now, and
+  // answering it from the completed credential understates the applicant
+  // exactly as answering the other one from the in-progress degree overstates
+  // them.
+  {
+    question: 'degree',
+    patterns: [
+      /\b(current|currently)\b.*\b(degree|program|academic program|education program|qualification)\b/,
+      /\b(degree|program)\b.*\b(current|currently|in progress|you are pursuing|being pursued)\b/,
+      /\b(degree|program|qualification)\b.*\b(pursuing|studying|working towards?)\b/,
+      /\b(pursuing|studying|working towards?)\b.*\b(degree|program|qualification)\b/,
+      /\bdegree in progress\b/,
+    ],
+  },
+  {
+    question: 'highest_degree_awarded',
+    patterns: [
+      /\b(highest|most recent)\b.*\b(degree|education|qualification|level)\b/,
+      /\bdegree\b.*\b(awarded|attained|obtained|completed|earned|received|conferred)\b/,
+      /\b(awarded|attained|completed|earned|conferred)\b.*\b(degree|education|qualification)\b/,
+      // A bare "Level of Education" reaches here rather than the degree rule
+      // below, because it is a question about a level *held* and is settled
+      // downstream by `educationLevelIntent`, which reads the page's own wording
+      // and the control's own list. It is never answered "Bachelor's" by
+      // default, which is what the generic degree rule used to do to it.
+      /\blevel of education\b/,
+      /\beducation level\b/,
+    ],
+  },
+  { question: 'degree', patterns: [/\bdegree\b/, /\bqualification\b/, /^program$/] },
+  {
+    question: 'major',
+    patterns: [/\b(major|discipline|field of study|area of study|concentration|course of study)\b/],
+  },
+  { question: 'minor', patterns: [/\bminor\b/, /\bsecondary field\b/] },
+  { question: 'gpa', patterns: [/\bgpa\b/, /\b(cumulative )?grade point average\b/] },
 
   // Experience
   { question: 'employer', patterns: [/\b(employer|company name|organization)\b/] },
@@ -382,6 +469,10 @@ const RULES: readonly Rule[] = [
     question: 'earliest_start_date',
     patterns: [
       /\b(earliest|available|availability|when can you) start\b/,
+      // "Earliest Internship Start Date" separates the two words. It is an
+      // availability question, never a graduation or an enrolment one, and it is
+      // answered only from a saved preference.
+      /\bearliest\b.*\bstart\b/,
       /\bstart date\b.*\bavailab/,
       // "When are you available to start?" — the words are separated, which the
       // adjacent-word patterns above miss.

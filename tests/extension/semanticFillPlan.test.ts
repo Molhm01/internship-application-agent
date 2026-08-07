@@ -473,15 +473,19 @@ describe('applying a fill plan', () => {
     ).toBeUndefined();
   });
 
+  // Deliberately a question this build carries no canonical meaning for. An
+  // education-level label would now be classified — Phase 4 gave the education
+  // block real rules — and would be discarded one check earlier, for citing no
+  // saved fact, which is a different rule from the one under test here.
   it('discards an option label the page does not offer', () => {
     const target = field({
-      id: 'field-degree',
-      label: 'Highest level of study completed',
-      normalizedLabel: 'highest level of study completed',
+      id: 'field-rotation',
+      label: 'Preferred laboratory rotation',
+      normalizedLabel: 'preferred laboratory rotation',
       fieldType: 'select',
       options: [
-        { label: "Bachelor's Degree", value: 'bachelors' },
-        { label: "Master's Degree", value: 'masters' },
+        { label: 'Spectroscopy', value: 'spectroscopy' },
+        { label: 'Metrology', value: 'metrology' },
       ],
     });
     const { scan, plan } = planFor([target]);
@@ -494,7 +498,7 @@ describe('applying a fill plan', () => {
         {
           questionId: built.questions[0]!.questionId,
           action: 'SELECT_OPTION',
-          selectedOption: 'Doctorate',
+          selectedOption: 'Microscopy',
           confidence: 0.9,
           sourceFactIds: [],
           requiresReview: false,

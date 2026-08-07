@@ -1,3 +1,4 @@
+import { formatDateForField } from './dateValues.js';
 import type { DetectedField } from '../schemas/fields.js';
 
 export type FormattableValue = string | string[] | boolean | number;
@@ -57,21 +58,6 @@ const STATE_NAMES: Record<string, string> = {
   DC: 'District of Columbia',
 };
 
-const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-] as const;
-
 function phone(value: string, placeholder = ''): string {
   const hasPlus = value.trim().startsWith('+');
   const digits = value.replace(/\D/g, '');
@@ -87,20 +73,22 @@ function phone(value: string, placeholder = ''): string {
   return local;
 }
 
+/**
+ * Formats a stored date for a control, and never invents a component of it.
+ *
+ * The whole body of this used to be here, and two of its branches wrote a day
+ * the profile never stated: `${year}-${month}-${day ?? '01'}` for a native date
+ * input, and the same `?? '01'` for an `MM/DD/YYYY` box. A graduation stored as
+ * "May 2027" therefore arrived on the employer's form as the first of May.
+ *
+ * `formatDateForField` decides instead, has no clock, and refuses rather than
+ * fabricates. A refusal returns the value untouched here so the verifier fails
+ * honestly — the matcher gates factual dates before reaching this point and
+ * turns a refusal into a question for the user.
+ */
 function date(value: string, field: DetectedField): string {
-  const match = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(value.trim());
-  if (!match) return value.trim();
-  const [, year, month, day] = match;
-  if (field.fieldType === 'date') return `${year}-${month}-${day ?? '01'}`;
-  if (
-    field.canonicalKey === 'graduation_date' ||
-    /month|mmm|may 2028/i.test(field.placeholder ?? '')
-  ) {
-    const monthName = MONTHS[Number(month) - 1];
-    return monthName ? `${monthName} ${year}` : value.trim();
-  }
-  if (/mm\/dd\/yyyy/i.test(field.placeholder ?? '')) return `${month}/${day ?? '01'}/${year}`;
-  return day ? `${year}-${month}-${day}` : `${year}-${month}`;
+  const outcome = formatDateForField(field, value);
+  return outcome.kind === 'value' ? outcome.value : value.trim();
 }
 
 function state(value: string, field: DetectedField): string {

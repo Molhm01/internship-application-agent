@@ -1,16 +1,23 @@
 import {
   DEFAULT_SENSITIVE_POLICY,
   SENSITIVE_CANONICAL_QUESTIONS,
+  activeEducationEntry,
+  currentEnrollment,
   degreeAnswersFor,
+  educationLevelIntent,
   fieldMatchSchema,
+  formatDateForField,
   formatValue,
   fullLegalName,
+  isFactualDateQuestion,
   locationSearchText,
+  monthValueForField,
   normalizeLabel,
   resolveDialCode,
   resolveWebsiteValue,
   splitPhoneNumber,
   wholePhoneNumber,
+  yearValue,
   type ApprovedAnswer,
   type CanonicalQuestion,
   type DetectedField,
@@ -184,10 +191,18 @@ function resolvedCanonical(field: DetectedField): {
 function profileValue(
   profile: Profile,
   canonical: CanonicalQuestion,
+  field: DetectedField,
   context: MatchContext = {},
 ): { reference: string; value: string | boolean | number } | null {
   const personal = profile.personal;
-  const education = profile.education[0];
+  // The record the applicant is actually in, never "the first row they typed".
+  // Reading `profile.education[0]` is what answered "Current Degree Program"
+  // with a completed high-school diploma and named the wrong school beside it.
+  const education = activeEducationEntry(profile);
+  const educationIndex = education ? profile.education.indexOf(education) : -1;
+  const educationRef = (key: string): string => `profile.education[${educationIndex}].${key}`;
+  const degrees = degreeAnswersFor(profile);
+  const enrollment = currentEnrollment(profile);
   const experience = profile.experience[0];
   // The applicant's stored code first, the residence country only as a
   // fallback. Deriving it from the country meant a profile with a phone and no
@@ -312,40 +327,65 @@ function profileValue(
     // through here would type into every *sign-in* form the agent lands on —
     // the one page it must leave alone.
     school: {
-      reference: 'profile.education[0].institution',
+      reference: educationRef('institution'),
       value: education?.institution,
     },
-    // The degree being studied for. "Highest level of education" is the other
-    // question and reads `highest_degree_awarded` above.
+    // The degree being studied for, and only ever that. "Highest level of
+    // education" is the other question and reads `highest_degree_awarded`
+    // below. `degreeAnswersFor` prefers the explicit profile field and
+    // otherwise reads an entry that positively states it is in progress — it
+    // never falls back to whichever education row happened to be first, which
+    // is how a completed high-school diploma answered this.
     degree: {
       reference: profile.currentDegreeInProgress
         ? 'profile.currentDegreeInProgress'
-        : 'profile.education[0].degree',
-      value: profile.currentDegreeInProgress ?? education?.degree,
+        : educationRef('degree'),
+      value: degrees.currentDegreeInProgress,
     },
-    major: { reference: 'profile.education[0].major', value: education?.major },
-    minor: { reference: 'profile.education[0].minor', value: education?.minor },
+    major: { reference: educationRef('major'), value: education?.major },
+    minor: { reference: educationRef('minor'), value: education?.minor },
     // The level, which is a different answer from the degree's full name. A
     // form offering "Bachelor's / Master's / Doctorate" wants this one.
     degree_level: {
-      reference: 'profile.education[0].degreeLevel',
-      value: education?.degreeLevel,
+      reference: education?.degreeLevel
+        ? educationRef('degreeLevel')
+        : 'profile.currentDegreeInProgress',
+      value: education?.degreeLevel ?? degrees.currentDegreeInProgress,
     },
-    gpa: { reference: 'profile.education[0].gpa', value: education?.gpa },
+    gpa: { reference: educationRef('gpa'), value: education?.gpa },
     graduation_date: {
-      reference: 'profile.education[0].graduationDate',
+      reference: educationRef('graduationDate'),
       value: education?.graduationDate,
     },
     // Forms that split graduation into two controls. Both read the one saved
     // date rather than asking the user to store it twice; a date with no month
-    // yields no month, rather than a guessed one.
+    // yields no month, rather than a guessed one, and the month is spelled the
+    // way the control's own list spells it.
     graduation_month: {
-      reference: 'profile.education[0].graduationDate',
-      value: education?.graduationDate?.split('-')[1],
+      reference: educationRef('graduationDate'),
+      value: monthValueForField(field, education?.graduationDate) ?? undefined,
     },
     graduation_year: {
-      reference: 'profile.education[0].graduationDate',
-      value: education?.graduationDate?.split('-')[0],
+      reference: educationRef('graduationDate'),
+      value: yearValue(education?.graduationDate) ?? undefined,
+    },
+    education_start_date: {
+      reference: educationRef('startDate'),
+      value: education?.startDate,
+    },
+    // Current-student status, derived from an active education record and from
+    // nothing else. `null` when the profile establishes neither, so the field
+    // becomes the user's question rather than a guessed Yes.
+    education_status: {
+      reference: enrollment?.reference ?? 'profile.education',
+      value: enrollment?.enrolled,
+    },
+    // Deliberately unanswerable. Whether the applicant will still be enrolled
+    // during a term the employer has not stated is not something a graduation
+    // date proves, so it is always confirmed by the user.
+    enrolled_during_internship: {
+      reference: 'profile.education',
+      value: undefined,
     },
     // Explicitly saved on the profile. This is not a guess — it is the answer
     // the user wrote down — but it is still never *inferred* from anything
@@ -399,10 +439,27 @@ function profileValue(
     // different answer, and substituting it would overstate the applicant's
     // qualifications. `degreeAnswersFor` reads the credential actually awarded,
     // and yields nothing when the profile establishes none.
-    highest_degree_awarded: {
-      reference: 'profile.highestCompletedDegree',
-      value: degreeAnswersFor(profile).highestCompletedDegree,
-    },
+    //
+    // A bare "Highest Level of Education" is read for intent first, because a
+    // page can spell a *current* question that way, and the two answers differ
+    // for everyone mid-degree: this profile holds a high-school diploma and is
+    // studying for a bachelor's.
+    highest_degree_awarded: (() => {
+      const intent = educationLevelIntent({
+        label: `${field.label} ${field.question}`,
+        ...(field.helpText ? { helpText: field.helpText } : {}),
+        optionLabels: (field.options ?? []).map((option) => option.label),
+      });
+      return intent === 'current'
+        ? {
+            reference: 'profile.currentDegreeInProgress',
+            value: degrees.currentDegreeInProgress,
+          }
+        : {
+            reference: 'profile.highestCompletedDegree',
+            value: degrees.highestCompletedDegree,
+          };
+    })(),
     salary_minimum: {
       reference: 'profile.preferences.salaryMinimum',
       value: profile.preferences.salaryMinimum,
@@ -640,8 +697,52 @@ export function matchField(
     );
   }
   if (!resolved.canonical) return unmatched(field, resolved.reason);
-  const value = profileValue(profile, resolved.canonical, context);
-  if (!value) return unmatched(field, `No saved profile value exists for "${resolved.canonical}".`);
+  const value = profileValue(profile, resolved.canonical, field, context);
+  if (!value) {
+    // A factual date nobody stored is the user's to supply, and saying so is the
+    // whole of the fix: this branch used to leave the field open for the model
+    // tier, where "when can you start?" is answered with today.
+    if (isFactualDateQuestion(resolved.canonical)) {
+      return unmatched(field, missingDateReason(resolved.canonical), {
+        requiresReview: true,
+        warnings: ['A date is never invented, and never defaulted to today.'],
+      });
+    }
+    return unmatched(field, `No saved profile value exists for "${resolved.canonical}".`);
+  }
+
+  // Every factual date is formatted through the one clockless formatter, and a
+  // stored date the control cannot take becomes a question rather than a
+  // fabricated value. `graduation_month` and `graduation_year` are excluded:
+  // they are already single components, resolved against the control's own list.
+  if (
+    isFactualDateQuestion(resolved.canonical) &&
+    resolved.canonical !== 'graduation_month' &&
+    resolved.canonical !== 'graduation_year' &&
+    typeof value.value === 'string'
+  ) {
+    const formatted = formatDateForField(field, value.value);
+    if (formatted.kind === 'confirmation_required') {
+      return unmatched(field, formatted.reason, {
+        requiresReview: true,
+        warnings: ['A date is never invented, and never defaulted to today.'],
+      });
+    }
+    return fieldMatchSchema.parse({
+      fieldId: field.id,
+      matched: true,
+      source: 'profile',
+      sourceReference: value.reference,
+      rawValue: value.value,
+      formattedValue: formatted.value,
+      confidence: resolved.confidence,
+      requiresReview: resolved.confidence < 0.8,
+      sensitive: false,
+      reason: `${resolved.reason} Saved date written as ${formatted.shape.replace(/_/g, ' ')}.`,
+      warnings: [],
+    });
+  }
+
   return fieldMatchSchema.parse({
     fieldId: field.id,
     matched: true,
@@ -655,4 +756,19 @@ export function matchField(
     reason: resolved.reason,
     warnings: [],
   });
+}
+
+/** Why a factual date could not be answered, in the user's terms. */
+function missingDateReason(canonical: CanonicalQuestion): string {
+  if (canonical === 'earliest_start_date') {
+    return 'No earliest start date is saved, and a start date is never guessed or defaulted to today.';
+  }
+  if (
+    canonical === 'graduation_date' ||
+    canonical === 'graduation_month' ||
+    canonical === 'graduation_year'
+  ) {
+    return 'No graduation date is saved in your education records, and one is never invented.';
+  }
+  return `No saved date exists for "${canonical}", and a date is never invented.`;
 }

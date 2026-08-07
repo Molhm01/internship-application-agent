@@ -1,4 +1,5 @@
-import type { Profile } from '../schemas/profile.js';
+import type { EducationEntry, Profile } from '../schemas/profile.js';
+import { parseStoredDate } from './dateValues.js';
 
 /**
  * "Highest level of education" is a question about a credential you *hold*.
@@ -46,22 +47,27 @@ export function degreeRank(degree: string | undefined): number {
  * caller must be able to tell "not completed" from "we do not know", because
  * only the first is safe to reason from.
  */
-export function entryIsCompleted(entry: {
-  status?: string;
-  graduationDate?: string;
-}): boolean | undefined {
+export function entryIsCompleted(
+  entry: {
+    status?: string;
+    graduationDate?: string;
+  },
+  now: Date = new Date(),
+): boolean | undefined {
   if (entry.status === 'completed') return true;
   if (entry.status === 'in_progress') return false;
-  if (!entry.graduationDate) return undefined;
+  const parts = parseStoredDate(entry.graduationDate);
+  if (!parts?.month) return undefined;
   // A graduation date in the past is the entry stating the degree was awarded.
   // A future one states the opposite. Both are evidence; silence is not.
-  const parsed = Date.parse(
-    /^\d{4}-\d{2}$/.test(entry.graduationDate)
-      ? `${entry.graduationDate}-01`
-      : entry.graduationDate,
-  );
-  if (Number.isNaN(parsed)) return undefined;
-  return parsed <= Date.now();
+  //
+  // The clock is read here to *reason* about a date the profile stated. It is
+  // never read to produce one: nothing in this comparison reaches a form, and
+  // `dateValues.ts` — the only module that turns a date into a value — has no
+  // access to a clock at all.
+  const stored = Number(parts.year) * 12 + Number(parts.month);
+  const current = now.getFullYear() * 12 + (now.getMonth() + 1);
+  return stored <= current;
 }
 
 export interface DegreeAnswers {
@@ -79,7 +85,7 @@ export interface DegreeAnswers {
  * answer — which is why a profile with one undated "Bachelor of Science" row
  * yields no highest-completed degree at all rather than claiming one.
  */
-export function degreeAnswersFor(profile: Profile): DegreeAnswers {
+export function degreeAnswersFor(profile: Profile, now: Date = new Date()): DegreeAnswers {
   const explicitCompleted = profile.highestCompletedDegree?.trim();
   const explicitCurrent = profile.currentDegreeInProgress?.trim();
 
@@ -89,7 +95,7 @@ export function degreeAnswersFor(profile: Profile): DegreeAnswers {
   for (const entry of profile.education) {
     const degree = entry.degree?.trim();
     if (!degree) continue;
-    const isCompleted = entryIsCompleted(entry);
+    const isCompleted = entryIsCompleted(entry, now);
     if (isCompleted === true && !explicitCompleted) {
       if (degreeRank(degree) >= degreeRank(completed)) completed = degree;
     }
@@ -116,4 +122,111 @@ const IN_PROGRESS_PHRASING =
 
 export function asksForDegreeInProgress(questionText: string): boolean {
   return IN_PROGRESS_PHRASING.test(questionText);
+}
+
+/**
+ * The education record an application is asking about.
+ *
+ * `profile.education[0]` — which every education lookup used to read — means
+ * "the first row the user happened to enter". For a profile that lists high
+ * school first, that row is a *completed* credential, so "Current Degree
+ * Program" was answered "High School Diploma", "School" named the high school,
+ * and the graduation date offered was one that had already passed.
+ *
+ * The active record is the one the applicant is in: an entry that says
+ * `in_progress`, then an entry whose graduation date has not arrived. Only when
+ * no entry states either does the first row stand in — at which point it is the
+ * only record there is, and reporting it is not a guess.
+ */
+export function activeEducationEntry(
+  profile: Profile,
+  now: Date = new Date(),
+): EducationEntry | undefined {
+  const inProgress = profile.education.find((entry) => entry.status === 'in_progress');
+  if (inProgress) return inProgress;
+  const future = profile.education.find((entry) => entryIsCompleted(entry, now) === false);
+  if (future) return future;
+  return profile.education[0];
+}
+
+/** Whether the profile establishes that the applicant is enrolled right now. */
+export interface EnrollmentFact {
+  enrolled: boolean;
+  /** The record the answer came from, named so the trace can cite it. */
+  reference: string;
+  reason: string;
+}
+
+/**
+ * Current-student status, derived only from an active education record.
+ *
+ * Returns `null` — not `false` — when nothing establishes it, because "we do not
+ * know" and "no" are different answers and only one of them may be typed onto an
+ * application. Age, résumé wording and the name of the school are never
+ * consulted: none of them is evidence of enrolment.
+ */
+export function currentEnrollment(profile: Profile, now: Date = new Date()): EnrollmentFact | null {
+  const index = profile.education.findIndex(
+    (entry) => entry.status === 'in_progress' || entryIsCompleted(entry, now) === false,
+  );
+  const entry = profile.education[index];
+  if (entry) {
+    return {
+      enrolled: true,
+      reference: `profile.education[${index}].status`,
+      reason:
+        entry.status === 'in_progress'
+          ? `Your saved education lists ${entry.institution} as in progress.`
+          : `Your saved education at ${entry.institution} has a graduation date that has not arrived.`,
+    };
+  }
+  // Every stored record is finished, which positively answers "no". A profile
+  // with no education at all states nothing and gets no answer.
+  const allCompleted =
+    profile.education.length > 0 &&
+    profile.education.every((candidate) => entryIsCompleted(candidate, now) === true);
+  if (allCompleted) {
+    return {
+      enrolled: false,
+      reference: 'profile.education',
+      reason: 'Every saved education record is completed.',
+    };
+  }
+  return null;
+}
+
+/** Which of the two degree facts a question about education level is asking for. */
+export type DegreeIntent = 'completed' | 'current';
+
+const COMPLETED_PHRASING =
+  /\b(completed|awarded|attained|obtained|earned|received|conferred|achieved|highest)\b/i;
+
+const CURRENT_PHRASING =
+  /\b(current|currently|in progress|pursuing|studying|working towards?|enrolled in|anticipated|expected)\b/i;
+
+/**
+ * Reads a degree question's intent from the words around it and the choices it
+ * offers.
+ *
+ * "Highest Degree Completed" and "Degree Currently Pursuing" are unambiguous and
+ * settled by wording alone. "Highest Level of Education" on its own is the case
+ * this exists for: it is a question about a level *held*, so it resolves to
+ * `completed` unless the page says otherwise — which is what stops a bachelor's
+ * student being recorded as holding a bachelor's degree. Current phrasing beats
+ * completed phrasing when both appear, because "the highest degree you are
+ * currently pursuing" is a current question wearing the word "highest".
+ */
+export function educationLevelIntent(input: {
+  label: string;
+  helpText?: string;
+  optionLabels?: readonly string[];
+}): DegreeIntent {
+  const text = `${input.label} ${input.helpText ?? ''}`;
+  if (CURRENT_PHRASING.test(text)) return 'current';
+  if (COMPLETED_PHRASING.test(text)) return 'completed';
+  // A list whose choices are themselves phrased as enrolment ("Currently
+  // enrolled — Bachelor's") is the page saying which fact it wants.
+  const options = (input.optionLabels ?? []).join(' ');
+  if (options && CURRENT_PHRASING.test(options)) return 'current';
+  return 'completed';
 }

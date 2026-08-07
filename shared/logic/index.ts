@@ -32,6 +32,7 @@ export * from './scanStatistics.js';
 export * from './pendingResolution.js';
 export * from './finalFieldStatus.js';
 export * from './actionContract.js';
+export * from './dateValues.js';
 export * from './degreeLevel.js';
 export * from './discoverySource.js';
 export * from './buildProvenance.js';

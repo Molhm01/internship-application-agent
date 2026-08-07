@@ -8,7 +8,7 @@ import {
   type UnresolvedFieldResolution,
 } from '../schemas/fill.js';
 import { allowsRegionSuffix, matchOption } from './optionMatcher.js';
-import { degreeAnswersFor } from './degreeLevel.js';
+import { activeEducationEntry, currentEnrollment, degreeAnswersFor } from './degreeLevel.js';
 
 /**
  * Questions the resolver may never propose a value for, whatever the model
@@ -47,6 +47,23 @@ export const AI_PROHIBITED_QUESTIONS: readonly CanonicalQuestion[] = [
   'graduation_date',
   'graduation_month',
   'graduation_year',
+  'education_start_date',
+  // The education credentials themselves. `school` and `gpa` were already here;
+  // the degree being studied for, the level it sits at, and the subject are the
+  // same kind of fact and were not — so a form asking "Current Degree Program"
+  // on a profile the lookup had failed to read reached the model.
+  'degree',
+  'degree_level',
+  'major',
+  'minor',
+  // Enrolment now, and enrolment during a term the employer has not stated.
+  'education_status',
+  'enrolled_during_internship',
+  // Availability. A model asked "When can you start?" answers with the date it
+  // believes today to be, which is exactly how an internship availability date
+  // became the current date on a live application.
+  'earliest_start_date',
+  'internship_availability',
   // Who vouches for the applicant, and how.
   'referral',
   'referral_name',
@@ -179,7 +196,11 @@ export function structuredProfileValue(
 ): { reference: string; value: string } | null {
   const personal = profile.personal;
   const address = personal.address;
-  const education = profile.education[0];
+  const education = activeEducationEntry(profile);
+  const educationIndex = education ? profile.education.indexOf(education) : -1;
+  const educationRef = (key: string): string => `profile.education[${educationIndex}].${key}`;
+  const degrees = degreeAnswersFor(profile);
+  const enrollment = currentEnrollment(profile);
   const eligibility = profile.eligibility;
 
   const table: Partial<
@@ -193,10 +214,28 @@ export function structuredProfileValue(
     linkedin: { reference: 'profile.personal.linkedin', value: personal.linkedin },
     github: { reference: 'profile.personal.github', value: personal.github },
     portfolio: { reference: 'profile.personal.portfolio', value: personal.portfolio },
-    school: { reference: 'profile.education[0].institution', value: education?.institution },
-    degree: { reference: 'profile.education[0].degree', value: education?.degree },
-    major: { reference: 'profile.education[0].major', value: education?.major },
-    minor: { reference: 'profile.education[0].minor', value: education?.minor },
+    school: { reference: educationRef('institution'), value: education?.institution },
+    // The degree in progress, never whichever education row was entered first.
+    // This entry read `education[0].degree` with no preference for the explicit
+    // profile field at all, so the second tier could contradict the first and
+    // answer "Current Degree Program" with a completed high-school diploma.
+    degree: {
+      reference: profile.currentDegreeInProgress
+        ? 'profile.currentDegreeInProgress'
+        : educationRef('degree'),
+      value: degrees.currentDegreeInProgress,
+    },
+    degree_level: {
+      reference: educationRef('degreeLevel'),
+      value: education?.degreeLevel ?? degrees.currentDegreeInProgress,
+    },
+    major: { reference: educationRef('major'), value: education?.major },
+    minor: { reference: educationRef('minor'), value: education?.minor },
+    gpa: { reference: educationRef('gpa'), value: education?.gpa },
+    education_status: {
+      reference: enrollment?.reference ?? 'profile.education',
+      value: enrollment?.enrolled,
+    },
     willing_to_relocate: {
       reference: 'profile.eligibility.willingToRelocate',
       value: eligibility.willingToRelocate,
@@ -508,6 +547,22 @@ export function resolveUnresolvedField(input: ResolverInput): UnresolvedFieldRes
   // facts nobody may invent. A question whose wording nothing anticipated is
   // reasoned about here rather than handed back as unanswerable. Never
   // auto-approved: the user still confirms it before it is written.
+  // A date control is refused structurally, whatever the question turned out to
+  // be called. The prohibition list above covers every date question this build
+  // has a name for; this covers the ones it does not, and it is the reason a
+  // wording nobody anticipated can no longer arrive on a form as today's date.
+  if (aiSuggestion && (field.fieldType === 'date' || field.fieldType === 'month')) {
+    return resolution({
+      fieldId: field.id,
+      status: 'missing_information',
+      source: 'none',
+      confidence: 'low',
+      requiresReview: true,
+      sensitive: false,
+      reason: 'A date is a matter of record and is never suggested. Enter or confirm it yourself.',
+      warnings: ['Dates are never generated, and never defaulted to today.'],
+    });
+  }
   if (aiSuggestion && mayReasonAbout(canonical)) {
     const matched = matchAgainstOptions(aiSuggestion.value);
     if (matched && 'failure' in matched) return matched.failure;

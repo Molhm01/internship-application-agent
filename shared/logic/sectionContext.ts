@@ -77,6 +77,14 @@ const GENERIC_LABELS: Readonly<Record<string, Partial<Record<SectionDomain, stri
   to: { experience: 'employment end date' },
   school: { education: 'school' },
   'graduation date': { education: 'graduation date' },
+  // An education block labels its columns as bare nouns too, and two of them
+  // are ambiguous outside it: "Completion Date" is a graduation under an
+  // education heading and an employment end date under a work one, and
+  // "Program" is a degree here and nothing this understands elsewhere.
+  'completion date': { education: 'graduation date', experience: 'employment end date' },
+  program: { education: 'degree' },
+  degree: { education: 'degree' },
+  institution: { education: 'school' },
 };
 
 /** The domain a section heading names, or null when it names none. */
