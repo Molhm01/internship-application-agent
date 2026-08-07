@@ -240,20 +240,15 @@ describe('custom dropdowns', () => {
     // entirely — not failed, not outstanding, simply absent from the report
     // while sitting unanswered on the page.
     //
-    // It is now discovered, opened, and its two lazily-mounted choices are
-    // read. What it is *offered* is wrong — the intent mapping reads
-    // "Graduated?" as the graduation date and hands a date to a Yes/No control
-    // — and the engine's job is to refuse that rather than force something
-    // through, which is what `OPTION_NOT_FOUND` over two discovered options
-    // records. The intent mapping is education-phase work and is deliberately
-    // untouched here.
+    // It is now discovered, opened, and its two lazily-mounted choices are read
+    // and answered: the saved education record is in progress, so the honest
+    // answer is No. This previously failed twice over — the control was never
+    // scanned at all, and the question was mapped to the graduation *date*, so
+    // a date was offered to a Yes/No list.
     const record = trace?.fields.find((entry) => /graduated/i.test(entry.label));
-    expect(record?.dropdown).toMatchObject({
-      kind: 'aria_combobox',
-      optionCount: 2,
-      failureCode: 'OPTION_NOT_FOUND',
-    });
-    expect(displayed('graduated')).toBe('');
+    expect(record?.dropdown).toMatchObject({ kind: 'aria_combobox', optionCount: 2 });
+    expect(record?.finalStatus).toBe('FILLED_VERIFIED');
+    expect(displayed('graduated')).toBe('No');
   });
 });
 

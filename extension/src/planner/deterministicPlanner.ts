@@ -3,6 +3,8 @@ import {
   allowsRegionSuffix,
   chooseDiscoverySource,
   mayReasonAbout,
+  isNeverGuessedQuestion,
+  sectionForQuestion,
   contractViolation,
   isTextFieldType,
   repairActionFor,
@@ -39,6 +41,98 @@ export interface PlanContext {
   discoverySource?: string;
   /** See `MatchContext.emailAsUsername`. Decided once, per page, below. */
   emailAsUsername?: boolean;
+  /** Whether a conditional child's parent has switched it on. Built per scan. */
+  conditionalGate?: (field: DetectedField) => ConditionalGate | null;
+  /**
+   * How many saved records back the repeating section this field sits in, or
+   * null when the field is not part of one. Built once per plan from the
+   * profile.
+   */
+  recordCount?: (field: DetectedField) => number | null;
+}
+
+/** "st", "nd", "rd", "th" — so a reason reads as a sentence rather than a log. */
+function ordinalSuffix(value: number): string {
+  if (value % 100 >= 11 && value % 100 <= 13) return 'th';
+  if (value % 10 === 1) return 'st';
+  if (value % 10 === 2) return 'nd';
+  if (value % 10 === 3) return 'rd';
+  return 'th';
+}
+
+/**
+ * How many saved records exist for the section a field belongs to.
+ *
+ * Consulted only for a field the scanner numbered, so a page with one block of
+ * each kind never reaches it.
+ */
+export function recordCountFor(profile: Profile): (field: DetectedField) => number | null {
+  return (field) => {
+    const canonical = field.canonicalKey;
+    if (!canonical) return null;
+    const section = sectionForQuestion(canonical);
+    if (section === 'experience') return profile.experience.length;
+    if (section === 'education') return profile.education.length;
+    return null;
+  };
+}
+
+/** Whether a conditional control's parent currently activates it. */
+export interface ConditionalGate {
+  active: boolean;
+  /** True when the parent holds *some* answer — just not the activating one. */
+  parentAnswered: boolean;
+  reason: string;
+}
+
+/**
+ * Reads the parent's observed answer for every conditional child on the page.
+ *
+ * The evidence is the parent's `currentValue` from this same scan — what the
+ * control actually holds right now, not what the plan intends it to hold. That
+ * distinction is the safety property: a plan that intends to choose "Other" has
+ * not chosen it, and a child filled on that intention is filled against a form
+ * state that does not exist yet.
+ */
+export function conditionalGateFor(
+  fields: readonly DetectedField[],
+): (field: DetectedField) => ConditionalGate | null {
+  const byId = new Map(fields.map((field) => [field.id, field]));
+  return (field) => {
+    const dependency = field.dependsOn;
+    if (!dependency) return null;
+    const parent = byId.get(dependency.fieldId);
+    if (!parent) {
+      return {
+        active: false,
+        parentAnswered: false,
+        reason: `"${field.question}" depends on a question that is no longer on the page.`,
+      };
+    }
+    const held = parent.currentValue;
+    const answers = (Array.isArray(held) ? held : [held])
+      .filter((value) => value !== undefined && value !== '')
+      .map((value) => String(value).trim().toLowerCase());
+    const parentAnswered = answers.length > 0;
+    // Matched against the option's value *and* its label, because a page
+    // spelling "Other School" in the list stores it as `other`, and either is
+    // the same answer.
+    const chosenLabels = (parent.options ?? [])
+      .filter((option) => answers.includes(option.value.trim().toLowerCase()))
+      .map((option) => option.label.trim().toLowerCase());
+    const active = [...answers, ...chosenLabels].some(
+      (value) => value === dependency.value || value.startsWith(`${dependency.value} `),
+    );
+    return {
+      active,
+      parentAnswered,
+      reason: active
+        ? `"${parent.question}" is answered "${dependency.value}", so this applies.`
+        : parentAnswered
+          ? `"${parent.question}" is not answered "${dependency.value}", so this does not apply and stays blank.`
+          : `"${parent.question}" has to be answered first; this fills only if that answer is "${dependency.value}".`,
+    };
+  };
 }
 
 /**
@@ -277,6 +371,49 @@ function planAction(
     warnings: [...match.warnings],
     originalMatch: match,
   };
+  // Before every other test, including the ones that would find a value.
+  //
+  // A conditional child is not a question about the applicant until its parent
+  // says it is. The live run typed the applicant's own name into "If yes,
+  // provide the name, location and relationship of each relative" — the label
+  // contains "name", so the matcher found one — while the relatives question
+  // above it sat unanswered. The form then stated to an employer that the
+  // applicant had a relative working there. Nobody had said that.
+  //
+  // So the parent's *observed* answer decides, and until it activates the child
+  // there is nothing here to plan. Once the parent verifies — Other chosen on a
+  // School dropdown, Yes chosen on the relatives question — the next pass
+  // rescans, sees the activating value, and this returns the real action.
+  // A repeating block the applicant has no record for is not an unanswered
+  // question — it is a block that does not apply.
+  //
+  // A form offers three Employer blocks to everybody; an applicant with one job
+  // fills one of them. Reporting the other two as facts the user must confirm
+  // adds ten cards of outstanding work to a finished application, and filling
+  // them from the first record instead — which is what used to happen — states
+  // an employment history that does not exist.
+  if (field.recordIndex !== undefined && context.recordCount) {
+    const available = context.recordCount(field);
+    if (available !== null && field.recordIndex >= available) {
+      return {
+        ...base,
+        action: 'skip',
+        requiresReview: false,
+        reason: `Your saved history has no ${field.recordIndex + 1}${ordinalSuffix(field.recordIndex + 1)} entry, so this block is correctly left empty.`,
+        warnings: base.warnings,
+      };
+    }
+  }
+  const gate = context.conditionalGate?.(field);
+  if (gate && !gate.active) {
+    return {
+      ...base,
+      action: 'missing_information',
+      requiresReview: gate.parentAnswered,
+      reason: gate.reason,
+      warnings: [...base.warnings, 'A conditional field is never filled ahead of its parent.'],
+    };
+  }
   if (!field.visible) {
     return { ...base, action: 'manual_review', reason: 'Scanned field is not visible.' };
   }
@@ -627,7 +764,25 @@ function planAction(
       // conclusion the profile never stated, and the executor must not be
       // handed it to "match semantically". It is the applicant's to confirm,
       // and it is reported that way rather than as a dropdown that failed.
-      if (option.ambiguous || field.fieldType === 'radio' || !mayReasonAbout(field.canonicalKey)) {
+      // A question nobody may reason about is not deferred either. Work
+      // authorization, sponsorship and the protected characteristics are
+      // answered from an exact saved fact in the form's own words or not at
+      // all: a saved "U.S. Citizen" against a Yes/No control is a legal
+      // conclusion the profile never stated, and the executor must not be
+      // handed it to "match semantically". It is the applicant's to confirm,
+      // and it is reported that way rather than as a dropdown that failed.
+      //
+      // Scoped to *sensitive and eligibility* questions rather than to
+      // `mayReasonAbout`, which is a different rule with a different purpose:
+      // it stops the model inventing a matter of record. Matching a school or a
+      // field of study the applicant already recorded against the options a
+      // page is offering involves no model and invents nothing, and blocking it
+      // here left "Area of Study" at No Selection with the answer in hand.
+      if (
+        option.ambiguous ||
+        field.fieldType === 'radio' ||
+        isNeverGuessedQuestion(field.canonicalKey)
+      ) {
         return {
           ...base,
           action: 'manual_review',
@@ -904,6 +1059,8 @@ export function buildDeterministicPlan(
     location: locationOf(profile),
     hasPhoneCountryCodeField: hasPhoneCountryCodeField(scan),
     emailAsUsername: allowsEmailAsUsername(scan),
+    conditionalGate: conditionalGateFor(scan.fields),
+    recordCount: recordCountFor(profile),
     ...(profile.preferences?.discoverySource
       ? { discoverySource: profile.preferences.discoverySource }
       : {}),

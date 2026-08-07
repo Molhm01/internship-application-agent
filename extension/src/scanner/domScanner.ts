@@ -1391,12 +1391,110 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
 
   fields.push(...byIdentity.values());
   markEmbeddedPhoneCodeControls(fields, controlOwners);
+  // Children first: a conditional child must already be marked as one before
+  // the records are numbered, because it must not consume a slot.
+  markConditionalChildren(fields);
+  markRepeatedRecords(fields);
 
   if (fields.length === 0) warnings.push('No eligible application fields were found.');
   if (fields.some((field) => field.sourceSignals.includes('unlabelled'))) {
     warnings.push('One or more controls have no accessible label.');
   }
   return { fields, warnings, census };
+}
+
+/**
+ * Numbers the controls of a repeating block, so the second Employer block is
+ * answered from the second saved job rather than from the first one again.
+ *
+ * Counted by occurrence rather than by container. A repeating block has no
+ * reliable markup signature — iCIMS wraps each in a `<div>`, Taleo in a
+ * `<fieldset>`, Workday in neither — but it does have a reliable *ordering*: the
+ * Nth "Company Name" on a page belongs to the Nth employer, and so does the Nth
+ * "From Date" beside it. Counting each canonical question's own occurrences
+ * therefore numbers the blocks without having to recognise one.
+ *
+ * Restricted to the two sections that genuinely repeat. A page with two
+ * "Email Address" controls is a page with a confirmation box, not a second
+ * applicant, and numbering those would invent a record that does not exist.
+ */
+function markRepeatedRecords(fields: DetectedField[]): void {
+  const seen = new Map<string, number>();
+  for (const [index, field] of fields.entries()) {
+    const canonical = field.canonicalKey;
+    if (!canonical) continue;
+    // "If other, enter School/Institution Name" is the *same* question as the
+    // School dropdown above it, asked a second way — not a second school. It
+    // was counted as one, so it resolved to `education[1]`, which does not
+    // exist, and the box the applicant's school belongs in was reported as a
+    // block correctly left empty.
+    if (field.dependsOn) continue;
+    const section = sectionForQuestion(canonical);
+    if (section !== 'experience' && section !== 'education') continue;
+    const occurrence = seen.get(canonical) ?? 0;
+    seen.set(canonical, occurrence + 1);
+    // Index 0 is left implicit: a form with one block of each kind carries no
+    // record indices at all, and nothing downstream has to special-case it.
+    if (occurrence === 0) continue;
+    fields[index] = detectedFieldSchema.parse({ ...field, recordIndex: occurrence });
+  }
+}
+
+/**
+ * Wording that makes a control the child of the question above it.
+ *
+ * "If yes, …" and "If other, please specify" are the two the live forms use, and
+ * both name their own activation value in the label. That is the whole signal:
+ * the page is stating, in words, that this control applies only when the
+ * previous question was answered a particular way.
+ */
+const CONDITIONAL_CHILD = /^if\s+(yes|no|other|another|none)\b/i;
+
+/**
+ * Links a conditional control to the question that switches it on.
+ *
+ * The parent is the nearest *preceding* control that offers choices, because
+ * that is what "if yes" refers to — the question just asked. Nothing here reads
+ * a value or fills anything; it records a relationship the planner and the
+ * executor both refuse to act against.
+ *
+ * This is the repair for the worst thing the live run did: it typed the
+ * applicant's own name into "If yes, provide the name, location and
+ * relationship of each relative", because the label contains the word "name",
+ * while the relatives question above it was never answered at all. The form
+ * then stated to the employer that the applicant had a relative working there.
+ */
+function markConditionalChildren(fields: DetectedField[]): void {
+  const offersChoices = (field: DetectedField): boolean =>
+    field.fieldType === 'select' ||
+    field.fieldType === 'radio' ||
+    field.fieldType === 'combobox' ||
+    field.fieldType === 'checkbox';
+
+  for (const [index, field] of fields.entries()) {
+    const match = CONDITIONAL_CHILD.exec(field.label.trim());
+    if (!match?.[1]) continue;
+    let parent: DetectedField | undefined;
+    for (let back = index - 1; back >= 0; back -= 1) {
+      const candidate = fields[back];
+      if (candidate && offersChoices(candidate)) {
+        parent = candidate;
+        break;
+      }
+    }
+    // A conditional child with no question above it to depend on is left alone
+    // rather than guessed at. It stays an ordinary field, and an ordinary field
+    // with no saved answer is the user's.
+    if (!parent) continue;
+    fields[index] = detectedFieldSchema.parse({
+      ...field,
+      dependsOn: { fieldId: parent.id, value: match[1].toLowerCase() },
+      // The parent's selector as well as its id, because the executor checks
+      // this against the *live* page rather than against the scan: a field id
+      // identifies a question, and only a selector finds the control.
+      metadata: { ...field.metadata, dependsOnSelector: parent.selector },
+    });
+  }
 }
 
 /**

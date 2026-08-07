@@ -90,6 +90,10 @@ export const ERROR_CODES = [
   // the difference between "the page would not take it" and "you have to answer
   // this one" survives all the way to the badge.
   'ANSWER_UNKNOWN',
+  // A conditional control whose parent question does not currently activate it.
+  // Not a failure: the question does not apply yet, and stating an answer to it
+  // anyway is what put the applicant's own name in a relatives-detail box.
+  'PARENT_ANSWER_REQUIRED',
   'LOCATION_NOT_FOUND',
   'LOCATION_AMBIGUOUS',
   'PHONE_COUNTRY_CODE_NOT_FOUND',
@@ -292,6 +296,8 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'This control still has no choices, because the field it depends on has not populated it yet. Retry once that field is set.',
   ANSWER_UNKNOWN:
     'Nothing saved answers this question, so nothing was selected. Answer it yourself, or save the fact in your profile and retry.',
+  PARENT_ANSWER_REQUIRED:
+    'This only applies when the question above it is answered a particular way. Answer that one first, or leave this blank.',
   LOCATION_NOT_FOUND:
     'This list offers no location matching your saved city, state, and country. Choose one yourself.',
   LOCATION_AMBIGUOUS:

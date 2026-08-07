@@ -34,6 +34,14 @@ export const AI_PROHIBITED_QUESTIONS: readonly CanonicalQuestion[] = [
   'job_title',
   'employment_start_date',
   'employment_end_date',
+  // How a role was classified and why it ended are matters of record too, and
+  // the model has no honest way to reach either: an employer named "Freelance"
+  // is not evidence about how the work was classified, and nothing at all
+  // implies a reason for leaving. With no saved fact these are the applicant's
+  // to answer, and the reason they are shown must say so rather than blaming a
+  // page analysis that was never going to help.
+  'employment_type',
+  'reason_for_leaving',
   'employment_history',
   'years_of_experience',
   'school',
@@ -56,6 +64,10 @@ export const AI_PROHIBITED_QUESTIONS: readonly CanonicalQuestion[] = [
   'degree_level',
   'major',
   'minor',
+  // The kind of institution, and whether the qualification was awarded. Both
+  // read off the saved education record; neither is ever guessed at.
+  'education_type',
+  'graduated',
   // Enrolment now, and enrolment during a term the employer has not stated.
   'education_status',
   'enrolled_during_internship',

@@ -51,6 +51,15 @@ export const CANONICAL_QUESTIONS = [
   'minor',
   'gpa',
   'degree_level',
+  // The *kind* of institution — High School, College/University, Trade School —
+  // which is not the degree, not its level, and not the subject. Conflating it
+  // with `degree_level` is why an "Education Type" control offering
+  // institution kinds was matched against "Bachelor's Degree" and left unset.
+  'education_type',
+  // Whether the qualification was actually awarded. Distinct from
+  // `graduation_date`: a form asking "Graduated?" wants Yes or No, and offering
+  // it a date matched no option on any list.
+  'graduated',
   // "Are you currently a university student?" — a fact about enrolment now,
   // answered from an active education record and from nothing else.
   'education_status',
@@ -79,6 +88,13 @@ export const CANONICAL_QUESTIONS = [
   'responsibilities',
   'employment_start_date',
   'employment_end_date',
+  // Structured facts about one past job that the profile records per role.
+  // Without these the controls were unnamed: "Employment Type" and "Reason for
+  // Leaving" resolved to no canonical question at all, so the planner reported
+  // them as waiting on an analysis that had nothing to say about them, and they
+  // sat at "No Selection" on every run.
+  'employment_type',
+  'reason_for_leaving',
   'years_of_experience',
   // Free-text summaries of prior work and prior projects, distinct from the
   // structured employer/title controls above.
@@ -136,6 +152,13 @@ export const CANONICAL_QUESTIONS = [
   'previously_applied',
   'previously_interviewed',
   'family_member_employed',
+  // "Are you under any contract or employment restriction with a current or
+  // previous employer?" — a legal fact about the applicant's own agreements
+  // that no profile field states. It carried the word "employer", so it matched
+  // the `employer` question and the planner offered a company *name* to a
+  // Yes/No control, which the page refused and the report called a failed
+  // autofill. It is its own question, and it is never answered from inference.
+  'employment_restriction',
   // Opt-in only, and never ticked from silence.
   'marketing_text_consent',
   // Which locations and which industry the applicant is interested in.
@@ -230,6 +253,8 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   minor: 'education',
   gpa: 'education',
   degree_level: 'education',
+  education_type: 'education',
+  graduated: 'education',
   education_status: 'education',
   enrolled_during_internship: 'education',
   education_start_date: 'education',
@@ -245,6 +270,8 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   job_title: 'experience',
   employment_start_date: 'experience',
   employment_end_date: 'experience',
+  employment_type: 'experience',
+  reason_for_leaving: 'experience',
   years_of_experience: 'experience',
   employment_history: 'experience',
   project_experience: 'projects',
@@ -294,6 +321,7 @@ export const CANONICAL_QUESTION_SECTIONS: Record<CanonicalQuestion, FieldSection
   previously_applied: 'additional_questions',
   previously_interviewed: 'additional_questions',
   family_member_employed: 'additional_questions',
+  employment_restriction: 'additional_questions',
   marketing_text_consent: 'additional_questions',
   preferred_locations: 'additional_questions',
   industry: 'additional_questions',

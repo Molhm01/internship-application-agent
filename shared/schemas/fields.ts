@@ -229,6 +229,36 @@ export const detectedFieldSchema = z.object({
   currentValue: fieldValueSchema.optional(),
   options: z.array(fieldOptionSchema).optional(),
   section: fieldSectionSchema.optional(),
+  /**
+   * Which repetition of a repeating block this control belongs to.
+   *
+   * 0 for the first Employer block, 1 for the second, and so on. Absent for a
+   * control that is not in a repeating block.
+   *
+   * Without it every "Company Name" on the page was the *same* canonical
+   * question, so all three of a form's employer blocks were answered from
+   * `experience[0]` — an application that listed one real job three times, with
+   * the same title and the same dates, which is a fabricated employment history.
+   */
+  recordIndex: z.number().int().nonnegative().max(50).optional(),
+  /**
+   * The control whose answer switches this one on, and the answer that does it.
+   *
+   * A form's "If yes, provide the name and relationship of each relative" is not
+   * a question about the applicant; it is a *child* of the relatives dropdown
+   * above it, and it must stay empty until that dropdown says Yes. On the live
+   * run it was filled with the applicant's own name while its parent sat
+   * unanswered — a statement to the employer that nobody had made.
+   *
+   * Carries a field id and a value, never a selector or an instruction.
+   */
+  dependsOn: z
+    .object({
+      fieldId: idSchema,
+      /** The parent answer that activates this control, normalized. */
+      value: z.string().max(200),
+    })
+    .optional(),
   placeholder: z.string().max(1000).optional(),
   minLength: z.number().int().nonnegative().max(50_000).optional(),
   maxLength: z.number().int().positive().max(50_000).optional(),

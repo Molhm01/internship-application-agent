@@ -347,6 +347,21 @@ const RULES: readonly Rule[] = [
     ],
   },
   {
+    // Ahead of `graduation_date`, whose closing `/\bgraduat/` catch-all claims
+    // anything containing the word — including a bare "Graduated?".
+    //
+    // That is what happened: a Yes/No control matched the graduation *date*
+    // question, the planner offered it "May 2027", no option on the list said
+    // that, and the run reported a failed autofill for a question the profile
+    // answers plainly from the record's own completion status.
+    question: 'graduated',
+    // Deliberately only the yes/no wordings. "Degree Awarded" is *not* one of
+    // them: "Highest Degree Awarded" asks which credential, not whether there
+    // is one, and claiming that phrase here turned a degree dropdown into a
+    // Yes/No question.
+    patterns: [/^graduated\b/, /\bdid you graduate\b/, /\bhave you graduated\b/],
+  },
+  {
     question: 'graduation_date',
     patterns: [
       /\b(graduation|grad)\b.*\b(date|year|month)\b/,
@@ -402,6 +417,19 @@ const RULES: readonly Rule[] = [
       /\beducation level\b/,
     ],
   },
+  // Both ahead of `degree`, whose bare `\bdegree\b` would claim either.
+  {
+    // The *kind of institution*, not the credential. Answered from the education
+    // record's institution, and never from its degree level: an "Education Type"
+    // control offering High School / College / Trade School was matched against
+    // "Bachelor's Degree" and left at No Selection.
+    question: 'education_type',
+    patterns: [
+      /\beducation\s?(type|level type)\b/,
+      /\btype of (school|institution|education)\b/,
+      /\b(school|institution)\s?type\b/,
+    ],
+  },
   { question: 'degree', patterns: [/\bdegree\b/, /\bqualification\b/, /^program$/] },
   {
     question: 'major',
@@ -411,11 +439,54 @@ const RULES: readonly Rule[] = [
   { question: 'gpa', patterns: [/\bgpa\b/, /\b(cumulative )?grade point average\b/] },
 
   // Experience
+  // Ahead of `employer`, whose `\bemployer\b` would otherwise claim it.
+  //
+  // "Are you under any contract or employment restriction with a current or
+  // previous employer?" is a legal question about the applicant, and matching it
+  // to `employer` offered a saved company *name* to a Yes/No dropdown. The page
+  // refused it and the run reported a failed autofill for a question nothing
+  // saved could answer in the first place.
+  {
+    question: 'employment_restriction',
+    patterns: [
+      /\b(contract|employment|non ?compete|noncompete|non ?solicitation)\b.*\b(restriction|agreement|covenant)\b/,
+      /\b(restriction|restricted|bound)\b.*\b(employer|employment|contract)\b/,
+    ],
+  },
   { question: 'employer', patterns: [/\b(employer|company name|organization)\b/] },
   { question: 'job_title', patterns: [/\b(job|position|role)\s?title\b/, /^title$/, /^position$/] },
   {
+    // "I currently work here", beside a job's end date. *Not* "are you currently
+    // employed by, or have you ever worked for, this company" — that is a
+    // question about the employer, it is `previously_employed`, and it is
+    // unanswerable from the profile.
+    //
+    // The negative lookahead is the repair. The live form's wording opens with
+    // "currently employed by", so this rule claimed it, the planner answered it
+    // from `experience[0].current === false`, and the application asserted to
+    // the employer that the applicant had never worked there. That is a
+    // fabrication, not a mis-fill: a blank would have been honest and this was
+    // not.
     question: 'currently_employed',
-    patterns: [/\bcurrently (employed|work(ing)? here)\b/, /\bi currently work\b/, /\bpresent\b$/],
+    patterns: [
+      /^(?!.*\b(ever|previously|before|our company|this company|subsidiar)\b).*\bcurrently (employed|work(ing)? here)\b/,
+      /\bi currently work\b/,
+      /\bpresent\b$/,
+    ],
+  },
+  {
+    // What kind of engagement a past role was. Never inferred from the company's
+    // name: "Freelance" as an employer says nothing the profile has stated about
+    // how the work was classified.
+    question: 'employment_type',
+    patterns: [
+      /\b(employment|job|work|position)\s?(type|status|classification)\b/,
+      /\btype of (employment|work)\b/,
+    ],
+  },
+  {
+    question: 'reason_for_leaving',
+    patterns: [/\breason for leaving\b/, /\bwhy did you leave\b/, /\breason for departure\b/],
   },
   {
     question: 'responsibilities',
@@ -426,10 +497,18 @@ const RULES: readonly Rule[] = [
   },
   { question: 'years_of_experience', patterns: [/\byears? of (relevant )?experience\b/] },
   {
+    // "From Date" is how the live form labels an employment start, and it
+    // matched nothing at all: the control carried no canonical question, so the
+    // planner reported it as waiting on an analysis that had no opinion about
+    // it, and it stayed blank on every run. "To Date" is its pair.
     question: 'employment_start_date',
-    patterns: [/^(?!.*\b(earliest|available|availability|when can you)\b).*\bstart date\b/],
+    patterns: [
+      /^(?!.*\b(earliest|available|availability|when can you)\b).*\bstart date\b/,
+      /^from date$/,
+      /^date from$/,
+    ],
   },
-  { question: 'employment_end_date', patterns: [/\bend date\b/] },
+  { question: 'employment_end_date', patterns: [/\bend date\b/, /^to date$/, /^date to$/] },
   {
     question: 'employment_history',
     patterns: [

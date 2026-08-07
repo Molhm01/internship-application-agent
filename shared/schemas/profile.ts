@@ -116,6 +116,20 @@ export const experienceEntrySchema = z.object({
   startDate: partialDateSchema.optional(),
   endDate: partialDateSchema.optional(),
   current: z.boolean().default(false),
+  /**
+   * How this engagement was classified, in the applicant's own words.
+   *
+   * Optional, and absent means *unknown* rather than "full time". An
+   * application asking "Employment Type" is asking a factual question about a
+   * past role, and the only honest sources are what the applicant recorded and
+   * nothing else — an employer named "Freelance" is not evidence that the work
+   * was classified as freelance, and a form that offers Contract, Self-Employed
+   * and Internship separately is asking a distinction the company name cannot
+   * settle.
+   */
+  employmentType: z.string().max(100).optional(),
+  /** Why the role ended, when the applicant recorded it. Never invented. */
+  reasonForLeaving: z.string().max(500).optional(),
   responsibilities: z.array(z.string().max(2000)).default([]),
   achievements: z.array(z.string().max(2000)).default([]),
 });

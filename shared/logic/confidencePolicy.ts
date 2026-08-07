@@ -1,4 +1,4 @@
-import type { CanonicalQuestion } from '../constants/questions.js';
+import { SENSITIVE_CANONICAL_QUESTIONS, type CanonicalQuestion } from '../constants/questions.js';
 
 /**
  * How sure the agent has to be before it answers a question without asking.
@@ -68,6 +68,7 @@ export const ALWAYS_CONFIRM_QUESTIONS: readonly CanonicalQuestion[] = [
   'previously_applied',
   'previously_interviewed',
   'family_member_employed',
+  'employment_restriction',
   'referral',
   'referral_source',
   'referral_name',
@@ -98,6 +99,27 @@ export const SAVED_ANSWER_REQUIRED_QUESTIONS: readonly CanonicalQuestion[] = [
 
 export function alwaysNeedsConfirmation(question: CanonicalQuestion | undefined): boolean {
   return question !== undefined && ALWAYS_CONFIRM_QUESTIONS.includes(question);
+}
+
+/**
+ * Questions no automatic policy may answer from inference — protected
+ * characteristics, employer-relationship facts, and eligibility statements.
+ *
+ * One predicate rather than three call sites assembling the same union, because
+ * the planner and the approval policy must not be able to disagree about which
+ * questions those are. Note what it is *not*: a list of matters of record. A
+ * school, a field of study, or an employment start date the applicant already
+ * wrote down may be matched against a form's own wording freely — that involves
+ * no inference and no model, and refusing it left correctly-answerable
+ * dropdowns at "No Selection".
+ */
+export function isNeverGuessedQuestion(question: CanonicalQuestion | undefined): boolean {
+  if (question === undefined) return false;
+  return (
+    SENSITIVE_CANONICAL_QUESTIONS.includes(question) ||
+    ALWAYS_CONFIRM_QUESTIONS.includes(question) ||
+    SAVED_ANSWER_REQUIRED_QUESTIONS.includes(question)
+  );
 }
 
 export function needsExplicitlySavedAnswer(question: CanonicalQuestion | undefined): boolean {

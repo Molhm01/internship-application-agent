@@ -188,6 +188,35 @@ function resolvedCanonical(field: DetectedField): {
       };
 }
 
+/**
+ * The kind of institution an education record describes.
+ *
+ * A closed mapping over the credential the applicant recorded, and `undefined`
+ * for anything it does not cover — an unmapped degree makes "Education Type" the
+ * user's question rather than a guess between College and Trade School.
+ *
+ * Deliberately *not* the degree, the degree level, or the subject. The form's
+ * "Education Type" list names places of study, and matching "Bachelor's Degree"
+ * against High School / College / Trade School found nothing and left the
+ * control at No Selection on every run.
+ */
+function educationTypeFor(
+  education: { degree?: string; degreeLevel?: string } | undefined,
+): string | undefined {
+  const text = normalizeLabel(`${education?.degreeLevel ?? ''} ${education?.degree ?? ''}`);
+  if (!text) return undefined;
+  if (/\b(high school|secondary school|ged|diploma)\b/.test(text)) return 'High School';
+  if (/\b(certificate|vocational|trade|apprenticeship)\b/.test(text)) return 'Trade School';
+  if (
+    /\b(associate|bachelor|baccalaureate|master|doctor|doctorate|phd|undergraduate|graduate|bs|ba|ms|ma|mba)\b/.test(
+      text,
+    )
+  ) {
+    return 'College/University';
+  }
+  return undefined;
+}
+
 function profileValue(
   profile: Profile,
   canonical: CanonicalQuestion,
@@ -203,7 +232,16 @@ function profileValue(
   const educationRef = (key: string): string => `profile.education[${educationIndex}].${key}`;
   const degrees = degreeAnswersFor(profile);
   const enrollment = currentEnrollment(profile);
-  const experience = profile.experience[0];
+  // The block this control belongs to, not "whichever job was typed first".
+  //
+  // Every "Company Name" on a page shares one canonical question, so all three
+  // of a form's employer blocks used to be answered from `experience[0]` — an
+  // application listing one real job three times, with the same title and the
+  // same dates. A block with no saved record behind it resolves to nothing here
+  // and is correctly left untouched.
+  const experienceIndex = field.recordIndex ?? 0;
+  const experience = profile.experience[experienceIndex];
+  const experienceRef = (key: string): string => `profile.experience[${experienceIndex}].${key}`;
   // The applicant's stored code first, the residence country only as a
   // fallback. Deriving it from the country meant a profile with a phone and no
   // address had nothing to put in a country-code control — and the phone number
@@ -294,29 +332,43 @@ function profileValue(
     // these fell through to "no saved value" while the profile held all of
     // them. The most recent role is used, because that is the one an
     // application's first experience block asks about.
-    employer: { reference: 'profile.experience[0].employer', value: experience?.employer },
-    job_title: { reference: 'profile.experience[0].title', value: experience?.title },
+    employer: { reference: experienceRef('employer'), value: experience?.employer },
+    job_title: { reference: experienceRef('title'), value: experience?.title },
     // The job's location, never the applicant's address.
     experience_location: {
-      reference: 'profile.experience[0].location',
+      reference: experienceRef('location'),
       value: experience?.location,
     },
     employment_start_date: {
-      reference: 'profile.experience[0].startDate',
+      reference: experienceRef('startDate'),
       value: experience?.startDate,
     },
     employment_end_date: {
-      reference: 'profile.experience[0].endDate',
+      reference: experienceRef('endDate'),
       // A current role has no end date, and inventing one would misstate the
       // applicant's history.
       value: experience?.current ? undefined : experience?.endDate,
     },
     currently_employed: {
-      reference: 'profile.experience[0].current',
+      reference: experienceRef('current'),
       value: experience?.current,
     },
+    // Both answered from the record and from nothing else. `undefined` here is
+    // the whole point: no saved classification means the question is the
+    // applicant's to answer, not the agent's to infer. An employer called
+    // "Freelance" is not a statement that the work was classified as freelance,
+    // and a form offering Contract, Self-Employed and Internship separately is
+    // asking a distinction a company name cannot settle.
+    employment_type: {
+      reference: experienceRef('employmentType'),
+      value: experience?.employmentType,
+    },
+    reason_for_leaving: {
+      reference: experienceRef('reasonForLeaving'),
+      value: experience?.reasonForLeaving,
+    },
     responsibilities: {
-      reference: 'profile.experience[0].responsibilities',
+      reference: experienceRef('responsibilities'),
       value: experience?.responsibilities.length
         ? experience.responsibilities.join('\n')
         : undefined,
@@ -379,6 +431,32 @@ function profileValue(
     education_status: {
       reference: enrollment?.reference ?? 'profile.education',
       value: enrollment?.enrolled,
+    },
+    // Whether the qualification was actually awarded — Yes or No, from the
+    // record's own status and from nothing else.
+    //
+    // A record marked `in_progress` answers No; one marked `completed` answers
+    // Yes. A record that states neither answers nothing, because a graduation
+    // date in the future is not a completion and today's date is not evidence
+    // about anybody's degree. This control previously matched
+    // `graduation_date`, so the planner offered a *date* to a Yes/No dropdown,
+    // no option matched, and the run reported a failed autofill.
+    graduated: {
+      reference: educationRef('status'),
+      value:
+        education?.status === 'completed'
+          ? true
+          : education?.status === 'in_progress'
+            ? false
+            : undefined,
+    },
+    // The *kind* of institution, read off the record the applicant is actually
+    // in. The option list ("High School", "College/University", "Trade School")
+    // is matched against this by the dropdown engine, which refuses anything
+    // that is not a defensible equivalent.
+    education_type: {
+      reference: educationRef('degree'),
+      value: educationTypeFor(education),
     },
     // Deliberately unanswerable. Whether the applicant will still be enrolled
     // during a term the employer has not stated is not something a graduation

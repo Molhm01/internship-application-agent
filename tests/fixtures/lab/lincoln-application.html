@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lincoln-style application — fixture</title>
+  </head>
+  <body>
+    <!--
+      The shape of the live application that regressed, reproduced control by
+      control. The employer name is fictional ("Northwind Industrial"): what is
+      being reproduced is the *layout* — a dependent state select, three repeated
+      experience blocks of which only one has a saved record, company-specific
+      questions nothing can answer, a conditional child textarea, and two
+      dropdown/"If other" pairs.
+
+      Every value here is fictional. The submit button exists to be *not* clicked.
+    -->
+    <h1>Application</h1>
+    <form id="application" onsubmit="return false;">
+      <fieldset>
+        <legend>Profile</legend>
+
+        <label for="firstName">First Name *</label>
+        <input id="firstName" name="firstName" type="text" required />
+
+        <label for="lastName">Last Name *</label>
+        <input id="lastName" name="lastName" type="text" required />
+
+        <label for="email">Email Address *</label>
+        <input id="email" name="email" type="email" required />
+
+        <label for="phone">Phone Number *</label>
+        <input id="phone" name="phone" type="tel" required />
+
+        <label for="addressLine1">Street Address *</label>
+        <input id="addressLine1" name="addressLine1" type="text" required />
+
+        <label for="city">City *</label>
+        <input id="city" name="city" type="text" required />
+
+        <label for="postalCode">Zip/Postal Code *</label>
+        <input id="postalCode" name="postalCode" type="text" required />
+
+        <label for="country">Country *</label>
+        <select id="country" name="country" required>
+          <option value="">No Selection</option>
+          <option value="CA">Canada</option>
+          <option value="MX">Mexico</option>
+          <option value="US">United States of America</option>
+        </select>
+
+        <!-- Replaced, not mutated, when Country changes. -->
+        <label for="state">State/Province *</label>
+        <select id="state" name="state" required>
+          <option value="">Select a country first</option>
+        </select>
+
+        <!-- Company-specific facts. Nothing saved answers these. -->
+        <label for="priorEmployment"
+          >Are you currently employed by, or have you ever worked for, Northwind Industrial or any
+          of its subsidiaries? *</label
+        >
+        <select id="priorEmployment" name="priorEmployment" required>
+          <option value="">No Selection</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+
+        <label for="employmentRestriction"
+          >Are you under any contract or employment restriction with a current or previous employer?
+          *</label
+        >
+        <select id="employmentRestriction" name="employmentRestriction" required>
+          <option value="">No Selection</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+
+        <label for="relativesEmployed"
+          >Do you have any relatives or household members employed by our Company? *</label
+        >
+        <select id="relativesEmployed" name="relativesEmployed" required>
+          <option value="">No Selection</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+
+        <!--
+          The conditional child. It was filled with the applicant's own name on
+          the live run while its parent above sat unanswered — the failure this
+          fixture exists to make impossible.
+        -->
+        <label for="relativeDetails"
+          >If yes, please provide the name, location, and relationship of each relative</label
+        >
+        <textarea
+          id="relativeDetails"
+          name="relativeDetails"
+          data-depends-on="relativesEmployed"
+          data-depends-value="yes"
+        ></textarea>
+      </fieldset>
+
+      <fieldset>
+        <legend>Work Experience</legend>
+
+        <!-- Block 1: a saved record exists for this one. -->
+        <div class="experience-block" data-experience-index="0">
+          <h3>Employer 1</h3>
+          <label for="employer0">Company Name</label>
+          <input id="employer0" name="employer0" type="text" />
+
+          <label for="title0">Position Title</label>
+          <input id="title0" name="title0" type="text" />
+
+          <label for="from0">From Date</label>
+          <input id="from0" name="from0" type="month" />
+
+          <label for="to0">End Date</label>
+          <input id="to0" name="to0" type="month" />
+
+          <label for="currentlyEmployed0">I currently work here</label>
+          <input id="currentlyEmployed0" name="currentlyEmployed0" type="checkbox" />
+
+          <label for="employmentType0">Employment Type</label>
+          <select id="employmentType0" name="employmentType0">
+            <option value="">No Selection</option>
+            <option value="ft">Full-Time</option>
+            <option value="pt">Part-Time</option>
+            <option value="intern">Internship</option>
+            <option value="contract">Contract</option>
+            <option value="self">Self-Employed</option>
+          </select>
+
+          <label for="reason0">Reason for Leaving</label>
+          <select id="reason0" name="reason0">
+            <option value="">No Selection</option>
+            <option value="still">Still employed</option>
+            <option value="contract-end">End of contract</option>
+            <option value="school">Returned to school</option>
+            <option value="voluntary">Voluntary resignation</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <!-- Blocks 2 and 3: no saved record. Must stay untouched. -->
+        <div class="experience-block" data-experience-index="1">
+          <h3>Employer 2</h3>
+          <label for="employer1">Company Name</label>
+          <input id="employer1" name="employer1" type="text" />
+          <label for="title1">Position Title</label>
+          <input id="title1" name="title1" type="text" />
+          <label for="from1">From Date</label>
+          <input id="from1" name="from1" type="month" />
+          <label for="to1">End Date</label>
+          <input id="to1" name="to1" type="month" />
+          <label for="employmentType1">Employment Type</label>
+          <select id="employmentType1" name="employmentType1">
+            <option value="">No Selection</option>
+            <option value="ft">Full-Time</option>
+            <option value="pt">Part-Time</option>
+            <option value="intern">Internship</option>
+          </select>
+          <label for="reason1">Reason for Leaving</label>
+          <select id="reason1" name="reason1">
+            <option value="">No Selection</option>
+            <option value="still">Still employed</option>
+            <option value="voluntary">Voluntary resignation</option>
+          </select>
+        </div>
+
+        <div class="experience-block" data-experience-index="2">
+          <h3>Employer 3</h3>
+          <label for="employer2">Company Name</label>
+          <input id="employer2" name="employer2" type="text" />
+          <label for="title2">Position Title</label>
+          <input id="title2" name="title2" type="text" />
+          <label for="from2">From Date</label>
+          <input id="from2" name="from2" type="month" />
+          <label for="to2">End Date</label>
+          <input id="to2" name="to2" type="month" />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Education</legend>
+
+        <label for="educationType">Education Type *</label>
+        <select id="educationType" name="educationType" required>
+          <option value="">No Selection</option>
+          <option value="hs">High School</option>
+          <option value="college">College/University</option>
+          <option value="trade">Trade School</option>
+          <option value="other">Other</option>
+        </select>
+
+        <label for="educationCountry">Education Country *</label>
+        <select id="educationCountry" name="educationCountry" required>
+          <option value="">No Selection</option>
+          <option value="CA">Canada</option>
+          <option value="US">United States of America</option>
+        </select>
+
+        <!-- Replaced when Education Country changes. -->
+        <label for="educationState">Education State/Province *</label>
+        <select id="educationState" name="educationState" required>
+          <option value="">Select a country first</option>
+        </select>
+
+        <label for="school">School/Institution Name *</label>
+        <select id="school" name="school" required>
+          <option value="">No Selection</option>
+          <option value="rutgers">Rutgers University</option>
+          <option value="princeton">Princeton University</option>
+          <option value="other">Other School</option>
+        </select>
+        <label for="schoolOther">If other, enter School/Institution Name</label>
+        <input
+          id="schoolOther"
+          name="schoolOther"
+          type="text"
+          data-depends-on="school"
+          data-depends-value="other"
+        />
+
+        <label for="areaOfStudy">Area of Study *</label>
+        <select id="areaOfStudy" name="areaOfStudy" required>
+          <option value="">No Selection</option>
+          <option value="nursing">Nursing</option>
+          <option value="history">History</option>
+          <option value="accounting">Accounting</option>
+          <option value="other">Other</option>
+        </select>
+        <label for="areaOfStudyOther">If other, enter Area of Study</label>
+        <input
+          id="areaOfStudyOther"
+          name="areaOfStudyOther"
+          type="text"
+          data-depends-on="areaOfStudy"
+          data-depends-value="other"
+        />
+
+        <label for="graduated">Graduated? *</label>
+        <select id="graduated" name="graduated" required>
+          <option value="">No Selection</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </fieldset>
+
+      <button id="submit" type="submit">Submit Application</button>
+    </form>
+
+    <script>
+      (function () {
+        var STATES = {
+          US: [
+            ['', 'No Selection'],
+            ['NJ', 'New Jersey'],
+            ['NY', 'New York'],
+            ['CA', 'California'],
+          ],
+          CA: [
+            ['', 'No Selection'],
+            ['ON', 'Ontario'],
+          ],
+          MX: [
+            ['', 'No Selection'],
+            ['JAL', 'Jalisco'],
+          ],
+        };
+
+        /** Replaces a dependent select outright, as the live page does. */
+        function cascade(parentId, childId, childName) {
+          document.getElementById(parentId).addEventListener('change', function (event) {
+            var previous = document.getElementById(childId);
+            var replacement = document.createElement('select');
+            replacement.id = childId;
+            replacement.name = childName;
+            replacement.required = true;
+            var rows = STATES[event.target.value] || [['', 'Select a country first']];
+            rows.forEach(function (row) {
+              var option = document.createElement('option');
+              option.value = row[0];
+              option.textContent = row[1];
+              replacement.append(option);
+            });
+            previous.replaceWith(replacement);
+          });
+        }
+
+        cascade('country', 'state', 'state');
+        cascade('educationCountry', 'educationState', 'educationState');
+
+        /**
+         * A conditional child, gated the way the live form gates it: the box is
+         * left enabled and typeable, and the page simply ignores whatever is in
+         * it unless the parent says so.
+         *
+         * Deliberately *not* `disabled`. A disabled control is skipped by the
+         * scanner, which would make this fixture prove nothing — the live form's
+         * relatives box was perfectly fillable, and the agent filled it with the
+         * applicant's own name while the parent question sat unanswered. The
+         * agent has to decline this by itself.
+         */
+        function gate(childId) {
+          var child = document.getElementById(childId);
+          var parent = document.getElementById(child.getAttribute('data-depends-on'));
+          var wanted = child.getAttribute('data-depends-value');
+          parent.addEventListener('change', function () {
+            if (parent.value !== wanted) child.value = '';
+          });
+        }
+
+        gate('relativeDetails');
+        gate('schoolOther');
+        gate('areaOfStudyOther');
+
+        document.getElementById('submit').addEventListener('click', function () {
+          document.body.setAttribute('data-submitted', 'true');
+        });
+      })();
+    </script>
+  </body>
+</html>

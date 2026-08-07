@@ -282,6 +282,8 @@ export interface FieldDiagnostic {
   label: string;
   section?: string;
   controlType: string;
+  /** Which repetition of a repeating block this control belongs to. */
+  recordIndex?: number;
   required: boolean;
   /** The evidence behind `required`, carried through from the scanner. */
   requiredSource?: RequiredSource;
@@ -526,6 +528,7 @@ export async function runApplicationAutofill(
         label: (field.question || field.label || field.id).slice(0, 300),
         ...(field.section ? { section: field.section } : {}),
         controlType: field.fieldType,
+        ...(field.recordIndex === undefined ? {} : { recordIndex: field.recordIndex }),
         required: field.required,
         ...(field.requiredSource ? { requiredSource: field.requiredSource } : {}),
         ...(field.canonicalKey ? { intent: field.canonicalKey } : {}),
@@ -1421,6 +1424,7 @@ function buildRunTrace(input: {
     ...(entry.section ? { section: entry.section } : {}),
     ...(entry.intent ? { intent: entry.intent } : {}),
     controlType: entry.controlType,
+    ...(entry.recordIndex === undefined ? {} : { recordIndex: entry.recordIndex }),
     required: entry.required,
     ...(entry.requiredSource ? { requiredSource: entry.requiredSource } : {}),
     plannerSource: traceSource(entry.plannerSource),

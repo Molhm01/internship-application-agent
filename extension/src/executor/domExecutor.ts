@@ -136,6 +136,51 @@ function elementContractViolation(element: HTMLElement, action: string): string 
   return `This control is a ${described}, which is typed into rather than chosen from. "${action}" would search the page for an option list that does not exist, so the value was not written. This is a planning defect, not a missing option.`;
 }
 
+/**
+ * Why this conditional control may not be written to, or null when it may.
+ *
+ * Reads the parent control out of the live document and compares what it is
+ * *currently holding* against the value that activates this child. Nothing is
+ * inferred from the plan: a plan that intends to choose "Other" has not chosen
+ * it, and a page where the applicant cleared the answer between the scan and
+ * the fill is a page where the child must stay empty.
+ */
+function conditionalGateViolation(document: Document, field: DetectedField): string | null {
+  const dependency = field.dependsOn;
+  if (!dependency) return null;
+  const parent = field.metadata.dependsOnSelector;
+  if (typeof parent !== 'string' || parent.length === 0) return null;
+
+  const element = allDocumentRoots(document)
+    .map((root) => root.querySelector<HTMLElement>(parent))
+    .find((found): found is HTMLElement => found !== null);
+  if (!element) {
+    return `"${field.question}" only applies when the question above it is answered, and that question is no longer on the page.`;
+  }
+
+  const held: string[] = [];
+  if (element instanceof HTMLSelectElement) {
+    for (const option of Array.from(element.selectedOptions)) {
+      held.push(option.value, option.textContent ?? '');
+    }
+  } else if (element instanceof HTMLInputElement) {
+    if (element.type === 'checkbox' || element.type === 'radio') {
+      if (element.checked) held.push(element.value, 'yes');
+    } else {
+      held.push(element.value);
+    }
+  } else {
+    held.push(element.textContent ?? '');
+  }
+
+  const wanted = dependency.value;
+  const activated = held
+    .map((value) => value.replace(/\s+/g, ' ').trim().toLowerCase())
+    .some((value) => value === wanted || value.startsWith(`${wanted} `));
+  if (activated) return null;
+  return `"${field.question}" applies only when the question above it is answered "${wanted}". It is not, so nothing was written here — a conditional answer is never stated on your behalf.`;
+}
+
 function failure(
   action: DeterministicFillAction,
   code: AgentError['code'],
@@ -388,6 +433,40 @@ export async function executeDomAction(
   const violation = contractViolation(field.fieldType, action.action);
   if (violation) {
     return failure(action, 'UNSUPPORTED_CONTROL', violation.reason, started);
+  }
+  // The second half of the conditional-child contract, checked against the live
+  // page rather than against the plan.
+  //
+  // The planner is the first place this is enforced and this is the second, and
+  // neither trusts the other — the same arrangement as the control-type
+  // contract, and for the same reason. A plan is built from a scan taken some
+  // time ago; the answer that activates a child can be cleared between the two,
+  // by the applicant or by the page. Writing to the child then states something
+  // nobody said. The live run typed the applicant's own name into "If yes,
+  // provide the name and relationship of each relative" beside an unanswered
+  // relatives question, and this is the check that makes that impossible.
+  const gate = conditionalGateViolation(document, field);
+  if (gate) {
+    // `needs_review`, not `failed`. Nothing was attempted and nothing went
+    // wrong: the question does not currently apply. Painting it red would say
+    // the agent tried to answer it and the page refused, which is the opposite
+    // of what happened.
+    return fillExecutionResultSchema.parse({
+      actionId: action.id,
+      fieldId: field.id,
+      status: 'needs_review',
+      expectedValue: action.proposedValue,
+      attempts: 0,
+      durationMs: Math.round(performance.now() - started),
+      error: {
+        code: 'PARENT_ANSWER_REQUIRED',
+        message: gate,
+        fieldId: field.id,
+        recoverable: true,
+        suggestedAction: DEFAULT_ERROR_GUIDANCE.PARENT_ANSWER_REQUIRED,
+        debugContext: {},
+      },
+    });
   }
   const element = findScannedElement(document, field);
   if (!element)

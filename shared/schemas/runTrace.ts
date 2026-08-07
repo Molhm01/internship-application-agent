@@ -80,6 +80,15 @@ export const fieldTraceSchema = z
     /** The canonical intent, when one was resolved. Never the question text. */
     intent: z.string().max(120).optional(),
     controlType: z.string().max(40),
+    /**
+     * Which repetition of a repeating block this control belongs to.
+     *
+     * A number, never a value. Without it, "three employer blocks were filled"
+     * and "one employer was filled into three blocks" are the same record — and
+     * the second is a fabricated employment history that looked, from the
+     * outside, like unusually good coverage.
+     */
+    recordIndex: z.number().int().nonnegative().max(50).optional(),
     required: z.boolean(),
     /**
      * The evidence behind `required`. A vocabulary member, never page text — an
