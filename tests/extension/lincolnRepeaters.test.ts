@@ -170,15 +170,27 @@ interface Harness {
   aiRequests: number;
 }
 
-async function runAgainstFixture(profile: Profile): Promise<Harness> {
-  document.documentElement.innerHTML = readFileSync(FIXTURE, 'utf8').replace(
-    /<!doctype html>/i,
-    '',
-  );
-  for (const script of Array.from(document.querySelectorAll('script'))) {
-    const replacement = document.createElement('script');
-    replacement.textContent = script.textContent;
-    script.replaceWith(replacement);
+/**
+ * @param reload
+ *   Whether to lay the employer's page down fresh before running.
+ *
+ *   A second run has to meet the page the *first* run left behind — already
+ *   grown to three experience blocks and two education blocks, already
+ *   answered. Reloading between runs would hide the only thing the repeat-run
+ *   assertions are about, because every run would start from one empty block
+ *   and press Add exactly as often as the first one did.
+ */
+async function runAgainstFixture(profile: Profile, reload = true): Promise<Harness> {
+  if (reload) {
+    document.documentElement.innerHTML = readFileSync(FIXTURE, 'utf8').replace(
+      /<!doctype html>/i,
+      '',
+    );
+    for (const script of Array.from(document.querySelectorAll('script'))) {
+      const replacement = document.createElement('script');
+      replacement.textContent = script.textContent;
+      script.replaceWith(replacement);
+    }
   }
 
   let current: DeterministicFillPlan | null = null;
@@ -427,6 +439,72 @@ describe('long option lists', () => {
     // The second record's school is not on the list.
     expect(value('school1')).toBe('other_not_listed');
     expect(value('schoolOther1')).toBe('Clifton Technical High School');
+  });
+});
+
+describe('running it a second time over the page the first run left', () => {
+  /**
+   * The duplicate-history failure.
+   *
+   * Pressing Autofill twice is an ordinary thing to do — the applicant corrects
+   * one box and runs it again. If the second run counts records instead of
+   * blocks, it presses Add as often as the first one did and the application
+   * goes out claiming six jobs and four schools, each real one listed twice.
+   *
+   * Nothing here is reset: `reload: false` runs against the grown, answered DOM.
+   */
+  let second: Harness;
+
+  beforeAll(async () => {
+    second = await runAgainstFixture(applicant(), false);
+  }, 300_000);
+
+  it('presses Add for no section, because every record already has its block', () => {
+    for (const kind of ['experience', 'education', 'projects'] as const) {
+      expect(outcomeFor(second, kind).addPressesPerformed).toBe(0);
+    }
+  });
+
+  it('creates no duplicate work-experience block', () => {
+    const outcome = outcomeFor(second, 'experience');
+    expect(outcome.blocksBefore).toBe(3);
+    expect(outcome.blocksAfter).toBe(3);
+    expect(countRepeatedBlocks(document, 'experience')).toBe(3);
+  });
+
+  it('creates no duplicate education block', () => {
+    const outcome = outcomeFor(second, 'education');
+    expect(outcome.blocksBefore).toBe(2);
+    expect(outcome.blocksAfter).toBe(2);
+    expect(countRepeatedBlocks(document, 'education')).toBe(2);
+  });
+
+  it('recognises the blocks it already filled rather than creating more', () => {
+    expect(outcomeFor(second, 'experience').mappings.map((entry) => entry.status)).toEqual([
+      'MATCHED_EXISTING_BLOCK',
+      'MATCHED_EXISTING_BLOCK',
+      'MATCHED_EXISTING_BLOCK',
+    ]);
+    expect(outcomeFor(second, 'education').mappings.map((entry) => entry.status)).toEqual([
+      'MATCHED_EXISTING_BLOCK',
+      'MATCHED_EXISTING_BLOCK',
+    ]);
+  });
+
+  it('leaves every answer the first run established exactly as it was', () => {
+    expect(value('employer0')).toBe('Northwind Robotics');
+    expect(value('employer1')).toBe('Emberfell Systems');
+    expect(value('employer2')).toBe('Tidewatch Repair');
+    expect(value('educationType0')).toBe('bach');
+    expect(value('educationType1')).toBe('hs');
+    expect(value('school0')).toBe('rutgers_university');
+    expect(value('graduated0')).toBe('no');
+    expect(value('graduated1')).toBe('yes');
+    expect(value('state')).toBe('NJ');
+  });
+
+  it('still never clicks submit', () => {
+    expect(document.body.getAttribute('data-submitted')).toBeNull();
   });
 });
 

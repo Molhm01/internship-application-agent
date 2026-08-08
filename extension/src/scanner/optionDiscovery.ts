@@ -96,8 +96,17 @@ export function readSelectedText(root: HTMLElement): string {
   const trigger = resolveTrigger(root);
   if (trigger instanceof HTMLInputElement && trigger.value) return trigger.value.trim();
 
+  // `aria-activedescendant` means two different things depending on whether the
+  // menu is open, and only one of them is an answer. While the list is closed it
+  // is the widget's record of what was chosen. While the list is *open* it is the
+  // keyboard cursor — the row under the highlight, which nobody has committed to.
+  //
+  // Reading the cursor as the answer is a verification that cannot fail: walking
+  // the highlight onto "New Jersey" would report New Jersey as selected on a
+  // control that had accepted nothing, which is the most dangerous possible
+  // outcome here. So it is trusted only once the control says it is closed.
   const active = trigger.getAttribute('aria-activedescendant');
-  if (active) {
+  if (active && !reportsExpanded(trigger)) {
     const option = root.ownerDocument.getElementById(active);
     if (option?.textContent) return option.textContent.replace(/\s+/g, ' ').trim();
   }
@@ -113,11 +122,42 @@ export function readSelectedText(root: HTMLElement): string {
   if (hidden?.value) return hidden.value.trim();
 
   if (findListbox(trigger) === null) {
-    return (root.textContent ?? '').replace(/\s+/g, ' ').trim();
+    // The container's text, minus any option list living inside it.
+    //
+    // `findListbox` only reports a menu that is *visible*, but a menu that is
+    // merely hidden still contributes its every label to `textContent`. Reading
+    // that produced a string containing all fifty states, which "includes"
+    // whichever one was being verified — so a control that had accepted nothing
+    // confirmed any answer asked of it. Excluding the list is what makes this
+    // fallback capable of returning nothing, which is the honest answer for a
+    // custom control that has not been answered.
+    return textWithoutOptionList(root);
   }
   // The menu is still open, so the container's text is the menu's. Report the
   // trigger's own text instead of a list of everything on offer.
   return (trigger.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * An element's visible text with its option list left out.
+ *
+ * Used as the last resort for "what does this control display", where including
+ * the menu's own contents makes the reading useless: every label is in there, so
+ * any answer appears to be present.
+ */
+function textWithoutOptionList(root: HTMLElement): string {
+  const parts: string[] = [];
+  const walk = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      parts.push(node.textContent ?? '');
+      return;
+    }
+    if (!(node instanceof Element)) return;
+    if (node.matches(OPTION_CONTAINER_SELECTOR)) return;
+    for (const child of Array.from(node.childNodes)) walk(child);
+  };
+  walk(root);
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -554,6 +594,39 @@ export async function openControl(
   // control with no choices, which is a different repair from one that never
   // opened, and the caller distinguishes them.
   return findListbox(trigger);
+}
+
+/**
+ * A keypress the widget's own handlers will see, in the order a browser sends one.
+ *
+ * Separate from `pressPointer` because a menu that ignores synthetic pointer
+ * events is precisely the case this exists for: some widgets commit a choice
+ * only from `keydown`, and a clicked option on those left the control showing
+ * nothing while the executor reported the click as done.
+ */
+export function pressKey(target: HTMLElement, key: string): void {
+  const init = { key, bubbles: true, composed: true, cancelable: true } as const;
+  target.dispatchEvent(new KeyboardEvent('keydown', init));
+  target.dispatchEvent(new KeyboardEvent('keyup', init));
+}
+
+/**
+ * The option a keyboard-driven menu is currently highlighting.
+ *
+ * `aria-activedescendant` first, because it is the only signal that is *about*
+ * the highlight — the others are conventions. `aria-selected` is consulted last
+ * and reluctantly: on many widgets it marks the committed choice rather than the
+ * cursor, so trusting it first would read a walk as finished before it started.
+ */
+export function activeOption(trigger: HTMLElement, container: HTMLElement): HTMLElement | null {
+  const id = trigger.getAttribute('aria-activedescendant');
+  if (id) {
+    const byId = container.ownerDocument.getElementById(id);
+    if (byId) return byId;
+  }
+  return container.querySelector<HTMLElement>(
+    '[data-active="true"],[data-highlighted="true"],[aria-current="true"],[role="option"][aria-selected="true"]',
+  );
 }
 
 /**

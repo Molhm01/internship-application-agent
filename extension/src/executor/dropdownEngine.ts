@@ -11,12 +11,14 @@ import {
   type LocationTarget,
 } from '@internship-agent/shared';
 import {
+  activeOption,
   closeControl,
   findListbox,
   isVisible,
   enumerateAllOptions,
   openControl,
   OPTION_ITEM_SELECTOR,
+  pressKey,
   pressPointer,
   readOptions,
   readSelectedText,
@@ -73,6 +75,14 @@ export { readSelectedText } from '../scanner/optionDiscovery.js';
 /** Custom widgets get a second attempt; the whole engine is bounded by this. */
 const VERIFY_WAIT_MS = 1500;
 const SETTLE_WAIT_MS = 750;
+/** Between arrow presses, so an async highlight has settled before it is read. */
+const KEY_SETTLE_MS = 16;
+/** How long the keyboard fallback's own selection is given to show up. */
+const KEY_VERIFY_MS = 500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export interface DropdownExecutionInput {
   /** The scanned field's id, for the result record only. */
@@ -262,6 +272,84 @@ function optionElementFor(container: HTMLElement, option: FieldOption): HTMLElem
     items.find((element) => element.getAttribute('data-value') === option.value && option.value) ??
     items.find((element) => normalizeOptionText(element.textContent ?? '') === wanted)
   );
+}
+
+/**
+ * A ceiling on the arrow-key walk, independent of what the list claims.
+ *
+ * The walk is bounded twice: by the number of choices actually on offer, and by
+ * this. Neither alone is enough — a virtualized list under-reports its rendered
+ * rows, and a widget that never moves its highlight would otherwise be pressed
+ * at forever.
+ */
+const MAX_KEYBOARD_STEPS = 60;
+
+/**
+ * Strategy C: choose the option with the keyboard, when clicking it did not take.
+ *
+ * A clicked option is the right first move and it works nearly everywhere. What
+ * it does not reach is the widget that commits only from a `keydown` handler:
+ * the pointer sequence lands, the menu may even close, and the control still
+ * shows nothing. That is indistinguishable from a lost click at the point of
+ * failure, so rather than guess, the engine simply tries the other way of
+ * operating the same control before it reports anything.
+ *
+ * Bounded and observed at every step. The highlight is *read* after each press
+ * rather than counted towards, because a list that wraps, skips disabled rows,
+ * or starts partway down does not move one option per press — and pressing a
+ * fixed number of times is how a keyboard fallback selects the wrong answer.
+ */
+async function selectByKeyboard(
+  trigger: HTMLElement,
+  container: HTMLElement,
+  option: FieldOption,
+  choiceCount: number,
+): Promise<boolean> {
+  const wantedLabel = normalizeOptionText(option.label);
+  const matches = (element: HTMLElement): boolean =>
+    (Boolean(option.value) && element.getAttribute('data-value') === option.value) ||
+    normalizeOptionText(element.textContent ?? '') === wantedLabel;
+
+  trigger.focus();
+  const budget = Math.min(MAX_KEYBOARD_STEPS, Math.max(choiceCount, 1) + 1);
+  const seen = new Set<string>();
+  for (let step = 0; step < budget; step += 1) {
+    const active = activeOption(trigger, container);
+    if (active && matches(active)) {
+      pressKey(trigger, 'Enter');
+      return true;
+    }
+    if (active) {
+      // A highlight that has come back round to a row already walked past means
+      // the list has wrapped, and the answer is not on it.
+      const mark = active.id || active.getAttribute('data-value') || (active.textContent ?? '');
+      if (seen.has(mark)) return false;
+      seen.add(mark);
+    }
+    pressKey(trigger, 'ArrowDown');
+    // A real pause, so a widget that moves its highlight asynchronously has
+    // moved it before the next read.
+    await sleep(KEY_SETTLE_MS);
+  }
+  return false;
+}
+
+/**
+ * Whether the control now displays what the keyboard walk committed.
+ *
+ * The keyboard path gets exactly the same proof as the click path. Pressing
+ * Enter on a highlighted row is not evidence of anything: a fallback that
+ * reported success because it had pressed a key would be the original bug in a
+ * new place.
+ */
+async function keyboardSettled(root: HTMLElement, option: FieldOption): Promise<boolean> {
+  const wanted = normalizeOptionText(option.label);
+  const shown = await waitFor(() => {
+    if (!root.isConnected) return null;
+    const text = readSelectedText(root);
+    return normalizeOptionText(text).includes(wanted) ? text : null;
+  }, KEY_VERIFY_MS);
+  return shown !== null;
 }
 
 function setNativeSelectValue(select: HTMLSelectElement, value: string): void {
@@ -488,7 +576,23 @@ async function executeCustomDropdown(
         normalizeOptionText(element.textContent ?? '') === wantedLabel,
     )) ??
     undefined;
+  // Strategy C, reached first here: the option was offered a moment ago and no
+  // longer exists as an element to click. The keyboard can still walk to it,
+  // because the widget renders the row it highlights.
   if (!target) {
+    const walked =
+      (await selectByKeyboard(trigger, current, match.option, choices.length)) &&
+      (await keyboardSettled(root, match.option));
+    if (walked) {
+      closeControl(resolveTrigger(root));
+      return {
+        ok: true,
+        method: match.method,
+        label: match.option.label,
+        observed: readSelectedText(root),
+        optionCount: choices.length,
+      };
+    }
     closeControl(trigger);
     return {
       code: 'OPTION_CLICK_FAILED',
@@ -533,20 +637,60 @@ async function executeCustomDropdown(
     };
   }
 
+  // Strategy C, reached second here: the click landed and the control still does
+  // not show the answer — the signature of a widget that commits only from its
+  // own key handler. The menu is re-found rather than reused, because a widget
+  // that half-processed the click may have remounted it.
+  if (!normalizeOptionText(observed).includes(wanted)) {
+    const reopened = findListbox(resolveTrigger(root)) ?? (await openControl(resolveTrigger(root)));
+    if (reopened) {
+      const trailing = resolveTrigger(root);
+      if (
+        (await selectByKeyboard(trailing, reopened, match.option, choices.length)) &&
+        (await keyboardSettled(root, match.option))
+      ) {
+        closeControl(resolveTrigger(root));
+        return {
+          ok: true,
+          method: match.method,
+          label: match.option.label,
+          observed: readSelectedText(root),
+          optionCount: choices.length,
+        };
+      }
+    }
+  }
+
   closeControl(resolveTrigger(root));
 
   if (!normalizeOptionText(observed).includes(wanted)) {
+    // Re-read rather than reuse: the keyboard attempt above ran against this
+    // control, and the outcome must be decided from the state the field was
+    // actually left in, not the one it held before the last thing that touched
+    // it. One read, and it settles both the verdict and the diagnostic — a
+    // failure reported over a control that is displaying the right answer is as
+    // wrong as a success reported over an empty one.
+    const settled = root.isConnected ? readSelectedText(root) : observed;
+    if (normalizeOptionText(settled).includes(wanted)) {
+      return {
+        ok: true,
+        method: match.method,
+        label: match.option.label,
+        observed: settled,
+        optionCount: choices.length,
+      };
+    }
     return {
-      code: observed.trim().length === 0 ? 'SELECTION_NOT_ACCEPTED' : 'VERIFICATION_FAILED',
+      code: settled.trim().length === 0 ? 'SELECTION_NOT_ACCEPTED' : 'VERIFICATION_FAILED',
       reason:
-        observed.trim().length === 0
-          ? `"${match.option.label}" was clicked and the control still shows nothing.`
-          : `"${match.option.label}" was clicked and the control shows "${observed}".`,
+        settled.trim().length === 0
+          ? `"${match.option.label}" was clicked, then chosen by keyboard, and the control still shows nothing.`
+          : `"${match.option.label}" was clicked, then chosen by keyboard, and the control shows "${settled}".`,
       optionCount: choices.length,
       executionAttempted: true,
       matchMethod: match.method,
       matchedOptionText: match.option.label,
-      observedValue: observed,
+      observedValue: settled,
     };
   }
   return {
