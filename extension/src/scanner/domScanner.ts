@@ -17,6 +17,7 @@ import {
   type RequiredSource,
   type SemanticType,
 } from '@internship-agent/shared';
+import { readSelectedText } from './optionDiscovery.js';
 
 export interface DomScanResult {
   fields: DetectedField[];
@@ -618,6 +619,18 @@ function selectedValue(
   }
   if (isTextArea(element)) return element.value;
   if (element.isContentEditable) return cleanText(element.textContent);
+  // A custom option control holds no value; its answer exists only as the text
+  // it renders. Reading it is what lets a conditional child see that its custom
+  // parent has been answered — and reading nothing is what left "If other,
+  // enter School" unfillable beside a School combobox showing "Other School".
+  //
+  // Only for controls that are answered by *choosing*: everything else has
+  // already returned above, and treating an arbitrary element's text as its
+  // value would report a paragraph of page copy as somebody's answer.
+  if (OPTION_FIELD_TYPES.includes(fieldType)) {
+    const displayed = cleanText(readSelectedText(element));
+    return displayed.length > 0 ? displayed : undefined;
+  }
   return undefined;
 }
 

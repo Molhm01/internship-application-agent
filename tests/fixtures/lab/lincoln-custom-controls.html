@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lincoln-style application, custom controls — fixture</title>
+  </head>
+  <body>
+    <!--
+      The same application as `lincoln-application.html`, with the option
+      controls built the way the live portal builds them.
+
+      That fixture proves the *decisions* are right — a dependent State, a
+      conditional child that stays blank, an Education Type read off the saved
+      record — but every one of its controls is a native `<select>`, which the
+      executor drives synchronously with nothing to open and nothing to wait for.
+      The live failures were on the other kind: a control that renders its list
+      only when it is opened, mounts it somewhere else in the document, replaces
+      its trigger's text instead of holding a value, and populates itself from
+      the control above it. "Autofill failed" was reported on exactly those.
+
+      So this page carries the same questions on ARIA comboboxes, button menus,
+      portal-mounted menus, a searchable list, and a lazily-populated list — and
+      the dependency chain runs three deep: Education Country produces Education
+      State, which produces the School list.
+
+      The employer name is fictional. Every value here is fictional. The submit
+      button exists to be *not* clicked.
+    -->
+    <h1>Application</h1>
+    <form id="application" onsubmit="return false;">
+      <fieldset>
+        <legend>Profile</legend>
+
+        <label for="firstName">First Name *</label>
+        <input id="firstName" name="firstName" type="text" required />
+
+        <label for="lastName">Last Name *</label>
+        <input id="lastName" name="lastName" type="text" required />
+
+        <label for="email">Email Address *</label>
+        <input id="email" name="email" type="email" required />
+
+        <label for="phone">Phone Number *</label>
+        <input id="phone" name="phone" type="tel" required />
+
+        <label for="addressLine1">Street Address *</label>
+        <input id="addressLine1" name="addressLine1" type="text" required />
+
+        <label for="city">City *</label>
+        <input id="city" name="city" type="text" required />
+
+        <label for="postalCode">Zip/Postal Code *</label>
+        <input id="postalCode" name="postalCode" type="text" required />
+
+        <!-- Country: an ARIA combobox whose listbox is rendered on open. -->
+        <label id="countryLabel">Country *</label>
+        <div id="country" class="combobox">
+          <button
+            id="countryTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="countryList"
+            aria-haspopup="listbox"
+            aria-labelledby="countryLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+
+        <!-- State: a portal-mounted menu whose contents Country produces. -->
+        <label id="stateLabel">State/Province *</label>
+        <div id="state" class="portal-select">
+          <button
+            id="stateTrigger"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="stateMenu"
+            aria-labelledby="stateLabel"
+          >
+            <span data-selected-label></span>
+          </button>
+        </div>
+
+        <!-- Company-specific facts. Nothing saved answers any of these. -->
+        <label id="priorEmploymentLabel"
+          >Are you currently employed by, or have you ever worked for, Northwind Industrial or any
+          of its subsidiaries? *</label
+        >
+        <div id="priorEmployment" class="combobox">
+          <button
+            id="priorEmploymentTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="priorEmploymentList"
+            aria-haspopup="listbox"
+            aria-labelledby="priorEmploymentLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+
+        <label id="employmentRestrictionLabel"
+          >Are you under any contract or employment restriction with a current or previous employer?
+          *</label
+        >
+        <div id="employmentRestriction" class="combobox">
+          <button
+            id="employmentRestrictionTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="employmentRestrictionList"
+            aria-haspopup="listbox"
+            aria-labelledby="employmentRestrictionLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+
+        <label id="relativesEmployedLabel"
+          >Do you have any relatives or household members employed by our Company? *</label
+        >
+        <div id="relativesEmployed" class="combobox">
+          <button
+            id="relativesEmployedTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="relativesEmployedList"
+            aria-haspopup="listbox"
+            aria-labelledby="relativesEmployedLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+
+        <!--
+          The conditional child, hanging off a *custom* parent. Deliberately not
+          disabled: the live relatives box was perfectly typeable, and the agent
+          typed the applicant's own name into it while the question above sat
+          unanswered. The agent has to decline this by itself.
+        -->
+        <label for="relativeDetails"
+          >If yes, please provide the name, location, and relationship of each relative</label
+        >
+        <textarea id="relativeDetails" name="relativeDetails"></textarea>
+      </fieldset>
+
+      <fieldset>
+        <legend>Work Experience</legend>
+
+        <div class="experience-block">
+          <h3>Employer 1</h3>
+          <label for="employer0">Company Name</label>
+          <input id="employer0" name="employer0" type="text" />
+
+          <label for="title0">Position Title</label>
+          <input id="title0" name="title0" type="text" />
+
+          <label for="from0">From Date</label>
+          <input id="from0" name="from0" type="month" />
+
+          <label for="to0">End Date</label>
+          <input id="to0" name="to0" type="month" />
+
+          <label for="currentlyEmployed0">I currently work here</label>
+          <input id="currentlyEmployed0" name="currentlyEmployed0" type="checkbox" />
+
+          <!-- A React-style control: opens on mousedown, rerenders its trigger. -->
+          <label id="employmentType0Label">Employment Type</label>
+          <div id="employmentType0" class="react-select">
+            <div
+              id="employmentType0Trigger"
+              role="combobox"
+              tabindex="0"
+              aria-expanded="false"
+              aria-labelledby="employmentType0Label"
+            >
+              <span class="singleValue"></span>
+            </div>
+          </div>
+
+          <label id="reason0Label">Reason for Leaving</label>
+          <div id="reason0" class="react-select">
+            <div
+              id="reason0Trigger"
+              role="combobox"
+              tabindex="0"
+              aria-expanded="false"
+              aria-labelledby="reason0Label"
+            >
+              <span class="singleValue"></span>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Education</legend>
+
+        <!-- Education Type: a React-style control listing degree programmes. -->
+        <label id="educationTypeLabel">Education Type *</label>
+        <div id="educationType" class="react-select">
+          <div
+            id="educationTypeTrigger"
+            role="combobox"
+            tabindex="0"
+            aria-expanded="false"
+            aria-labelledby="educationTypeLabel"
+          >
+            <span class="singleValue"></span>
+          </div>
+        </div>
+
+        <!-- Link one of the chain: a portal-mounted country menu. -->
+        <label id="educationCountryLabel">Education Country *</label>
+        <div id="educationCountry" class="portal-select">
+          <button
+            id="educationCountryTrigger"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="educationCountryMenu"
+            aria-labelledby="educationCountryLabel"
+          >
+            <span data-selected-label></span>
+          </button>
+        </div>
+
+        <!-- Link two: produced by Education Country. -->
+        <label id="educationStateLabel">Education State/Province *</label>
+        <div id="educationState" class="portal-select">
+          <button
+            id="educationStateTrigger"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="educationStateMenu"
+            aria-labelledby="educationStateLabel"
+          >
+            <span data-selected-label></span>
+          </button>
+        </div>
+
+        <!--
+          Link three: a searchable list whose entries exist only for the state
+          settled above it. Before that it offers nothing at all, which is what
+          makes "School selects after State" a real assertion rather than a
+          coincidence of document order.
+        -->
+        <label for="school">School/Institution Name *</label>
+        <div id="schoolRoot">
+          <input
+            id="school"
+            name="school"
+            type="text"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls="schoolList"
+            aria-expanded="false"
+            autocomplete="off"
+            required
+          />
+          <ul id="schoolList" role="listbox"></ul>
+        </div>
+
+        <label for="schoolOther">If other, enter School/Institution Name</label>
+        <input id="schoolOther" name="schoolOther" type="text" />
+
+        <!-- Area of Study: an ARIA combobox that does not list every subject. -->
+        <label id="areaOfStudyLabel">Area of Study *</label>
+        <div id="areaOfStudy" class="combobox">
+          <button
+            id="areaOfStudyTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="areaOfStudyList"
+            aria-haspopup="listbox"
+            aria-labelledby="areaOfStudyLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+
+        <label for="areaOfStudyOther">If other, enter Area of Study</label>
+        <input id="areaOfStudyOther" name="areaOfStudyOther" type="text" />
+
+        <!-- Graduated?: a list whose options arrive a frame after it opens. -->
+        <label id="graduatedLabel">Graduated? *</label>
+        <div id="graduated" class="lazy-select">
+          <button
+            id="graduatedTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="graduatedList"
+            aria-labelledby="graduatedLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+      </fieldset>
+
+      <button id="submit" type="submit">Submit Application</button>
+    </form>
+
+    <div id="portal-root"></div>
+
+    <script>
+      (function () {
+        /** An ARIA combobox whose listbox is rendered when it opens. */
+        function ariaCombobox(rootId, triggerId, listId, labelsFor, onChoose) {
+          var root = document.getElementById(rootId);
+          var trigger = document.getElementById(triggerId);
+          trigger.addEventListener('click', function () {
+            if (document.getElementById(listId)) return;
+            var list = document.createElement('ul');
+            list.id = listId;
+            list.setAttribute('role', 'listbox');
+            labelsFor().forEach(function (label) {
+              var item = document.createElement('li');
+              item.setAttribute('role', 'option');
+              item.textContent = label;
+              item.addEventListener('click', function () {
+                root.querySelector('.value').textContent = label;
+                list.remove();
+                trigger.setAttribute('aria-expanded', 'false');
+                if (onChoose) onChoose(label);
+              });
+              list.append(item);
+            });
+            root.append(list);
+            trigger.setAttribute('aria-expanded', 'true');
+          });
+        }
+
+        /** A React-style control: opens on mousedown, replaces its own text. */
+        function reactSelect(rootId, triggerId, menuId, labelsFor, onChoose) {
+          var root = document.getElementById(rootId);
+          var trigger = document.getElementById(triggerId);
+          trigger.addEventListener('mousedown', function () {
+            if (document.getElementById(menuId)) return;
+            var menu = document.createElement('div');
+            menu.id = menuId;
+            menu.setAttribute('role', 'listbox');
+            labelsFor().forEach(function (label) {
+              var item = document.createElement('div');
+              item.setAttribute('role', 'option');
+              item.textContent = label;
+              item.addEventListener('click', function () {
+                root.querySelector('.singleValue').textContent = label;
+                menu.remove();
+                trigger.setAttribute('aria-expanded', 'false');
+                if (onChoose) onChoose(label);
+              });
+              menu.append(item);
+            });
+            root.append(menu);
+            trigger.setAttribute('aria-expanded', 'true');
+          });
+        }
+
+        /** A menu mounted into the portal root, far from its own trigger. */
+        function portalSelect(rootId, triggerId, menuId, labelsFor, onChoose) {
+          var root = document.getElementById(rootId);
+          var trigger = document.getElementById(triggerId);
+          var portal = document.getElementById('portal-root');
+          trigger.addEventListener('mousedown', function () {
+            if (document.getElementById(menuId)) return;
+            var menu = document.createElement('div');
+            menu.id = menuId;
+            menu.setAttribute('role', 'menu');
+            labelsFor().forEach(function (label) {
+              var item = document.createElement('div');
+              item.setAttribute('role', 'menuitem');
+              item.textContent = label;
+              item.addEventListener('click', function () {
+                root.querySelector('[data-selected-label]').textContent = label;
+                menu.remove();
+                trigger.setAttribute('aria-expanded', 'false');
+                if (onChoose) onChoose(label);
+              });
+              menu.append(item);
+            });
+            portal.append(menu);
+            trigger.setAttribute('aria-expanded', 'true');
+          });
+        }
+
+        var STATES = {
+          'United States of America': ['New Jersey', 'New York', 'California'],
+          Canada: ['Ontario', 'British Columbia'],
+          Mexico: ['Jalisco'],
+        };
+
+        // ---- Personal: Country produces State ---------------------------
+        var country = '';
+        ariaCombobox(
+          'country',
+          'countryTrigger',
+          'countryList',
+          function () {
+            return ['Canada', 'Mexico', 'United States of America'];
+          },
+          function (label) {
+            // The dependent control is reset whenever its parent changes, so a
+            // region chosen against the old list cannot survive.
+            if (label !== country) {
+              document.querySelector('#state [data-selected-label]').textContent = '';
+            }
+            country = label;
+          },
+        );
+        portalSelect('state', 'stateTrigger', 'stateMenu', function () {
+          return STATES[country] || [];
+        });
+
+        // ---- Company-specific questions ---------------------------------
+        var yesNo = function () {
+          return ['Yes', 'No'];
+        };
+        ariaCombobox('priorEmployment', 'priorEmploymentTrigger', 'priorEmploymentList', yesNo);
+        ariaCombobox(
+          'employmentRestriction',
+          'employmentRestrictionTrigger',
+          'employmentRestrictionList',
+          yesNo,
+        );
+        ariaCombobox(
+          'relativesEmployed',
+          'relativesEmployedTrigger',
+          'relativesEmployedList',
+          yesNo,
+          function (label) {
+            // Gated the way the live form gates it: the box is left typeable and
+            // the page simply discards whatever is in it unless the parent says
+            // otherwise.
+            if (label !== 'Yes') document.getElementById('relativeDetails').value = '';
+          },
+        );
+
+        // ---- Work experience --------------------------------------------
+        reactSelect(
+          'employmentType0',
+          'employmentType0Trigger',
+          'employmentType0Menu',
+          function () {
+            return ['Full-Time', 'Part-Time', 'Internship', 'Contract', 'Self-Employed'];
+          },
+        );
+        reactSelect('reason0', 'reason0Trigger', 'reason0Menu', function () {
+          return [
+            'Still employed',
+            'End of contract',
+            'Returned to school',
+            'Voluntary resignation',
+            'Other',
+          ];
+        });
+
+        // ---- Education: Type, then Country → State → School --------------
+        reactSelect('educationType', 'educationTypeTrigger', 'educationTypeMenu', function () {
+          // Programme vocabulary, not institution vocabulary: the live list said
+          // "Bachelor's Degree Program (or equivalent)", and a value answering
+          // "College/University" matched nothing on it.
+          return [
+            'High School Diploma or Equivalent',
+            'Associate Degree Program',
+            "Bachelor's Degree Program (or equivalent)",
+            "Master's Degree Program",
+          ];
+        });
+
+        var educationCountry = '';
+        var educationState = '';
+        portalSelect(
+          'educationCountry',
+          'educationCountryTrigger',
+          'educationCountryMenu',
+          function () {
+            return ['Canada', 'Mexico', 'United States of America'];
+          },
+          function (label) {
+            if (label !== educationCountry) {
+              document.querySelector('#educationState [data-selected-label]').textContent = '';
+              educationState = '';
+              document.getElementById('school').value = '';
+            }
+            educationCountry = label;
+          },
+        );
+        portalSelect(
+          'educationState',
+          'educationStateTrigger',
+          'educationStateMenu',
+          function () {
+            return STATES[educationCountry] || [];
+          },
+          function (label) {
+            educationState = label;
+          },
+        );
+
+        /**
+         * The searchable school list, restricted to the state above it.
+         *
+         * With no state settled it offers nothing however it is queried, which
+         * is what makes the ordering observable rather than incidental.
+         */
+        (function searchableSchool() {
+          var input = document.getElementById('school');
+          var list = document.getElementById('schoolList');
+          var byState = {
+            'New Jersey': [
+              'Rutgers University',
+              'Rowan University',
+              'Princeton University',
+              'Montclair State University',
+            ],
+            'New York': ['Columbia University', 'Cornell University'],
+            Ontario: ['University of Toronto'],
+          };
+          input.addEventListener('input', function () {
+            list.innerHTML = '';
+            var query = input.value.trim().toLowerCase();
+            var schools = byState[educationState] || [];
+            if (query.length === 0 || schools.length === 0) {
+              input.setAttribute('aria-expanded', 'false');
+              return;
+            }
+            schools
+              .filter(function (name) {
+                return name.toLowerCase().indexOf(query) !== -1;
+              })
+              .forEach(function (name) {
+                var item = document.createElement('li');
+                item.setAttribute('role', 'option');
+                item.textContent = name;
+                item.addEventListener('click', function () {
+                  input.value = name;
+                  list.innerHTML = '';
+                  input.setAttribute('aria-expanded', 'false');
+                });
+                list.append(item);
+              });
+            input.setAttribute('aria-expanded', 'true');
+          });
+        })();
+
+        ariaCombobox(
+          'areaOfStudy',
+          'areaOfStudyTrigger',
+          'areaOfStudyList',
+          function () {
+            return ['Nursing', 'History', 'Accounting', 'Other'];
+          },
+          function (label) {
+            if (label !== 'Other') document.getElementById('areaOfStudyOther').value = '';
+          },
+        );
+
+        /** A list whose options arrive a frame after the control opens. */
+        (function lazyGraduated() {
+          var root = document.getElementById('graduated');
+          var trigger = document.getElementById('graduatedTrigger');
+          trigger.addEventListener('click', function () {
+            if (document.getElementById('graduatedList')) return;
+            var list = document.createElement('ul');
+            list.id = 'graduatedList';
+            list.setAttribute('role', 'listbox');
+            root.append(list);
+            trigger.setAttribute('aria-expanded', 'true');
+            setTimeout(function () {
+              ['Yes', 'No'].forEach(function (label) {
+                var item = document.createElement('li');
+                item.setAttribute('role', 'option');
+                item.textContent = label;
+                item.addEventListener('click', function () {
+                  root.querySelector('.value').textContent = label;
+                  list.remove();
+                  trigger.setAttribute('aria-expanded', 'false');
+                });
+                list.append(item);
+              });
+            }, 40);
+          });
+        })();
+
+        // Proof that nothing submits: if a code path ever clicked it, this
+        // records the fact where a test can see it.
+        document.getElementById('submit').addEventListener('click', function () {
+          document.body.setAttribute('data-submitted', 'true');
+        });
+      })();
+    </script>
+  </body>
+</html>

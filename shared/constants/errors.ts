@@ -71,10 +71,20 @@ export const ERROR_CODES = [
   'OPTION_NOT_SELECTABLE',
   'OPTION_SELECTION_REVERTED',
   'OPTION_VALUE_NOT_VERIFIED',
-  // A control whose choices another control produces — State after Country —
-  // that never received them. Distinct from `OPTIONS_NOT_DISCOVERED`, which is
-  // a list that opened and was empty: this one was never populated at all.
-  'STATE_OPTIONS_NOT_POPULATED',
+  // The four stages a region control can stop at, after the country beside it
+  // has been answered and verified. One code per stage, because "the page never
+  // rebuilt the list", "the rebuilt list does not contain New Jersey", "the
+  // click was refused" and "the control shows something else afterwards" call
+  // for four different things from the user, and the live run reported all four
+  // as one red "Autofill failed".
+  //
+  // `STATE_OPTIONS_NOT_UPDATED` is distinct from `OPTIONS_NOT_DISCOVERED`,
+  // which is a list that opened and was empty: this one was never rebuilt at
+  // all after Country changed.
+  'STATE_OPTIONS_NOT_UPDATED',
+  'STATE_OPTION_NOT_FOUND',
+  'STATE_EXECUTION_FAILED',
+  'STATE_VERIFICATION_FAILED',
   // The universal dropdown engine's own stages. Every one of these used to be
   // the same red "Autofill failed" badge, which named no stage and suggested no
   // repair — the reason a State control that simply had not been repopulated
@@ -278,8 +288,14 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'The page discarded the selection after it was made. Select it yourself and check it stays.',
   OPTION_VALUE_NOT_VERIFIED:
     'The control does not show the choice that was selected. Check its current value.',
-  STATE_OPTIONS_NOT_POPULATED:
+  STATE_OPTIONS_NOT_UPDATED:
     'The country was set, but this control never produced its list of states or provinces. Choose one yourself.',
+  STATE_OPTION_NOT_FOUND:
+    'The list of states or provinces arrived and does not offer your saved region. Check the country above it, then choose the right one yourself.',
+  STATE_EXECUTION_FAILED:
+    'Your saved region is on this list and the page would not take the selection. Select it yourself.',
+  STATE_VERIFICATION_FAILED:
+    'The region was selected and the control does not show it afterwards. Check its current value before submitting.',
   DROPDOWN_OPEN_FAILED:
     'This dropdown did not open for a click, a keypress, or typing. Open it yourself and choose a value.',
   DROPDOWN_NO_OPTIONS_FOUND:

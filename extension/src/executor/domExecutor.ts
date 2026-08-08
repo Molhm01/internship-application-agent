@@ -60,6 +60,55 @@ const NOT_AN_EXECUTION_FAILURE: readonly DropdownFailureCode[] = [
 ];
 
 /**
+ * The same four stages, told about a region control specifically.
+ *
+ * A State/Province select is the one dependent control on an ordinary
+ * application whose whole behaviour is decided by the field above it, and the
+ * live run collapsed every way it can go wrong into one red badge. Each stage
+ * asks something different of the reader — check the country, check your saved
+ * region, select it yourself, check what the control now shows — so each keeps
+ * its own code.
+ *
+ * Deliberately a *re-labelling* of the engine's own outcome rather than a second
+ * execution path: the same open → enumerate → match → click → verify sequence
+ * runs for a State control as for every other dropdown.
+ */
+const REGION_ERROR_CODES: Partial<Record<DropdownFailureCode, AgentError['code']>> = {
+  // Country was answered and this control never rebuilt its list.
+  NO_OPTIONS_FOUND: 'STATE_OPTIONS_NOT_UPDATED',
+  OPTION_CONTAINER_NOT_FOUND: 'STATE_OPTIONS_NOT_UPDATED',
+  DEPENDENT_CONTROL_NOT_REFRESHED: 'STATE_OPTIONS_NOT_UPDATED',
+  // The list arrived, and the saved region is not on it.
+  OPTION_NOT_FOUND: 'STATE_OPTION_NOT_FOUND',
+  NO_SEMANTIC_OPTION_MATCH: 'STATE_OPTION_NOT_FOUND',
+  // The region is on the list and the page refused the selection.
+  OPTION_CLICK_FAILED: 'STATE_EXECUTION_FAILED',
+  OPTION_DISABLED: 'STATE_EXECUTION_FAILED',
+  SELECTION_NOT_ACCEPTED: 'STATE_EXECUTION_FAILED',
+  OPEN_FAILED: 'STATE_EXECUTION_FAILED',
+  // It was selected, and the control shows something else.
+  VERIFICATION_FAILED: 'STATE_VERIFICATION_FAILED',
+};
+
+/**
+ * The error code for a dropdown stage, told about this particular control.
+ *
+ * Only `state` is specialized. An ambiguous match, a missing control and a
+ * disabled control mean exactly what they mean everywhere else and keep the
+ * shared code, so this cannot quietly become a second vocabulary.
+ */
+function dropdownErrorCode(
+  code: DropdownFailureCode,
+  canonicalQuestion: DetectedField['canonicalKey'],
+): AgentError['code'] {
+  if (canonicalQuestion === 'state') {
+    const region = REGION_ERROR_CODES[code];
+    if (region) return region;
+  }
+  return DROPDOWN_ERROR_CODES[code] ?? 'NO_OPTION_MATCH';
+}
+
+/**
  * Actions the dropdown engine owns.
  *
  * `choose_radio` is not one of them: a radio group's choices are all in the DOM
@@ -604,6 +653,7 @@ export async function executeDomAction(
           });
         }
         const code = outcome.failureCode ?? 'NO_OPTION_MATCH';
+        const errorCode = dropdownErrorCode(code as DropdownFailureCode, field.canonicalKey);
         // "Nobody knows the answer yet" and "the page refused a known answer"
         // are different outcomes and get different statuses. Only the second is
         // a failed execution.
@@ -617,12 +667,11 @@ export async function executeDomAction(
             durationMs: Math.round(performance.now() - started),
             dropdown: toDropdownTrace(outcome),
             error: {
-              code: DROPDOWN_ERROR_CODES[code as DropdownFailureCode],
+              code: errorCode,
               message: outcome.reason,
               fieldId: field.id,
               recoverable: true,
-              suggestedAction:
-                DEFAULT_ERROR_GUIDANCE[DROPDOWN_ERROR_CODES[code as DropdownFailureCode]],
+              suggestedAction: DEFAULT_ERROR_GUIDANCE[errorCode],
               debugContext: { dropdownKind: outcome.dropdownKind },
             },
           });
@@ -630,13 +679,7 @@ export async function executeDomAction(
         // The engine names the stage it stopped at, so the report can say "the
         // list never opened" rather than a generic option failure.
         return {
-          ...failure(
-            action,
-            DROPDOWN_ERROR_CODES[code as DropdownFailureCode] ?? 'NO_OPTION_MATCH',
-            outcome.reason,
-            started,
-            attempts,
-          ),
+          ...failure(action, errorCode, outcome.reason, started, attempts),
           dropdown: toDropdownTrace(outcome),
         };
       }

@@ -1081,8 +1081,20 @@ export async function runApplicationAutofill(
         if (previous?.verification === 'failed' && !executed) continue;
         // The planner skips an optional question whose correct answer is
         // silence. Nothing was attempted, and nothing should have been.
+        //
+        // A conditional child the form has switched off counts too, whatever
+        // the page marks it. "If other, enter School" carries the section's
+        // `required` flag on some portals and is required only *when Other is
+        // chosen* — treating that flag as unconditional is what left a
+        // not-applicable box wearing an orange "Information needed" badge
+        // beside a School dropdown that had already been filled correctly.
+        const notApplicable =
+          action.action === 'skip' && field?.dependsOn !== undefined && !executed;
         const optionalLeftBlank =
-          action.action === 'skip' && field !== undefined && !field.required && !executed;
+          action.action === 'skip' &&
+          field !== undefined &&
+          !executed &&
+          (!field.required || notApplicable);
 
         resultsByField.set(
           action.fieldId,
@@ -1250,7 +1262,7 @@ export async function runApplicationAutofill(
       emit('rescanning_dependencies', 'Waiting for the choices the page is producing');
       const settled = await dependencies.awaitDependentOptions(dependentSelectors);
       // Recorded per selector, so a control that never populated can be
-      // reported as `STATE_OPTIONS_NOT_POPULATED` rather than as an ordinary
+      // reported as `STATE_OPTIONS_NOT_UPDATED` rather than as an ordinary
       // missing answer.
       for (const selector of settled.pending) unpopulatedDependents.add(selector);
       for (const selector of settled.populated) unpopulatedDependents.delete(selector);
@@ -1318,7 +1330,7 @@ export async function runApplicationAutofill(
       field.id,
       autofillFieldResultSchema.parse({
         ...existing,
-        failureCode: 'STATE_OPTIONS_NOT_POPULATED',
+        failureCode: 'STATE_OPTIONS_NOT_UPDATED',
         reviewReason: 'missing_information' as const,
         reason: `"${field.question}" never received its choices from the field it depends on. Choose it yourself before submitting.`,
       }),

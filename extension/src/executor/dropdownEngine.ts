@@ -19,6 +19,7 @@ import {
   OPTION_ITEM_SELECTOR,
   pressPointer,
   readOptions,
+  readSelectedText,
   resolveTrigger,
   revealOption,
   typeSearch,
@@ -56,6 +57,18 @@ import {
  * Nothing here accepts a selector, a script, or an index from anywhere outside
  * the browser. The model supplies a value; the DOM supplies the elements.
  */
+
+/**
+ * Re-exported because this is where callers have always found it.
+ *
+ * It now lives in `optionDiscovery`, one layer down, because the *scanner* needs
+ * it too: a custom control holds no value, so the only way to know what it has
+ * been answered with is to read what it displays — and without that the
+ * conditional gate could never see a custom parent's answer at all, which left
+ * every "If other" box on a custom dropdown either unfillable or wearing an
+ * orange badge it had not earned.
+ */
+export { readSelectedText } from '../scanner/optionDiscovery.js';
 
 /** Custom widgets get a second attempt; the whole engine is bounded by this. */
 const VERIFY_WAIT_MS = 1500;
@@ -239,43 +252,6 @@ interface Stopped {
   matchMethod?: DropdownMatchMethod;
   matchedOptionText?: string;
   observedValue?: string;
-}
-
-/** What the control displays now, for verification. */
-export function readSelectedText(root: HTMLElement): string {
-  if (root instanceof HTMLSelectElement) {
-    const selected = root.selectedOptions[0];
-    return (selected?.textContent ?? '').replace(/\s+/g, ' ').trim();
-  }
-  const trigger = resolveTrigger(root);
-  if (trigger instanceof HTMLInputElement && trigger.value) return trigger.value.trim();
-
-  const active = trigger.getAttribute('aria-activedescendant');
-  if (active) {
-    const option = root.ownerDocument.getElementById(active);
-    if (option?.textContent) return option.textContent.replace(/\s+/g, ' ').trim();
-  }
-  // The trigger's own rendered text, before the whole container's: a container
-  // holding an open menu reads as every option concatenated, which "contains"
-  // the wanted label whatever was chosen, and that is a verification that
-  // cannot fail — the most dangerous kind.
-  const display = root.querySelector<HTMLElement>(
-    '[data-selected-label],[class*="singleValue"],[class*="single-value"]',
-  );
-  if (display?.textContent) return display.textContent.replace(/\s+/g, ' ').trim();
-
-  const chosen = root.querySelector<HTMLElement>('[aria-selected="true"],[data-selected="true"]');
-  if (chosen?.textContent) return chosen.textContent.replace(/\s+/g, ' ').trim();
-
-  const hidden = root.querySelector<HTMLInputElement>('input[type="hidden"]');
-  if (hidden?.value) return hidden.value.trim();
-
-  if (findListbox(trigger) === null) {
-    return (root.textContent ?? '').replace(/\s+/g, ' ').trim();
-  }
-  // The menu is still open, so the container's text is the menu's. Report the
-  // trigger's own text instead of a list of everything on offer.
-  return (trigger.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
 /** Finds the live element for a matched option by its own label, never by index. */

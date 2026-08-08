@@ -57,6 +57,36 @@ export interface PlanContext {
   recordCount?: (field: DetectedField) => number | null;
   /** Other wordings of the same saved record, for a differently-worded list. */
   alternativeValues?: (field: DetectedField) => string[];
+  /**
+   * Why the saved record makes this control correctly blank, or null when it
+   * does not. Distinct from "nothing is saved": see `notApplicableByRecord`.
+   */
+  notApplicableByRecord?: (field: DetectedField) => string | null;
+}
+
+/**
+ * Controls that a saved record positively answers by leaving empty.
+ *
+ * The one case is an end date for a job the applicant still holds. The profile
+ * states `current: true`, so there is no end date and there is not *supposed* to
+ * be one — the form's own "I currently work here" box carries that fact, and it
+ * is filled and verified. Reporting the empty End Date beside it as a date the
+ * user must supply is asking them to contradict what they just told the form,
+ * and it is how a correctly completed employment block ended up with an orange
+ * badge on it.
+ *
+ * Deliberately narrow, and deliberately keyed on a *stated* fact. A record that
+ * says nothing about whether the role is current reaches none of this: an
+ * absent end date is then genuinely unknown, and stays the user's question.
+ * Nothing here ever invents a date, and today's date is never a fallback.
+ */
+export function notApplicableByRecord(profile: Profile): (field: DetectedField) => string | null {
+  return (field) => {
+    if (field.canonicalKey !== 'employment_end_date') return null;
+    const experience = profile.experience[field.recordIndex ?? 0];
+    if (experience?.current !== true) return null;
+    return `You still work at ${experience.employer || 'this employer'}, so this correctly has no end date.`;
+  };
 }
 
 /**
@@ -447,10 +477,30 @@ function planAction(
   }
   const gate = context.conditionalGate?.(field);
   if (gate && !gate.active) {
+    // Two different situations, and reporting them alike is what put an orange
+    // "Information needed" badge on questions the form itself had switched off.
+    //
+    // The parent *has* an answer and it is not the activating one: the question
+    // does not apply. "If other, enter School" beside a School dropdown reading
+    // "Rutgers University" is finished work, not outstanding work, and asking
+    // the user to supply a school they have already supplied is noise. It is
+    // skipped, which the run records as `OPTIONAL_LEFT_BLANK` with no mark.
+    if (gate.parentAnswered) {
+      return {
+        ...base,
+        action: 'skip',
+        requiresReview: false,
+        reason: gate.reason,
+        warnings: base.warnings,
+      };
+    }
+    // The parent has no answer yet: this is not "not applicable", it is "not
+    // decidable". Nothing is written and nothing is guessed — the child waits,
+    // and the reason names the question that has to be answered first.
     return {
       ...base,
       action: 'missing_information',
-      requiresReview: gate.parentAnswered,
+      requiresReview: false,
       reason: gate.reason,
       warnings: [...base.warnings, 'A conditional field is never filled ahead of its parent.'],
     };
@@ -608,6 +658,18 @@ function planAction(
     }
   }
   if (!match.matched || match.formattedValue === undefined) {
+    // Before anything that would call this outstanding work: a value the saved
+    // record says should not be here is finished, not missing.
+    const settledBlank = context.notApplicableByRecord?.(field);
+    if (settledBlank) {
+      return {
+        ...base,
+        action: 'skip',
+        requiresReview: false,
+        reason: settledBlank,
+        warnings: base.warnings,
+      };
+    }
     // Nothing grounded this field. If an executor exists for the control, say so
     // — the blocker is a missing value, not a missing strategy.
     if (match.requiresReview) return { ...base, action: 'manual_review' };
@@ -1103,6 +1165,7 @@ export function buildDeterministicPlan(
     conditionalGate: conditionalGateFor(scan.fields),
     recordCount: recordCountFor(profile),
     alternativeValues: alternativeValuesFor(profile),
+    notApplicableByRecord: notApplicableByRecord(profile),
     ...(profile.preferences?.discoverySource
       ? { discoverySource: profile.preferences.discoverySource }
       : {}),

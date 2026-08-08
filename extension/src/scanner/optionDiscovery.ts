@@ -72,6 +72,55 @@ export function resolveTrigger(root: HTMLElement): HTMLElement {
 }
 
 /**
+ * What a control currently *displays* as its answer.
+ *
+ * A `<select>` holds a value; a custom widget holds nothing at all — the answer
+ * exists only as the text its trigger renders. That is what the executor
+ * verifies a selection against, and it is also the only way the *scanner* can
+ * tell whether a custom control has been answered yet. Without it a conditional
+ * child hanging off a custom parent could never be activated, so "If other,
+ * enter School" beside a filled custom School dropdown was unfillable when Other
+ * was chosen and wore an orange "Information needed" badge when it was not.
+ *
+ * The order is defensive, and the trigger's own text is read before the whole
+ * container's: a container holding an *open* menu reads as every option
+ * concatenated, which "contains" whatever label is being looked for regardless
+ * of what was chosen — a verification that cannot fail, which is the most
+ * dangerous kind.
+ */
+export function readSelectedText(root: HTMLElement): string {
+  if (root instanceof HTMLSelectElement) {
+    const selected = root.selectedOptions[0];
+    return (selected?.textContent ?? '').replace(/\s+/g, ' ').trim();
+  }
+  const trigger = resolveTrigger(root);
+  if (trigger instanceof HTMLInputElement && trigger.value) return trigger.value.trim();
+
+  const active = trigger.getAttribute('aria-activedescendant');
+  if (active) {
+    const option = root.ownerDocument.getElementById(active);
+    if (option?.textContent) return option.textContent.replace(/\s+/g, ' ').trim();
+  }
+  const display = root.querySelector<HTMLElement>(
+    '[data-selected-label],[class*="singleValue"],[class*="single-value"]',
+  );
+  if (display?.textContent) return display.textContent.replace(/\s+/g, ' ').trim();
+
+  const chosen = root.querySelector<HTMLElement>('[aria-selected="true"],[data-selected="true"]');
+  if (chosen?.textContent) return chosen.textContent.replace(/\s+/g, ' ').trim();
+
+  const hidden = root.querySelector<HTMLInputElement>('input[type="hidden"]');
+  if (hidden?.value) return hidden.value.trim();
+
+  if (findListbox(trigger) === null) {
+    return (root.textContent ?? '').replace(/\s+/g, ' ').trim();
+  }
+  // The menu is still open, so the container's text is the menu's. Report the
+  // trigger's own text instead of a list of everything on offer.
+  return (trigger.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Locates this control's popup listbox.
  *
  * Order matters for correctness, not just speed: the ARIA relationship is
