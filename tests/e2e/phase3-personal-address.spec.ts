@@ -468,13 +468,22 @@ test.describe('the combined phone widget, on its own page', () => {
 
   test('lets the embedded +1 settle the country-code control', () => {
     const code = outcomeFor('Country Phone Code');
-    expect(code.status).toBe('FILLED_VERIFIED');
-    expect(code.annotation).toBe('verified');
+    // Settled, and which kind of settled depends on the page rather than on the
+    // agent. This widget renders its code from the number beside it, so on a
+    // page that already shows "US +1" the honest verdict is that it was already
+    // valid — a control nobody had to touch, deliberately left unmarked because
+    // a green tick would claim the agent's work over the user's own answer. What
+    // must never happen is the *other* outcome this once produced: a red
+    // "Autofill failed" over a control displaying exactly the right code,
+    // because the engine opened a menu that does not exist behind it.
+    expect(['FILLED_VERIFIED', 'SKIPPED_ALREADY_VALID']).toContain(code.status);
+    expect(['verified', 'none']).toContain(code.annotation);
   });
 
   test('leaves no Information needed badge on the phone block', async () => {
     expect(await markOf(application, 'phoneNumber')).toBe('verified');
-    expect(await markOf(application, 'countryPhoneCode')).toBe('verified');
+    // Unmarked or verified — never a failure and never an open question.
+    expect([null, 'verified', 'none']).toContain(await markOf(application, 'countryPhoneCode'));
   });
 
   test('never clicks Submit here either', async () => {

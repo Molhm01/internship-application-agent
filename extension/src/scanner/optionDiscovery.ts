@@ -59,6 +59,35 @@ export function isVisible(element: Element): boolean {
 }
 
 /**
+ * The tree an element's ids and portals actually live in.
+ *
+ * For a control in the main document this is the document, and everything below
+ * behaves exactly as it always did. For one inside an open shadow root it is
+ * that root — and the distinction is not academic: ids are scoped per tree, so
+ * `document.getElementById` cannot see the listbox a shadow-rooted combobox
+ * names in its own `aria-controls`. Looking there returned null, the control was
+ * reported as never having opened, and the widget was working perfectly.
+ */
+export function scopeOf(element: Element): Document | ShadowRoot {
+  const root = element.getRootNode();
+  return root instanceof ShadowRoot ? root : element.ownerDocument;
+}
+
+/**
+ * An element by id, looked for in its own tree first and then the document.
+ *
+ * Both, because a shadow-rooted control may still name a listbox its page
+ * mounted outside the shadow root — a portal is a portal wherever the trigger
+ * lives.
+ */
+export function elementById(scope: Document | ShadowRoot, id: string): HTMLElement | null {
+  const local = scope.getElementById(id);
+  if (local instanceof HTMLElement) return local;
+  const fallback = document.getElementById(id);
+  return fallback instanceof HTMLElement ? fallback : null;
+}
+
+/**
  * Finds the element that actually receives interaction. A combobox is often a
  * wrapper whose inner `input[role=combobox]` or `button[aria-haspopup]` is the
  * real trigger.
@@ -107,7 +136,7 @@ export function readSelectedText(root: HTMLElement): string {
   // outcome here. So it is trusted only once the control says it is closed.
   const active = trigger.getAttribute('aria-activedescendant');
   if (active && !reportsExpanded(trigger)) {
-    const option = root.ownerDocument.getElementById(active);
+    const option = elementById(scopeOf(trigger), active);
     if (option?.textContent) return option.textContent.replace(/\s+/g, ' ').trim();
   }
   const display = root.querySelector<HTMLElement>(
@@ -170,10 +199,11 @@ function textWithoutOptionList(root: HTMLElement): string {
  * this field's options.
  */
 export function findListbox(trigger: HTMLElement): HTMLElement | null {
+  const scope = scopeOf(trigger);
   const controls = trigger.getAttribute('aria-controls') ?? trigger.getAttribute('aria-owns') ?? '';
   const declared = controls.split(/\s+/).filter(Boolean);
   for (const id of declared) {
-    const byId = document.getElementById(id);
+    const byId = elementById(scope, id);
     if (byId && isVisible(byId)) return byId;
   }
   // A `button[aria-haspopup]` names its menu the same way a combobox names its
@@ -191,7 +221,7 @@ export function findListbox(trigger: HTMLElement): HTMLElement | null {
       .split(/\s+/)
       .filter(Boolean);
     for (const id of owned) {
-      const byId = document.getElementById(id);
+      const byId = elementById(scope, id);
       if (byId && isVisible(byId)) return byId;
     }
   }
@@ -203,7 +233,7 @@ export function findListbox(trigger: HTMLElement): HTMLElement | null {
 
   const activeDescendant = trigger.getAttribute('aria-activedescendant');
   if (activeDescendant) {
-    const option = document.getElementById(activeDescendant);
+    const option = elementById(scope, activeDescendant);
     const owner = option?.closest<HTMLElement>('[role="listbox"]');
     if (owner && isVisible(owner)) return owner;
   }
@@ -214,9 +244,15 @@ export function findListbox(trigger: HTMLElement): HTMLElement | null {
     ?.querySelector<HTMLElement>(OPTION_CONTAINER_SELECTOR);
   if (local && isVisible(local)) return local;
 
-  const portals = Array.from(
-    document.querySelectorAll<HTMLElement>(OPTION_CONTAINER_SELECTOR),
-  ).filter((candidate) => isVisible(candidate) && readOptions(candidate).length > 0);
+  // The trigger's own tree first, then the document — a shadow-rooted control
+  // may render its menu inside the shadow root or portal it out to the page, and
+  // both are the same widget from the applicant's side.
+  const portals = [
+    ...new Set([
+      ...Array.from(scope.querySelectorAll<HTMLElement>(OPTION_CONTAINER_SELECTOR)),
+      ...Array.from(document.querySelectorAll<HTMLElement>(OPTION_CONTAINER_SELECTOR)),
+    ]),
+  ].filter((candidate) => isVisible(candidate) && readOptions(candidate).length > 0);
   // More than one open list is ambiguous evidence, so none of them is used: a
   // dropdown left open elsewhere on the page must never answer this question.
   return portals.length === 1 ? (portals[0] ?? null) : null;
@@ -494,6 +530,54 @@ export async function typeSearch(trigger: HTMLElement, text: string): Promise<vo
 }
 
 /**
+ * The queries to try in a searchable control, longest first.
+ *
+ * A saved value and a form's own label are rarely the same string, and a
+ * searchable list renders only what the query matches — so typing the whole
+ * saved value into a control that spells the same place differently renders
+ * *nothing*, and an empty list is indistinguishable from a control that never
+ * opened. That is exactly what happened to "Location (City)": the query was
+ * "Clifton, New Jersey, United States", the form's entry reads "Clifton, NJ,
+ * United States", and the field was reported as `OPEN_FAILED` over a widget
+ * that works perfectly for anyone who types "Clifton".
+ *
+ * So the query is shortened rather than given up on: the whole value, then the
+ * part before the first comma, then its longest word. Each is a prefix of what
+ * was saved — nothing is invented, nothing is broadened to a different fact,
+ * and choosing among whatever the shorter query returns is still the matcher's
+ * job, which is what keeps Clifton, Colorado from being selected.
+ */
+export function searchQueriesFor(text: string): string[] {
+  const whole = text.trim();
+  if (whole.length === 0) return [];
+  const head = (whole.split(',')[0] ?? '').trim();
+  const longestWord = [...head.split(/\s+/)].sort((a, b) => b.length - a.length)[0] ?? '';
+  const queries = [whole, head, longestWord]
+    .map((query) => query.trim())
+    .filter((query) => query.length >= 2);
+  return [...new Set(queries)];
+}
+
+/**
+ * Types each progressively shorter query until the list renders something.
+ *
+ * Bounded by the three queries above and by `typeSearch`'s own wait, so a
+ * control that answers nothing costs a little over a second rather than a
+ * retry loop.
+ */
+export async function typeSearchNarrowing(
+  trigger: HTMLElement,
+  text: string,
+): Promise<HTMLElement | null> {
+  for (const query of searchQueriesFor(text)) {
+    await typeSearch(trigger, query);
+    const opened = openPopupWithOptions(trigger);
+    if (opened) return opened;
+  }
+  return null;
+}
+
+/**
  * A realistic pointer press, in the order a browser sends one.
  *
  * `element.click()` alone opens nothing on the libraries that matter: a React
@@ -567,8 +651,7 @@ export async function openControl(
   // never open anything — typing is the only way in.
   if (autocomplete && searchText) {
     trigger.focus();
-    await typeSearch(trigger, searchText);
-    const typed = openPopupWithOptions(trigger);
+    const typed = await typeSearchNarrowing(trigger, searchText);
     if (typed) return typed;
   }
 
@@ -586,14 +669,30 @@ export async function openControl(
   if (keyed) return keyed;
 
   if (searchText && trigger instanceof HTMLInputElement) {
-    await typeSearch(trigger, searchText);
-    const typed = openPopupWithOptions(trigger);
+    const typed = await typeSearchNarrowing(trigger, searchText);
     if (typed) return typed;
   }
   // Last: a container that opened and is still empty. Reported as an open
   // control with no choices, which is a different repair from one that never
   // opened, and the caller distinguishes them.
-  return findListbox(trigger);
+  //
+  // Found by id even when it is invisible, because an empty list *is* invisible
+  // — it has no rows to give it a height — and refusing it here reported every
+  // control that opened onto nothing as one that had never opened at all.
+  const visible = findListbox(trigger);
+  if (visible) return visible;
+  const scope = scopeOf(trigger);
+  for (const id of (
+    trigger.getAttribute('aria-controls') ??
+    trigger.getAttribute('aria-owns') ??
+    ''
+  )
+    .split(/\s+/)
+    .filter(Boolean)) {
+    const declared = elementById(scope, id);
+    if (declared) return declared;
+  }
+  return null;
 }
 
 /**
@@ -621,7 +720,7 @@ export function pressKey(target: HTMLElement, key: string): void {
 export function activeOption(trigger: HTMLElement, container: HTMLElement): HTMLElement | null {
   const id = trigger.getAttribute('aria-activedescendant');
   if (id) {
-    const byId = container.ownerDocument.getElementById(id);
+    const byId = elementById(scopeOf(container), id) ?? elementById(scopeOf(trigger), id);
     if (byId) return byId;
   }
   return container.querySelector<HTMLElement>(

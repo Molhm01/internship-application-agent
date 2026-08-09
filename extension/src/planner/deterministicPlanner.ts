@@ -2,6 +2,7 @@ import {
   resolveStructuralField,
   allowsRegionSuffix,
   chooseDiscoverySource,
+  DISCOVERY_SOURCE_CANDIDATES,
   mayReasonAbout,
   isNeverGuessedQuestion,
   sectionForQuestion,
@@ -622,6 +623,45 @@ function planAction(
         confidence: chosen.confidence,
         requiresReview: chosen.confidence < 0.9,
         reason: chosen.reason,
+      };
+    }
+    // Nothing was offered to choose from, which on a custom combobox does not
+    // mean the form offers nothing: its menu is built when it opens, so the
+    // scan saw an empty list and the ranking above had nothing to rank. Saying
+    // "none of these describes it" about a list nobody has read yet is a
+    // statement about the scanner, and it left a control that plainly lists the
+    // answer wearing "Information needed" on every run.
+    //
+    // The ranked categories go to the engine instead, which opens the control
+    // and matches them against the choices it is really offering — and reports
+    // `OPTION_NOT_FOUND` if none of them is there, which is the same honest
+    // outcome as before, reached from evidence.
+    if ((field.options ?? []).length === 0 && field.fieldType !== 'radio') {
+      const saved = context.discoverySource?.trim();
+      const ranked = DISCOVERY_SOURCE_CANDIDATES.filter(
+        (candidate) => candidate.toLowerCase() !== saved?.toLowerCase(),
+      );
+      const proposed = saved ?? ranked[0] ?? '';
+      const alternatives = (saved ? ranked : ranked.slice(1)).slice(0, 6);
+      return {
+        ...base,
+        action: 'select_suggested_option',
+        proposedValue: proposed,
+        matchedOption: { label: proposed, value: proposed },
+        source: 'profile',
+        sourceReference: saved ? 'profile.preferences.discoverySource' : 'form.discoverySource',
+        matchHint: {
+          ...(base.matchHint ?? {}),
+          ...(field.canonicalKey ? { canonicalQuestion: field.canonicalKey } : {}),
+          ...(alternatives.length > 0 ? { alternativeValues: alternatives } : {}),
+        },
+        reason: saved
+          ? `Your saved answer for how you found this job is "${saved}"; the closest category this form offers is chosen once its list opens.`
+          : 'This job was found through an online job board, and the closest category this form offers is chosen once its list opens.',
+        warnings: [
+          ...base.warnings,
+          'Options are read when the list opens; the exact match is confirmed at fill time.',
+        ],
       };
     }
     return {

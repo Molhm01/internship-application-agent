@@ -4,7 +4,7 @@ import { allowsRegionSuffix, matchOption, normalizeOptionText } from './optionMa
 import { matchIntentToOption } from './semanticOptionResolver.js';
 import { matchLocationOption, type LocationTarget } from './locationMatcher.js';
 import { intentForBooleanAnswer, readBooleanAnswer } from './questionIntent.js';
-import { isSelfDescribePhrasing } from './synonyms.js';
+import { DECLINE_PHRASINGS, isSelfDescribePhrasing, normalizeOptionLabel } from './synonyms.js';
 import type { CanonicalQuestion } from '../constants/questions.js';
 
 /**
@@ -112,6 +112,20 @@ export function isPlaceholderLabel(label: string, value: string): boolean {
   const text = normalizeOptionText(label);
   if (value.trim() === '' && text.length === 0) return true;
   if (text.length === 0) return true;
+  // A way of declining is a real answer, whatever verb it opens with.
+  //
+  // The prompt rule below matches anything starting "choose" or "select", and a
+  // Greenhouse ethnicity list offers "Choose not to disclose" — which it threw
+  // away as a prompt, leaving a control whose only permitted answer had been
+  // filtered out of its own option list. The field then reported that no option
+  // corresponded to "Decline to answer" while that option sat in the open menu,
+  // and the one thing the agent is allowed to say about a protected question
+  // became unsayable.
+  if (
+    DECLINE_PHRASINGS.some((phrase) => normalizeOptionLabel(phrase) === normalizeOptionLabel(label))
+  ) {
+    return false;
+  }
   return (
     /^(please )?(select|choose|make a selection|no selection|pick)\b/.test(text) ||
     text === 'select' ||

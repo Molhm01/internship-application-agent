@@ -304,6 +304,10 @@ test('opens every control, reads its real options, and resolves each from saved 
       question: built.plan.actions.find((action) => action.fieldId === result.fieldId)?.question,
       status: result.status,
       code: result.error?.code,
+      // The stage's own sentence, not just its code: "the list never opened"
+      // and "the list opened and had nothing on it" share a failure family and
+      // need different repairs, and a bare code cannot tell them apart.
+      reason: result.error?.message,
     }));
   expect(unresolved, 'every approved option control must resolve and verify').toEqual([]);
 

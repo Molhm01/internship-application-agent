@@ -181,8 +181,18 @@ test('resolves and fills custom comboboxes without touching unanswered sensitive
   // A combined "Location (City)" control takes the whole saved place, so the
   // executor can distinguish this Clifton from the ones in other states.
   expect(city?.proposedValue).toBe('Clifton, New Jersey');
-  expect(country?.requiresReview).toBe(true);
-  expect(city?.requiresReview).toBe(true);
+  // Review is inherited from the match, never forced by the widget's shape.
+  //
+  // This asserted `requiresReview === true` for both, on the reasoning that the
+  // scanner had seen no options so nothing had confirmed the answer was on the
+  // list. What that produced was a form where every custom dropdown sat unfilled
+  // behind a confirmation the user could only give by doing the work themselves.
+  // The confirmation now happens at fill time and against better evidence — the
+  // control is opened, its real choices are read, and anything that is not a
+  // documented match is refused — so what is asserted here is that neither of
+  // these is sensitive, and the DOM checks below are what prove they filled.
+  expect(country?.sensitive).toBe(false);
+  expect(city?.sensitive).toBe(false);
 
   // The website field falls back to the saved portfolio.
   expect(byQuestion('website')?.proposedValue).toBe('https://portfolio.example.com');

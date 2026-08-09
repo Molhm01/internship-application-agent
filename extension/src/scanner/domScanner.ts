@@ -17,7 +17,22 @@ import {
   type RequiredSource,
   type SemanticType,
 } from '@internship-agent/shared';
-import { readSelectedText } from './optionDiscovery.js';
+import { elementById, readSelectedText, scopeOf } from './optionDiscovery.js';
+
+/**
+ * An element's id-bound partner, looked for in the tree it actually lives in.
+ *
+ * `ownerDocument.getElementById` was used everywhere below, and inside an open
+ * shadow root it can never succeed: ids are scoped per tree, so a shadow-rooted
+ * control's `aria-labelledby`, its `label[for]`, and the listbox it names in
+ * `aria-controls` are all invisible from the document. The control was then
+ * unlabelled, which is how a perfectly ordinary combobox inside a web component
+ * was dropped from the scan entirely — never filled, never failed, simply
+ * absent from the report while sitting unanswered on the page.
+ */
+function relatedById(element: HTMLElement, id: string): HTMLElement | null {
+  return elementById(scopeOf(element), id);
+}
 
 export interface DomScanResult {
   fields: DetectedField[];
@@ -202,7 +217,7 @@ export function opensOptionList(element: HTMLElement): boolean {
   // it is the *absence* of one that leaves a bare `aria-expanded` ambiguous.
   if (element.hasAttribute('aria-haspopup')) return true;
   const controls = cleanText(element.getAttribute('aria-controls')).split(' ')[0];
-  const region = controls ? element.ownerDocument.getElementById(controls) : null;
+  const region = controls ? relatedById(element, controls) : null;
   if (!region) return false;
   const role = region.getAttribute('role');
   if (role === 'listbox' || role === 'menu') return true;
@@ -335,7 +350,7 @@ function textByIds(element: HTMLElement, attribute: string): string {
   const ids = cleanText(element.getAttribute(attribute)).split(' ').filter(Boolean);
   return cleanText(
     ids
-      .map((id) => element.ownerDocument.getElementById(id)?.textContent)
+      .map((id) => relatedById(element, id)?.textContent)
       .filter(Boolean)
       .join(' '),
   );
@@ -698,7 +713,7 @@ function optionsFor(elements: HTMLElement[], fieldType: FieldType): FieldOption[
 
   const byId = (attribute: string): Element | null => {
     const value = cleanText(first.getAttribute(attribute)).split(' ')[0];
-    return value ? first.ownerDocument.getElementById(value) : null;
+    return value ? relatedById(first, value) : null;
   };
 
   return (
@@ -829,7 +844,7 @@ function associatedCaptions(
   const nodes = new Set<Element>();
   for (const element of elements) {
     if (element.id) {
-      const explicit = element.ownerDocument.querySelector(`label[for="${cssEscape(element.id)}"]`);
+      const explicit = scopeOf(element).querySelector(`label[for="${cssEscape(element.id)}"]`);
       if (explicit) nodes.add(explicit);
     }
     const wrapped = element.closest('label');
@@ -837,7 +852,7 @@ function associatedCaptions(
     for (const id of cleanText(element.getAttribute('aria-labelledby'))
       .split(' ')
       .filter(Boolean)) {
-      const target = element.ownerDocument.getElementById(id);
+      const target = relatedById(element, id);
       if (target) nodes.add(target);
     }
   }

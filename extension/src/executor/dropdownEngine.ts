@@ -24,7 +24,7 @@ import {
   readSelectedText,
   resolveTrigger,
   revealOption,
-  typeSearch,
+  typeSearchNarrowing,
   waitFor,
 } from '../scanner/optionDiscovery.js';
 
@@ -466,6 +466,36 @@ async function executeCustomDropdown(
   input: DropdownExecutionInput,
 ): Promise<Stopped | Selected> {
   const trigger = resolveTrigger(root);
+
+  // Already showing the answer is answered.
+  //
+  // A `<select>` gets this for free — its value is compared before anything is
+  // written — and the custom path did not, so a control the page had *already*
+  // settled was opened anyway. The combined phone widget is the case that
+  // proves it: its country code renders "US +1" from the number beside it, and
+  // there is no menu behind it to open at all. The engine clicked at it, found
+  // nothing, and reported OPEN_FAILED — a red "Autofill failed" over a control
+  // displaying exactly the right answer.
+  //
+  // Deliberately strict. What the control displays is offered to the same
+  // matcher as a one-entry option list, and only a literal, aliased, or
+  // region-suffixed correspondence counts: a semantic near-miss is not evidence
+  // that a question was answered, and a placeholder is dropped by `realChoices`
+  // before it can be mistaken for one.
+  const already = readSelectedText(root);
+  if (already.trim().length > 0 && already.length <= 200) {
+    const match = matchWithAlternatives(input, [{ label: already, value: already }]);
+    if (match.option && ['literal', 'alias', 'region_suffix'].includes(match.method)) {
+      return {
+        ok: true,
+        method: match.method,
+        label: match.option.label,
+        observed: already,
+        optionCount: 1,
+      };
+    }
+  }
+
   if (root.getAttribute('aria-disabled') === 'true' || trigger.matches(':disabled')) {
     return { code: 'CONTROL_DISABLED', reason: 'The control is disabled.' };
   }
@@ -528,8 +558,10 @@ async function executeCustomDropdown(
   if (!match.option && !match.ambiguous && trigger instanceof HTMLInputElement) {
     for (const candidate of [input.desiredSemanticValue, ...(input.alternativeValues ?? [])]) {
       if (candidate.trim().length === 0) continue;
-      await typeSearch(trigger, candidate);
-      const filtered = findListbox(trigger);
+      // Shortened as it goes, for the same reason opening one is: a list that
+      // renders only what the query matches renders nothing for a query worded
+      // differently from its own entries.
+      const filtered = (await typeSearchNarrowing(trigger, candidate)) ?? findListbox(trigger);
       if (!filtered) continue;
       const refreshed = await enumerateAllOptions(filtered);
       if (refreshed.length === 0) continue;

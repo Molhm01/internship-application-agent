@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Employment history — nested frame</title>
+  </head>
+  <body>
+    <!--
+      The innermost frame of the nested-frame case.
+
+      Two frames deep on purpose: a run that enumerated only the top document's
+      children would reach the wrapper and never this, and the control here is a
+      custom combobox rather than a `<select>` so the whole open/enumerate/click
+      path has to run inside a frame that is not the main one.
+    -->
+    <h2>Employment History</h2>
+    <form id="employmentHistory" onsubmit="return false;">
+      <label id="reasonForLeavingLabel">Reason for Leaving *</label>
+      <div id="reasonForLeaving" class="combobox">
+        <button
+          id="reasonForLeavingTrigger"
+          type="button"
+          role="combobox"
+          aria-expanded="false"
+          aria-controls="reasonForLeavingList"
+          aria-haspopup="listbox"
+          aria-labelledby="reasonForLeavingLabel"
+        >
+          <span class="value" data-selected-label></span>
+        </button>
+      </div>
+    </form>
+
+    <script>
+      (function () {
+        var root = document.getElementById('reasonForLeaving');
+        var trigger = document.getElementById('reasonForLeavingTrigger');
+        var labels = [
+          'Better opportunity',
+          'Relocation',
+          'Returned to school',
+          'End of assignment',
+        ];
+        trigger.addEventListener('click', function () {
+          if (document.getElementById('reasonForLeavingList')) return;
+          var list = document.createElement('ul');
+          list.id = 'reasonForLeavingList';
+          list.setAttribute('role', 'listbox');
+          labels.forEach(function (label) {
+            var item = document.createElement('li');
+            item.setAttribute('role', 'option');
+            item.textContent = label;
+            item.addEventListener('click', function () {
+              root.querySelector('.value').textContent = label;
+              list.remove();
+              trigger.setAttribute('aria-expanded', 'false');
+            });
+            list.append(item);
+          });
+          root.append(list);
+          trigger.setAttribute('aria-expanded', 'true');
+        });
+      })();
+    </script>
+  </body>
+</html>

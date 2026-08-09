@@ -31,6 +31,35 @@ export const DISCOVERY_SOURCE_PREFERENCES: readonly RegExp[] = [
   /\bother\b/i,
 ];
 
+/**
+ * The same categories, written out, for a control whose list does not exist yet.
+ *
+ * `chooseDiscoverySource` ranks the options a page is *offering*, which is the
+ * right thing to do and impossible on a custom combobox: its menu is built when
+ * it opens, so the scan sees no options at all and the ranking has nothing to
+ * rank. Refusing on that basis is what marked "How did you hear about this
+ * position?" as the user's to answer on a control that lists the answer plainly
+ * — the same snapshot-versus-live-list failure the executor was rebuilt to end,
+ * one layer up.
+ *
+ * So these are handed to the engine instead, in the same order, and matched
+ * against the list the control actually opens with. Entry *n* here is the
+ * literal wording of pattern *n* above, and a test asserts that pairing holds,
+ * so the two can never drift into meaning different things.
+ */
+export const DISCOVERY_SOURCE_CANDIDATES: readonly string[] = [
+  'Internet Job Board',
+  'Online Job Board',
+  'Job Board',
+  'Other Internet Source',
+  'Job Search Site',
+  'Internet',
+  'Online',
+  'Company Website',
+  'Website',
+  'Other',
+];
+
 /** Wording used for the dependent "please specify" box, when one accepts text. */
 export const DISCOVERY_SOURCE_DETAIL = 'Internship Pilot';
 

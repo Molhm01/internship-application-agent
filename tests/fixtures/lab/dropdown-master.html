@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dropdown execution — master fixture</title>
+    <style>
+      /* Layout only. Every rule here exists because the executor's visibility
+         and scroll logic is about laid-out boxes, and a fixture with no layout
+         would prove nothing about either. */
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+      }
+      label {
+        display: block;
+        margin-top: 12px;
+        font-weight: 600;
+      }
+      input,
+      select {
+        display: block;
+        min-width: 280px;
+        min-height: 24px;
+      }
+      .combobox,
+      .react-select,
+      .portal-select,
+      .virtual-select {
+        display: block;
+        min-width: 280px;
+      }
+      [role='combobox'],
+      button[aria-haspopup] {
+        display: block;
+        min-width: 280px;
+        min-height: 28px;
+        text-align: left;
+      }
+      [role='listbox'],
+      [role='menu'] {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        border: 1px solid #999;
+        background: #fff;
+        min-width: 280px;
+      }
+      [role='option'],
+      [role='menuitem'] {
+        display: block;
+        min-height: 24px;
+        line-height: 24px;
+        padding: 0 4px;
+      }
+      /* A long menu that keeps every option in the DOM and shows six of them. */
+      .scroll-menu {
+        max-height: 144px;
+        overflow-y: auto;
+      }
+      /* The virtualized menu: a fixed viewport over a spacer taller than it. */
+      .virtual-viewport {
+        height: 144px;
+        overflow-y: auto;
+        border: 1px solid #999;
+        background: #fff;
+        min-width: 280px;
+      }
+      .virtual-spacer {
+        position: relative;
+      }
+      .virtual-viewport [role='option'] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 24px;
+      }
+      iframe {
+        display: block;
+        margin-top: 12px;
+        border: 1px solid #ccc;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      One page carrying every dropdown shape the executor has to drive.
+
+      Each control below reproduces a widget family that failed on a live
+      application, and the eleven of them together are the acceptance surface for
+      dropdown execution: a native select, a select the page rebuilds when its
+      parent changes, an ARIA combobox, a React-style controlled dropdown whose
+      menu is mounted into `document.body`, a long menu that must be scrolled, a
+      virtualized menu that only renders what it passes, a searchable list that
+      does not exist until it is typed into, a control that starts disabled and
+      is enabled by another control, a widget that ignores pointer clicks and
+      commits only from its own key handler, a native select inside an open
+      shadow root, and a custom combobox two frames down.
+
+      The text inputs at the top are the regression guard: they must keep
+      working, unchanged, while everything below is being repaired.
+
+      Every value is fictional. The submit button at the bottom exists to be
+      *not* clicked.
+    -->
+    <h1>Application</h1>
+    <form id="application" onsubmit="return false;">
+      <fieldset>
+        <legend>Personal Information</legend>
+
+        <label for="firstName">First Name *</label>
+        <input id="firstName" name="firstName" type="text" required />
+
+        <label for="lastName">Last Name *</label>
+        <input id="lastName" name="lastName" type="text" required />
+
+        <label for="email">Email Address *</label>
+        <input id="email" name="email" type="email" required />
+
+        <label for="phoneNumber">Phone Number *</label>
+        <input id="phoneNumber" name="phoneNumber" type="tel" required />
+
+        <label for="addressLine1">Street Address *</label>
+        <input id="addressLine1" name="addressLine1" type="text" required />
+
+        <label for="city">City *</label>
+        <input id="city" name="city" type="text" required />
+
+        <label for="postalCode">Zip/Postal Code *</label>
+        <input id="postalCode" name="postalCode" type="text" required />
+
+        <!-- Native select, and the parent of the dependent one below it. -->
+        <label for="country">Country *</label>
+        <select id="country" name="country" required>
+          <option value="">No Selection</option>
+          <option value="CA">Canada</option>
+          <option value="MX">Mexico</option>
+          <option value="US">United States of America</option>
+        </select>
+
+        <!-- A. Native select. Replaced rather than mutated when Country
+             changes, so every reference taken before that is stale. -->
+        <label for="state">State/Province *</label>
+        <select id="state" name="state" required>
+          <option value="">Select a country first</option>
+        </select>
+      </fieldset>
+
+      <fieldset>
+        <legend>Work Experience</legend>
+
+        <!-- B. Standard ARIA combobox: button trigger, listbox rendered on
+             open and named by aria-controls. -->
+        <label id="employmentTypeLabel">Employment Type *</label>
+        <div id="employmentType" class="combobox">
+          <button
+            id="employmentTypeTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="employmentTypeList"
+            aria-haspopup="listbox"
+            aria-labelledby="employmentTypeLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+
+        <!-- I. The nested-frame case: two frames down, custom combobox. -->
+        <iframe
+          id="employmentFrame"
+          src="/lab/dropdown-master-frame.html"
+          title="Employment history"
+          width="640"
+          height="300"
+        ></iframe>
+      </fieldset>
+
+      <fieldset>
+        <legend>Education</legend>
+
+        <!-- C + J. React-style controlled dropdown whose menu is mounted into
+             document.body, where no ancestor relationship to the trigger
+             survives. Its list names institutions rather than degrees, so only
+             the second reading of the saved record answers it. -->
+        <label id="educationTypeLabel">Education Type *</label>
+        <div id="educationType" class="react-select">
+          <div
+            id="educationTypeTrigger"
+            role="combobox"
+            tabindex="0"
+            aria-expanded="false"
+            aria-labelledby="educationTypeLabel"
+          >
+            <span class="singleValue"></span>
+          </div>
+        </div>
+
+        <!-- D. Long scrollable menu: every option is in the DOM, six are on
+             screen, and the answer is far below the fold. -->
+        <label id="educationCountryLabel">Education Country *</label>
+        <div id="educationCountry" class="portal-select">
+          <button
+            id="educationCountryTrigger"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="educationCountryMenu"
+            aria-labelledby="educationCountryLabel"
+          >
+            <span data-selected-label></span>
+          </button>
+        </div>
+
+        <!-- E + K. Starts disabled with no options, and is enabled by the
+             control above it after the page has finished loading its list. -->
+        <label id="educationStateLabel">Education State/Province *</label>
+        <div id="educationState" class="portal-select">
+          <button
+            id="educationStateTrigger"
+            type="button"
+            disabled
+            aria-disabled="true"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="educationStateMenu"
+            aria-labelledby="educationStateLabel"
+          >
+            <span data-selected-label></span>
+          </button>
+        </div>
+
+        <!-- F. Searchable combobox: nothing is rendered until it is typed in,
+             and the list is fetched rather than filtered client-side. -->
+        <label for="school">School/Institution Name *</label>
+        <div id="schoolRoot">
+          <input
+            id="school"
+            name="school"
+            type="text"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls="schoolList"
+            aria-expanded="false"
+            autocomplete="off"
+            required
+          />
+          <ul id="schoolList" role="listbox"></ul>
+        </div>
+
+        <!-- G. Virtualized menu: only the rows in the viewport exist as
+             elements, and the answer is not one of them until it is scrolled
+             to. -->
+        <label id="areaOfStudyLabel">Area of Study *</label>
+        <div id="areaOfStudy" class="virtual-select">
+          <button
+            id="areaOfStudyTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="areaOfStudyMenu"
+            aria-haspopup="listbox"
+            aria-labelledby="areaOfStudyLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+
+        <!-- H. Simple Yes/No, inside an open shadow root. -->
+        <div id="graduatedHost"></div>
+
+        <!-- A custom combobox inside an open shadow root: its trigger, its
+             listbox and the id tying them together all live in a tree
+             `document.getElementById` cannot see. -->
+        <div id="degreeHost"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Job-Specific Questions</legend>
+
+        <!--
+          The keyboard case. This widget ignores pointer events on its options
+          entirely — clicking one does nothing at all — and commits only from
+          its own keydown handler, which is the shape that left a control
+          showing nothing after a click the executor reported as done.
+        -->
+        <label id="sourceLabel">How did you hear about this position?</label>
+        <div id="source" class="combobox">
+          <button
+            id="sourceTrigger"
+            type="button"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="sourceList"
+            aria-haspopup="listbox"
+            aria-labelledby="sourceLabel"
+          >
+            <span class="value" data-selected-label></span>
+          </button>
+        </div>
+      </fieldset>
+
+      <!-- Never clicked, by any code path, ever. -->
+      <button id="submitApplication" type="submit">Submit Application</button>
+    </form>
+
+    <script>
+      (function () {
+        window.fixtureState = { submitted: false };
+
+        // ---- Data ---------------------------------------------------------
+
+        var STATES = {
+          US: [
+            ['', 'No Selection'],
+            ['NJ', 'New Jersey'],
+            ['NY', 'New York'],
+            ['CA', 'California'],
+          ],
+          CA: [
+            ['', 'No Selection'],
+            ['ON', 'Ontario'],
+            ['BC', 'British Columbia'],
+          ],
+          MX: [
+            ['', 'No Selection'],
+            ['JAL', 'Jalisco'],
+          ],
+        };
+
+        // A realistic country list. Long enough that the answer is well below
+        // the fold of a six-row menu, and alphabetical so it sits near the end.
+        var COUNTRIES = (
+          'Afghanistan,Albania,Algeria,Andorra,Angola,Argentina,Armenia,Australia,Austria,' +
+          'Azerbaijan,Bahamas,Bahrain,Bangladesh,Barbados,Belarus,Belgium,Belize,Benin,Bhutan,' +
+          'Bolivia,Bosnia and Herzegovina,Botswana,Brazil,Brunei,Bulgaria,Burkina Faso,Burundi,' +
+          'Cambodia,Cameroon,Canada,Chad,Chile,China,Colombia,Costa Rica,Croatia,Cuba,Cyprus,' +
+          'Czechia,Denmark,Djibouti,Dominica,Ecuador,Egypt,El Salvador,Estonia,Eswatini,Ethiopia,' +
+          'Fiji,Finland,France,Gabon,Gambia,Georgia,Germany,Ghana,Greece,Grenada,Guatemala,Guinea,' +
+          'Guyana,Haiti,Honduras,Hungary,Iceland,India,Indonesia,Iraq,Ireland,Israel,Italy,Jamaica,' +
+          'Japan,Jordan,Kazakhstan,Kenya,Kuwait,Kyrgyzstan,Laos,Latvia,Lebanon,Lesotho,Liberia,' +
+          'Libya,Liechtenstein,Lithuania,Luxembourg,Madagascar,Malawi,Malaysia,Maldives,Mali,Malta,' +
+          'Mauritania,Mauritius,Mexico,Moldova,Monaco,Mongolia,Montenegro,Morocco,Mozambique,' +
+          'Namibia,Nepal,Netherlands,New Zealand,Nicaragua,Niger,Nigeria,North Macedonia,Norway,' +
+          'Oman,Pakistan,Panama,Paraguay,Peru,Philippines,Poland,Portugal,Qatar,Romania,Rwanda,' +
+          'Samoa,San Marino,Saudi Arabia,Senegal,Serbia,Seychelles,Sierra Leone,Singapore,Slovakia,' +
+          'Slovenia,Somalia,South Africa,South Korea,Spain,Sri Lanka,Sudan,Suriname,Sweden,' +
+          'Switzerland,Tanzania,Thailand,Togo,Tonga,Trinidad and Tobago,Tunisia,Turkey,Uganda,' +
+          'Ukraine,United Arab Emirates,United Kingdom,United States of America,Uruguay,Uzbekistan,' +
+          'Vanuatu,Vietnam,Yemen,Zambia,Zimbabwe'
+        ).split(',');
+
+        // A realistic field-of-study list, deliberately not alphabetical near
+        // the answer, so reaching it requires scrolling rather than luck.
+        var AREAS = (
+          'Accounting,Aerospace Engineering,African Studies,Agricultural Science,Anthropology,' +
+          'Applied Mathematics,Archaeology,Architecture,Art History,Astronomy,Athletic Training,' +
+          'Biochemistry,Bioengineering,Biology,Biomedical Engineering,Business Administration,' +
+          'Chemical Engineering,Chemistry,Civil Engineering,Classics,Communications,' +
+          'Computer Engineering,Computer Science,Construction Management,Criminal Justice,' +
+          'Culinary Arts,Cybersecurity,Dance,Data Science,Dentistry,Design,Earth Science,' +
+          'Economics,Education,Electrical Engineering,Elementary Education,Engineering Physics,' +
+          'English Literature,Entrepreneurship,Environmental Science,Epidemiology,Ethics,' +
+          'Film Studies,Finance,Fine Arts,Food Science,Forestry,French,Genetics,Geography,' +
+          'Geology,German,Graphic Design,Health Administration,History,Horticulture,' +
+          'Hospitality Management,Human Resources,Industrial Engineering,Information Systems,' +
+          'Interior Design,International Relations,Journalism,Kinesiology,Latin American Studies,' +
+          'Law,Linguistics,Management,Marine Biology,Marketing,Materials Science,Mathematics,' +
+          'Mechanical Engineering,Media Studies,Medicine,Meteorology,Microbiology,Music,' +
+          'Neuroscience,Nuclear Engineering,Nursing,Nutrition,Occupational Therapy,Oceanography,' +
+          'Petroleum Engineering,Pharmacy,Philosophy,Photography,Physical Therapy,Physics,' +
+          'Political Science,Psychology,Public Health,Public Policy,Radiology,Real Estate,' +
+          'Religious Studies,Robotics,Russian,Social Work,Sociology,Software Engineering,' +
+          'Spanish,Sports Management,Statistics,Supply Chain Management,Sustainability,Theatre,' +
+          'Theology,Urban Planning,Veterinary Science,Wildlife Biology,Zoology,Other'
+        ).split(',');
+
+        var SCHOOLS = [
+          'Montclair State University',
+          'New Jersey Institute of Technology',
+          'Princeton University',
+          'Rowan University',
+          'Rutgers University',
+          'Seton Hall University',
+          'Stevens Institute of Technology',
+        ];
+
+        // ---- A. Native select, rebuilt by its parent ----------------------
+
+        document.getElementById('country').addEventListener('change', function (event) {
+          var previous = document.getElementById('state');
+          var replacement = document.createElement('select');
+          replacement.id = 'state';
+          replacement.name = 'state';
+          replacement.required = true;
+          var rows = STATES[event.target.value] || [['', 'Select a country first']];
+          rows.forEach(function (row) {
+            var option = document.createElement('option');
+            option.value = row[0];
+            option.textContent = row[1];
+            replacement.append(option);
+          });
+          previous.replaceWith(replacement);
+        });
+
+        // ---- B. ARIA combobox ---------------------------------------------
+
+        function ariaCombobox(rootId, triggerId, listId, labels) {
+          var root = document.getElementById(rootId);
+          var trigger = document.getElementById(triggerId);
+          trigger.addEventListener('click', function () {
+            if (document.getElementById(listId)) return;
+            var list = document.createElement('ul');
+            list.id = listId;
+            list.setAttribute('role', 'listbox');
+            labels.forEach(function (label) {
+              var item = document.createElement('li');
+              item.setAttribute('role', 'option');
+              item.textContent = label;
+              item.addEventListener('click', function () {
+                root.querySelector('.value').textContent = label;
+                item.setAttribute('aria-selected', 'true');
+                list.remove();
+                trigger.setAttribute('aria-expanded', 'false');
+              });
+              list.append(item);
+            });
+            root.append(list);
+            trigger.setAttribute('aria-expanded', 'true');
+          });
+        }
+
+        ariaCombobox('employmentType', 'employmentTypeTrigger', 'employmentTypeList', [
+          'Full Time',
+          'Part Time',
+          'Internship',
+          'Contract',
+          'Freelance/Self Employed',
+        ]);
+
+        // ---- C + J. React-style controlled dropdown, menu in document.body -
+
+        (function reactSelect() {
+          var root = document.getElementById('educationType');
+          var trigger = document.getElementById('educationTypeTrigger');
+          trigger.addEventListener('mousedown', function () {
+            if (document.getElementById('educationTypeMenu')) return;
+            var menu = document.createElement('div');
+            menu.id = 'educationTypeMenu';
+            menu.setAttribute('role', 'listbox');
+            // Institution kinds, not degree names: only the second reading of
+            // the saved education record answers this list.
+            ['High School', 'Trade School', 'College/University', 'Graduate School'].forEach(
+              function (label) {
+                var item = document.createElement('div');
+                item.setAttribute('role', 'option');
+                item.textContent = label;
+                item.addEventListener('click', function () {
+                  root.querySelector('.singleValue').textContent = label;
+                  menu.remove();
+                  trigger.setAttribute('aria-expanded', 'false');
+                });
+                menu.append(item);
+              },
+            );
+            // Mounted at the document root, exactly where a portal puts it.
+            document.body.append(menu);
+            trigger.setAttribute('aria-expanded', 'true');
+          });
+        })();
+
+        // ---- D + E + K. Portal menus, one long and one dependent -----------
+
+        /**
+         * A menu mounted into document.body, optionally scrollable.
+         *
+         * `labelsFor` is called at open time rather than at wire-up time, so a
+         * dependent control genuinely has no options until its parent has been
+         * answered.
+         */
+        function portalMenu(rootId, triggerId, menuId, labelsFor, onChoose, scrollable) {
+          var root = document.getElementById(rootId);
+          var trigger = document.getElementById(triggerId);
+          trigger.addEventListener('mousedown', function () {
+            if (trigger.disabled) return;
+            if (document.getElementById(menuId)) return;
+            var menu = document.createElement('div');
+            menu.id = menuId;
+            menu.setAttribute('role', 'menu');
+            if (scrollable) menu.className = 'scroll-menu';
+            labelsFor().forEach(function (label) {
+              var item = document.createElement('div');
+              item.setAttribute('role', 'menuitem');
+              item.textContent = label;
+              item.addEventListener('click', function () {
+                root.querySelector('[data-selected-label]').textContent = label;
+                menu.remove();
+                trigger.setAttribute('aria-expanded', 'false');
+                if (onChoose) onChoose(label);
+              });
+              menu.append(item);
+            });
+            document.body.append(menu);
+            trigger.setAttribute('aria-expanded', 'true');
+          });
+        }
+
+        var educationCountry = '';
+        var educationStates = [];
+        portalMenu(
+          'educationCountry',
+          'educationCountryTrigger',
+          'educationCountryMenu',
+          function () {
+            return COUNTRIES;
+          },
+          function (label) {
+            educationCountry = label;
+            // The dependency: the region list is fetched, and the control stays
+            // disabled with nothing on it until the answer arrives.
+            var trigger = document.getElementById('educationStateTrigger');
+            educationStates = [];
+            trigger.disabled = true;
+            trigger.setAttribute('aria-disabled', 'true');
+            window.setTimeout(function () {
+              if (label === 'United States of America') {
+                educationStates = ['New Jersey', 'New York', 'California'];
+              } else if (label === 'Canada') {
+                educationStates = ['Ontario', 'British Columbia'];
+              }
+              if (educationStates.length === 0) return;
+              trigger.disabled = false;
+              trigger.setAttribute('aria-disabled', 'false');
+            }, 350);
+          },
+          true,
+        );
+
+        portalMenu('educationState', 'educationStateTrigger', 'educationStateMenu', function () {
+          return educationStates;
+        });
+
+        // ---- F. Searchable combobox ---------------------------------------
+
+        (function searchableSchool() {
+          var input = document.getElementById('school');
+          var list = document.getElementById('schoolList');
+          input.addEventListener('input', function () {
+            list.innerHTML = '';
+            var query = input.value.trim().toLowerCase();
+            if (query.length === 0) {
+              input.setAttribute('aria-expanded', 'false');
+              return;
+            }
+            SCHOOLS.filter(function (name) {
+              return name.toLowerCase().indexOf(query) !== -1;
+            }).forEach(function (name) {
+              var item = document.createElement('li');
+              item.setAttribute('role', 'option');
+              item.textContent = name;
+              item.addEventListener('click', function () {
+                input.value = name;
+                list.innerHTML = '';
+                input.setAttribute('aria-expanded', 'false');
+              });
+              list.append(item);
+            });
+            input.setAttribute('aria-expanded', 'true');
+          });
+        })();
+
+        // ---- G. Virtualized menu ------------------------------------------
+
+        (function virtualizedArea() {
+          var root = document.getElementById('areaOfStudy');
+          var trigger = document.getElementById('areaOfStudyTrigger');
+          var ROW = 24;
+          var OVERSCAN = 2;
+
+          trigger.addEventListener('click', function () {
+            if (document.getElementById('areaOfStudyMenu')) return;
+            var menu = document.createElement('div');
+            menu.id = 'areaOfStudyMenu';
+            menu.setAttribute('role', 'listbox');
+
+            var viewport = document.createElement('div');
+            viewport.className = 'virtual-viewport';
+            var spacer = document.createElement('div');
+            spacer.className = 'virtual-spacer';
+            spacer.style.height = AREAS.length * ROW + 'px';
+            viewport.append(spacer);
+            menu.append(viewport);
+            root.append(menu);
+            trigger.setAttribute('aria-expanded', 'true');
+
+            function render() {
+              var first = Math.max(0, Math.floor(viewport.scrollTop / ROW) - OVERSCAN);
+              var last = Math.min(
+                AREAS.length,
+                Math.ceil((viewport.scrollTop + viewport.clientHeight) / ROW) + OVERSCAN,
+              );
+              spacer.innerHTML = '';
+              for (var index = first; index < last; index += 1) {
+                (function (label, position) {
+                  var item = document.createElement('div');
+                  item.setAttribute('role', 'option');
+                  item.setAttribute('data-value', label);
+                  item.style.top = position * ROW + 'px';
+                  item.textContent = label;
+                  item.addEventListener('click', function () {
+                    root.querySelector('.value').textContent = label;
+                    menu.remove();
+                    trigger.setAttribute('aria-expanded', 'false');
+                  });
+                  spacer.append(item);
+                })(AREAS[index], index);
+              }
+            }
+
+            viewport.addEventListener('scroll', render);
+            render();
+          });
+        })();
+
+        // ---- H. Yes/No inside an open shadow root --------------------------
+
+        (function graduatedInShadow() {
+          var host = document.getElementById('graduatedHost');
+          var shadow = host.attachShadow({ mode: 'open' });
+          shadow.innerHTML =
+            '<style>label{display:block;margin-top:12px;font-weight:600}' +
+            'select{display:block;min-width:280px;min-height:24px}</style>' +
+            '<label for="graduated">Graduated?</label>' +
+            '<select id="graduated" name="graduated">' +
+            '<option value="">No Selection</option>' +
+            '<option value="yes">Yes</option>' +
+            '<option value="no">No</option>' +
+            '</select>';
+        })();
+
+        // ---- A custom combobox inside an open shadow root -------------------
+
+        (function degreeInShadow() {
+          var host = document.getElementById('degreeHost');
+          var shadow = host.attachShadow({ mode: 'open' });
+          shadow.innerHTML =
+            '<style>label{display:block;margin-top:12px;font-weight:600}' +
+            '[role=combobox]{display:block;min-width:280px;min-height:28px;text-align:left}' +
+            '[role=listbox]{list-style:none;margin:0;padding:0;border:1px solid #999;' +
+            'background:#fff;min-width:280px}' +
+            '[role=option]{display:block;min-height:24px;line-height:24px;padding:0 4px}</style>' +
+            '<label id="degreeLabel">Degree in Progress *</label>' +
+            '<div id="degree" class="combobox">' +
+            '<button id="degreeTrigger" type="button" role="combobox" aria-expanded="false" ' +
+            'aria-controls="degreeList" aria-haspopup="listbox" aria-labelledby="degreeLabel">' +
+            '<span class="value" data-selected-label></span></button></div>';
+
+          var root = shadow.getElementById('degree');
+          var trigger = shadow.getElementById('degreeTrigger');
+          var labels = [
+            'High School Diploma',
+            'Associate Degree',
+            "Bachelor's Degree",
+            "Master's Degree",
+          ];
+          trigger.addEventListener('click', function () {
+            if (shadow.getElementById('degreeList')) return;
+            var list = document.createElement('ul');
+            list.id = 'degreeList';
+            list.setAttribute('role', 'listbox');
+            labels.forEach(function (label) {
+              var item = document.createElement('li');
+              item.setAttribute('role', 'option');
+              item.textContent = label;
+              item.addEventListener('click', function () {
+                root.querySelector('.value').textContent = label;
+                list.remove();
+                trigger.setAttribute('aria-expanded', 'false');
+              });
+              list.append(item);
+            });
+            // Inside the shadow root, where only the shadow tree can find it.
+            root.append(list);
+            trigger.setAttribute('aria-expanded', 'true');
+          });
+        })();
+
+        // ---- The keyboard-only widget --------------------------------------
+
+        (function keyboardOnlySource() {
+          var root = document.getElementById('source');
+          var trigger = document.getElementById('sourceTrigger');
+          var labels = [
+            'Employee Referral',
+            'Job Board',
+            'College Career Center',
+            'LinkedIn',
+            'Company Website',
+          ];
+          var items = [];
+          var index = -1;
+
+          function highlight(next) {
+            index = next;
+            items.forEach(function (item, position) {
+              if (position === next) item.setAttribute('data-highlighted', 'true');
+              else item.removeAttribute('data-highlighted');
+            });
+            trigger.setAttribute('aria-activedescendant', items[next] ? items[next].id : '');
+          }
+
+          function open() {
+            if (document.getElementById('sourceList')) return;
+            var list = document.createElement('ul');
+            list.id = 'sourceList';
+            list.setAttribute('role', 'listbox');
+            items = labels.map(function (label, position) {
+              var item = document.createElement('li');
+              item.id = 'sourceOption' + position;
+              item.setAttribute('role', 'option');
+              item.textContent = label;
+              // Deliberately no click handler: this widget answers to the
+              // keyboard and to nothing else.
+              list.append(item);
+              return item;
+            });
+            root.append(list);
+            trigger.setAttribute('aria-expanded', 'true');
+            highlight(0);
+          }
+
+          function close() {
+            var list = document.getElementById('sourceList');
+            if (list) list.remove();
+            items = [];
+            index = -1;
+            trigger.removeAttribute('aria-activedescendant');
+            trigger.setAttribute('aria-expanded', 'false');
+          }
+
+          trigger.addEventListener('click', open);
+          trigger.addEventListener('keydown', function (event) {
+            if (event.key === 'ArrowDown') {
+              if (!document.getElementById('sourceList')) {
+                open();
+                return;
+              }
+              highlight((index + 1) % items.length);
+              return;
+            }
+            if (event.key === 'ArrowUp' && items.length > 0) {
+              highlight((index - 1 + items.length) % items.length);
+              return;
+            }
+            if (event.key === 'Enter' && index >= 0) {
+              root.querySelector('.value').textContent = labels[index];
+              close();
+              return;
+            }
+            if (event.key === 'Escape') close();
+          });
+        })();
+
+        // ---- Never submitted ----------------------------------------------
+
+        document.getElementById('submitApplication').addEventListener('click', function () {
+          window.fixtureState.submitted = true;
+          document.body.setAttribute('data-submitted', 'true');
+        });
+      })();
+    </script>
+  </body>
+</html>
