@@ -353,6 +353,11 @@ async function runOne(
     newFingerprint: fingerprintControl(document, directive.dependentSelector),
     dependentExecuted: drive.executed,
     dependentVerified: drive.verified,
+    // Taken from the drive rather than from the fingerprint above. A button-menu
+    // widget has its menu closed again by this point, so fingerprinting it now
+    // counts nothing — which is how a control the engine had just chosen from
+    // eleven options was recorded as having offered none.
+    dependentOptionCount: drive.result?.optionsFound ?? 0,
     finalStatus: drive.verified ? 'RESOLVED' : 'FAILED',
     ...(drive.verified
       ? {}

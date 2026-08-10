@@ -1,16 +1,21 @@
 import {
   dropdownDirectiveSchema,
   dropdownRunResultSchema,
+  dropdownSeedSchema,
   dropdownsDiscoveredSchema,
   dropdownDirectivesCompleteSchema,
+  isOptionFieldType,
   resolveIntendedAnswer,
   summarizeDropdownRun,
+  type ApplicationScanResult,
   type ApprovedAnswer,
   type CompanyRelationship,
   type DropdownDescriptor,
   type DropdownDirective,
   type DropdownRunResult,
   type DropdownRunSummary,
+  type DropdownSeed,
+  type PlannedOptionAnswer,
   type Profile,
 } from '@internship-agent/shared';
 import { sendToFrame, type FrameTarget } from './frames.js';
@@ -55,6 +60,27 @@ export interface DropdownRunInput {
   approvedAnswers: readonly ApprovedAnswer[];
   companyName: string;
   companyRelationship?: CompanyRelationship | undefined;
+  /**
+   * The option controls the application scan found, grouped by the frame each
+   * one lives in.
+   *
+   * This is the authoritative view of the form, and the pass consumes it rather
+   * than rediscovering the page from scratch. Empty is a valid input and
+   * reproduces the old behaviour exactly — every frame still runs its own walk.
+   */
+  seedsByFrame?: ReadonlyMap<number, readonly DropdownSeed[]>;
+  /**
+   * What the deterministic plan already resolved, by the scan's field id.
+   *
+   * Consulted before this pass's own resolver, and it is not an optimisation.
+   * Deferring option actions to this engine means the planner's answers stop
+   * being executed anywhere else, and the two resolvers do not know the same
+   * things: "Phone Type", "Address Type" and "How did you hear about us" are
+   * answered by the planner's structural rules and by nothing in
+   * `resolveIntendedAnswer`. Without this, deferring them silently unanswered
+   * three questions a working form had been filling for months.
+   */
+  plannedAnswers?: ReadonlyMap<string, PlannedOptionAnswer>;
 }
 
 export interface DropdownRunOutcome {
@@ -62,6 +88,45 @@ export interface DropdownRunOutcome {
   summary: DropdownRunSummary;
   /** Frames that could not be reached, named rather than silently dropped. */
   unreachableFrames: readonly number[];
+}
+
+/**
+ * The option controls of an application scan, grouped by the frame each lives in.
+ *
+ * Which field types count is `isOptionFieldType` minus radios and checkboxes:
+ * those are answered from a list too, and they are not menus — driving a radio
+ * group through a dropdown engine would open nothing and report a failure about
+ * a control that works. Everything else the scan called an option control is
+ * seeded, whatever this pass's own walk would have made of it.
+ *
+ * Nothing is filtered on the scan's own option list. A control the scan saw with
+ * no options is exactly the one that has to be opened to find out.
+ */
+export function dropdownSeedsByFrame(
+  scan: ApplicationScanResult,
+): Map<number, readonly DropdownSeed[]> {
+  const byFrame = new Map<number, DropdownSeed[]>();
+  for (const field of scan.fields) {
+    if (!isOptionFieldType(field.fieldType)) continue;
+    if (field.fieldType === 'radio' || field.fieldType === 'checkbox') continue;
+    if (!field.selector.trim()) continue;
+    const frameId = field.frameId ?? 0;
+    const seed = dropdownSeedSchema.parse({
+      fieldId: field.id,
+      selector: field.selector,
+      label: (field.label || field.question).slice(0, 600),
+      // The section *name* the scan assigned — a vocabulary member such as
+      // `education`, not page text. It is what tells one "Country" from the
+      // other on a form that asks both.
+      sectionContext: field.section ?? '',
+      ...(field.canonicalKey ? { canonicalQuestion: field.canonicalKey } : {}),
+      required: field.required,
+      ...(field.recordIndex === undefined ? {} : { recordIndex: field.recordIndex }),
+      knownOptions: (field.options ?? []).slice(0, 200).map((option) => option.label.slice(0, 600)),
+    });
+    byFrame.set(frameId, [...(byFrame.get(frameId) ?? []), seed]);
+  }
+  return byFrame;
 }
 
 /** A control and the frame it was found in, so it is always driven where it lives. */
@@ -80,6 +145,10 @@ async function discoverInFrames(
       const response = await sendToFrame(input.tabId, frame.frameId, {
         type: 'DISCOVER_DROPDOWNS',
         runId: input.runId,
+        // Only this frame's own controls. A seed carries a selector, and a
+        // selector resolved in the wrong document is how a question gets
+        // answered from another frame's identically-named control.
+        seeds: input.seedsByFrame?.get(frame.frameId) ?? [],
       });
       const parsed = dropdownsDiscoveredSchema.safeParse(response);
       if (!parsed.success) {
@@ -115,7 +184,13 @@ async function discoverInFrames(
  */
 function directiveFor(located: Located, input: DropdownRunInput): DropdownDirective {
   const { descriptor } = located;
-  const question = resolveDropdownQuestion(descriptor);
+  // The application scan's own intent wins where it has one. It was resolved
+  // with the section context, the repeat index and the adapter's knowledge of
+  // the page behind it, and re-deriving the meaning of a question this pass
+  // already has an answer for is how the two records come to disagree.
+  const question = descriptor.scanCanonicalQuestion
+    ? { canonicalQuestion: descriptor.scanCanonicalQuestion }
+    : resolveDropdownQuestion(descriptor);
   const intended = resolveIntendedAnswer({
     canonicalQuestion: question.canonicalQuestion,
     label: descriptor.label,
@@ -127,16 +202,52 @@ function directiveFor(located: Located, input: DropdownRunInput): DropdownDirect
     companyRelationship: input.companyRelationship,
   });
 
+  // What the planner already settled for this exact control, if anything.
+  //
+  // It wins over this pass's own resolver, and only where the resolver came up
+  // empty-handed or the planner's answer is simply better evidence: the planner
+  // saw the scan's intent, the section, and the adapter's knowledge of the page.
+  // It is *not* consulted when this control's question is one only the applicant
+  // may answer — a planned answer cannot promote a sensitive question past the
+  // confirmation rule, because the orchestrator only offers answers its approval
+  // policy already accepted, and this keeps that true even if it stops being.
+  const planned =
+    descriptor.scanFieldId && !intended.sensitive
+      ? input.plannedAnswers?.get(descriptor.scanFieldId)
+      : undefined;
+  const usePlanned =
+    planned !== undefined && planned.intendedAnswer.trim().length > 0 && !planned.sensitive;
+
+  // Neither answer is thrown away. The planner's is tried first — it has already
+  // mapped the saved fact onto *this form's* own vocabulary, which is how "How
+  // did you hear about us" reaches the form's `internet` entry from a saved
+  // "LinkedIn" — and this pass's own reading follows it as an alternative, so a
+  // plan built from a stale scan still cannot cost an answer the resolver knows.
+  const alternatives = usePlanned
+    ? [...planned.alternativeValues, intended.intendedAnswer, ...intended.alternativeValues]
+    : [...intended.alternativeValues];
+
   return dropdownDirectiveSchema.parse({
     dropdownId: descriptor.dropdownId,
     canonicalQuestion: question.canonicalQuestion,
-    intendedAnswer: intended.intendedAnswer,
-    intendedAnswerSource: intended.source,
-    alternativeValues: [...intended.alternativeValues].slice(0, 12),
-    ...(intended.searchText ? { searchText: intended.searchText } : {}),
+    intendedAnswer: usePlanned ? planned.intendedAnswer : intended.intendedAnswer,
+    intendedAnswerSource: usePlanned ? planned.intendedAnswerSource : intended.source,
+    alternativeValues: [...new Set(alternatives.filter((value) => value.trim().length > 0))].slice(
+      0,
+      12,
+    ),
+    ...(usePlanned
+      ? planned.searchText
+        ? { searchText: planned.searchText }
+        : {}
+      : intended.searchText
+        ? { searchText: intended.searchText }
+        : {}),
     allowOtherFallback: intended.allowOtherFallback,
-    requiresUserConfirmation: intended.requiresUserConfirmation,
-    ...(intended.confirmationPrompt ? { confirmationPrompt: intended.confirmationPrompt } : {}),
+    requiresUserConfirmation: usePlanned ? false : intended.requiresUserConfirmation,
+    ...(!usePlanned && intended.confirmationPrompt
+      ? { confirmationPrompt: intended.confirmationPrompt }
+      : {}),
     sensitive: intended.sensitive,
   });
 }
@@ -243,6 +354,14 @@ export async function runDropdownAutofill(input: DropdownRunInput): Promise<Drop
             result.controlStrategy === 'unknown' && descriptor
               ? descriptor.controlStrategy
               : result.controlStrategy,
+          // Discovery is a property of how the control was *found*, so it comes
+          // from the descriptor rather than from the attempt — a frame that
+          // never answered still has to report which pass found the control.
+          discoverySource: descriptor?.discoverySource ?? result.discoverySource,
+          ...(descriptor?.scanFieldId ? { scanFieldId: descriptor.scanFieldId } : {}),
+          ...((result.structure ?? descriptor?.structure)
+            ? { structure: result.structure ?? descriptor?.structure }
+            : {}),
         });
         if (result.verified) anythingVerified = true;
       }

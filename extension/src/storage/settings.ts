@@ -1,10 +1,13 @@
 import {
   AGENT_SERVER_URL,
+  DEFAULT_AUTOFILL_SETTINGS,
   DEFAULT_OLLAMA_MODEL,
   aiGenerationSettingsSchema,
+  autofillSettingsSchema,
   employerAccountSettingsSchema,
   extensionSettingsSchema,
   type AiGenerationSettings,
+  type AutofillSettings,
   type EmployerAccountSettings,
   type ExtensionSettings,
 } from '@internship-agent/shared';
@@ -12,9 +15,14 @@ import {
 export type { ExtensionSettings } from '@internship-agent/shared';
 
 export type ExtensionSettingsUpdate = Partial<
-  Omit<ExtensionSettings, 'ai' | 'employerAccounts' | 'settingsVersion' | 'settingsUpdatedAt'>
+  Omit<
+    ExtensionSettings,
+    'ai' | 'autofill' | 'employerAccounts' | 'settingsVersion' | 'settingsUpdatedAt'
+  >
 > & {
   ai?: Partial<AiGenerationSettings>;
+  /** Merged over the stored block, so changing one switch keeps the rest. */
+  autofill?: Partial<AutofillSettings>;
   employerAccounts?: Partial<EmployerAccountSettings>;
 };
 
@@ -108,6 +116,21 @@ function normalizeStoredSettings(raw: unknown): {
       typeof candidate.selectedDocumentId === 'string' ? candidate.selectedDocumentId : null,
     aiGenerationEnabled: migrateEnablement(candidate, rawAi),
     ai,
+    // Rebuilt key by key rather than spread, which is why these two had to be
+    // named here — and were not. `extensionSettingsSchema` defaults both, so a
+    // stored object that omitted them parsed cleanly and came back with the
+    // defaults: every autofill preference the user changed was silently reset on
+    // the next read, and `developerMode` could be written but never observed,
+    // which is why the Diagnostics page permanently said to turn it on in
+    // Preferences.
+    //
+    // Parsed leniently and defaulted on failure, in the same shape as
+    // `employerAccounts` below: a corrupt block must never decide a permission,
+    // and every member of `autofillSettingsSchema` defaults, so the fallback is
+    // the shipped default rather than a rejection.
+    autofill:
+      autofillSettingsSchema.safeParse(candidate.autofill).data ?? DEFAULT_AUTOFILL_SETTINGS,
+    developerMode: typeof candidate.developerMode === 'boolean' ? candidate.developerMode : false,
     settingsVersion: typeof candidate.settingsVersion === 'number' ? candidate.settingsVersion : 1,
     // Parsed leniently and defaulted on failure. A corrupt block must never
     // grant the permission, and `employerAccountSettingsSchema` defaults
@@ -152,10 +175,17 @@ export async function saveSettings(update: ExtensionSettingsUpdate): Promise<Ext
       ? { acknowledgedAt: undefined, acknowledgedDisclosureVersion: undefined }
       : {}),
   });
+  // Merged over what is stored rather than replacing it, so a caller flipping
+  // one switch does not reset the other eight to their defaults.
+  const mergedAutofill = autofillSettingsSchema.parse({
+    ...current.autofill,
+    ...(update.autofill ?? {}),
+  });
   const next = extensionSettingsSchema.parse({
     ...current,
     ...update,
     ai: mergedAi,
+    autofill: mergedAutofill,
     employerAccounts: mergedAccounts,
     selectedModel: mergedAi.generationModel,
     settingsVersion: current.settingsVersion + 1,

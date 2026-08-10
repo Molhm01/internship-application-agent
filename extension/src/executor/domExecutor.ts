@@ -1,6 +1,7 @@
 import {
   DEFAULT_ERROR_GUIDANCE,
   contractViolation,
+  isDropdownEngineAction,
   fillExecutionResultSchema,
   normalizeOptionText,
   type AgentError,
@@ -111,16 +112,13 @@ function dropdownErrorCode(
 /**
  * Actions the dropdown engine owns.
  *
- * `choose_radio` is not one of them: a radio group's choices are all in the DOM
- * already, there is nothing to open, and the group executor below drives it
- * correctly. Routing it here would be complexity with no failure behind it.
+ * The list lives in `shared/logic/actionContract` now, because two places have
+ * to agree about it exactly: this executor, and the orchestrator that defers
+ * these actions to the dedicated pass. Two copies of "which actions are
+ * dropdown actions" is how a control ends up driven by both engines.
  */
 function isOptionAction(action: string): boolean {
-  return (
-    action === 'select_option' ||
-    action === 'select_suggested_option' ||
-    action === 'select_resolved_option'
-  );
+  return isDropdownEngineAction(action);
 }
 
 /**

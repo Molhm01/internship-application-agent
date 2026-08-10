@@ -154,7 +154,17 @@ test('settings page exposes every profile area and loads without error', async (
   await expect(
     diagnostics.getByText('No authentication token or answer text is shown here.'),
   ).toBeVisible();
-  await expect(diagnostics.locator('input, textarea')).toHaveCount(0);
+  // No control here takes or shows a *value*. The developer-mode checkbox is
+  // exempt by construction rather than by exception: it is a switch, it holds no
+  // text, and it is the control the message below tells the user to find. The
+  // rule this line exists for — that no token, answer, or profile value can be
+  // typed or displayed in Diagnostics — is unchanged and still checked.
+  await expect(
+    diagnostics.locator(
+      'textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="button"])',
+    ),
+  ).toHaveCount(0);
+  await expect(diagnostics.getByLabel('Show diagnostic tools')).not.toBeChecked();
 
   // The run-trace export is a development tool and is behind the same switch as
   // every other one. Someone applying for a job is offered one button, not a

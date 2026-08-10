@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatus.js';
 import { requiredSourceSchema } from './fields.js';
 import { dropdownTraceSchema } from './dropdownExecution.js';
+import { liveDropdownTraceSchema } from './dropdownRun.js';
 import { repeaterSectionTraceSchema } from './repeaterRun.js';
 import { dependencyTraceSchema } from './dependencyRun.js';
 
@@ -304,6 +305,38 @@ export const runTraceSchema = z
      * booleans and error codes. No option texts, and no answers.
      */
     dependencies: z.array(dependencyTraceSchema).max(120).default([]),
+
+    /**
+     * The Live Dropdown Trace: one entry per option control the run drove.
+     *
+     * This is the record a live employer failure is diagnosed from. The
+     * per-field `dropdown` summary says which stage a control stopped at; this
+     * says which *pass found it*, how the control is built, how its menu was
+     * located, and how many times the list was scrolled — the facts that
+     * separate "the trigger was never resolved" from "nothing responded to the
+     * press" from "a menu appeared that could not be recognised", which were
+     * one sentence between them.
+     *
+     * Sanitized by construction: `liveDropdownTraceSchema` is strict and has no
+     * member able to hold an option label, a displayed value, or an answer.
+     */
+    dropdownEngineTraces: z.array(liveDropdownTraceSchema).max(400).default([]),
+
+    /**
+     * Option actions the deterministic and AI stages handed to the dedicated
+     * Dropdown Engine instead of executing themselves.
+     */
+    optionActionsDeferred: z.number().int().nonnegative().default(0),
+
+    /**
+     * Option controls the *old* in-executor dropdown path drove anyway.
+     *
+     * Must be zero whenever the dedicated pass is wired in. Recorded rather
+     * than assumed, because "two engines are driving the same control" is
+     * invisible from every other record here: both report success, and the
+     * second one's `change` event can discard what the first one selected.
+     */
+    legacyOptionExecutions: z.number().int().nonnegative().default(0),
 
     /**
      * Every engine entered and left, in the order the run entered them.

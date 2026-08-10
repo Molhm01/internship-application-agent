@@ -432,9 +432,13 @@ function handleMessage(
    * learn its own and a control discovered here must never be driven elsewhere.
    */
   if (raw?.type === 'DISCOVER_DROPDOWNS') {
-    discoverDropdownsMessageSchema.parse(raw);
+    const message = discoverDropdownsMessageSchema.parse(raw);
     resetDropdownRegistry();
-    const found = scanDropdowns(document);
+    // Seeded with the controls the application scan already found in this
+    // frame. The frame's own walk still runs and still contributes everything
+    // it finds — the seeds are a second source, not a replacement, because a
+    // planner gap must not hide a menu and a walk gap must not either.
+    const found = scanDropdowns(document, message.seeds);
     sendResponse(
       dropdownsDiscoveredSchema.parse({
         dropdowns: found.map((entry) => entry.descriptor),

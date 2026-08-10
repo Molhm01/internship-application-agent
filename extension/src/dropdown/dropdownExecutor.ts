@@ -5,7 +5,7 @@ import {
 } from '@internship-agent/shared';
 import {
   activeOption,
-  OPTION_ITEM_SELECTOR,
+  optionItemsIn,
   pressKey,
   pressPointer,
   resolveTrigger,
@@ -109,7 +109,10 @@ function optionElementFor(
   container: HTMLElement,
   option: CollectedOption,
 ): HTMLElement | undefined {
-  const items = Array.from(container.querySelectorAll<HTMLElement>(OPTION_ITEM_SELECTOR));
+  // `optionItemsIn`, not a raw role query: a menu found by watching what the
+  // click changed has no roles to query, and the element to press has to be
+  // found by exactly the same rule that listed it in the first place.
+  const items = optionItemsIn(container);
   return (
     items.find(
       (element) => Boolean(option.value) && element.getAttribute('data-value') === option.value,

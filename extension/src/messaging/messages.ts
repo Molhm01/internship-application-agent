@@ -23,6 +23,7 @@ import type {
   DocumentExtraction,
   DependencyDirective,
   DropdownDirective,
+  DropdownSeed,
   RepeaterDirective,
   ScanApplicationResponse,
   ScanMessage,
@@ -179,7 +180,7 @@ export type ExtensionMessage =
    * describes every menu it can see and opens none of them, so a page that has
    * only been discovered looks to the applicant exactly as it did before.
    */
-  | { type: 'DISCOVER_DROPDOWNS'; runId: string }
+  | { type: 'DISCOVER_DROPDOWNS'; runId: string; seeds?: readonly DropdownSeed[] }
   /**
    * Drives the option controls this frame described, one after another, in the
    * order the worker resolved them — parents before the controls that depend on

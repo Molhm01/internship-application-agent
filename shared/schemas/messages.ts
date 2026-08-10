@@ -6,7 +6,7 @@ import { fieldValueSchema } from './fields.js';
 import { documentContentResponseSchema } from './documents.js';
 import { repeaterDirectiveSchema, repeaterSectionTraceSchema } from './repeaterRun.js';
 import { dependencyDirectiveSchema, dependencyTraceSchema } from './dependencyRun.js';
-import { dropdownDirectiveSchema } from './dropdownRun.js';
+import { dropdownDirectiveSchema, dropdownSeedSchema } from './dropdownRun.js';
 import {
   answerGenerationRecordSchema,
   answerGenerationStateSchema,
@@ -214,6 +214,21 @@ export type DependencyRunComplete = z.infer<typeof dependencyRunCompleteSchema>;
 export const discoverDropdownsMessageSchema = z.object({
   type: z.literal('DISCOVER_DROPDOWNS'),
   runId: z.string().min(1).max(120),
+  /**
+   * The option controls the application scan already found in this frame.
+   *
+   * The frame's own walk is not the only source of truth and must not be: the
+   * scan is the authoritative view of the form, and a control it classified as
+   * a dropdown whose widget markup `CANDIDATE_SELECTOR` does not recognise
+   * reached the engine through neither route. Seeds close that gap in the one
+   * direction that is safe — the worker names a control the scan already found,
+   * the frame resolves it against its own document under its own rules, and the
+   * frame still mints and owns every handle.
+   *
+   * Defaulted so an older worker, or a caller with nothing to add, behaves
+   * exactly as before.
+   */
+  seeds: z.array(dropdownSeedSchema).max(400).default([]),
 });
 
 export const runDropdownDirectivesMessageSchema = z.object({

@@ -155,6 +155,18 @@ export const dependencyTraceSchema = z.object({
   newFingerprint: controlFingerprintSchema.optional(),
   dependentExecuted: z.boolean().default(false),
   dependentVerified: z.boolean().default(false),
+  /**
+   * How many choices the dependent control offered *while it was being driven*.
+   *
+   * Not the same as `newFingerprint.usableOptionCount`, and the difference is
+   * the whole reason this exists. A fingerprint reads the control as it stands;
+   * for a `<select>` that is its option list, but for a button-menu widget the
+   * menu is closed by then and there is nothing to count. So "Education State"
+   * came back verified, holding New Jersey, with a record saying its list had
+   * offered nothing at all. This is the count the engine actually read, at the
+   * moment it read it.
+   */
+  dependentOptionCount: z.number().int().nonnegative().default(0),
   finalStatus: dependencyStatusSchema,
   errorCode: errorCodeSchema.optional(),
   durationMs: z.number().int().nonnegative().default(0),

@@ -65,6 +65,132 @@ export const dropdownDependencyStateSchema = z.enum([
 export type DropdownDependencyState = z.infer<typeof dropdownDependencyStateSchema>;
 
 /**
+ * Which pass found a control.
+ *
+ * Recorded because the two passes disagree, and the disagreement is the
+ * diagnosis. The application scan is the authoritative view of the form — it is
+ * what the plan, the report, and the applicant's own review list are built from
+ * — and the dropdown pass's own DOM walk knows only the widget shapes its
+ * selector list was written for. A live employer control that the main scan
+ * classified as a dropdown and `CANDIDATE_SELECTOR` does not recognise used to
+ * reach the Dropdown Engine through neither route: the stage ignored the scan
+ * it was handed, and the walk never saw the widget. `main_scan` on a finished
+ * run names exactly those controls.
+ */
+export const dropdownDiscoverySourceSchema = z.enum([
+  /** Only the application scan saw it. Reached the engine by being seeded. */
+  'main_scan',
+  /** Only this pass's own DOM walk saw it. */
+  'dropdown_scan',
+  /** Both, and deduplicated to one control. */
+  'both',
+]);
+
+export type DropdownDiscoverySource = z.infer<typeof dropdownDiscoverySourceSchema>;
+
+/**
+ * One option control the application scan already found, handed to the frame so
+ * the Dropdown Engine drives it whether or not its own walk recognises the
+ * widget.
+ *
+ * A seed carries a selector and no instruction. The frame resolves it against
+ * its own document, applies the same ownership and visibility rules it applies
+ * to anything else, and mints its own `dropdownId` for it — so a seed can name
+ * a control but never reach past the frame's own registry, and the worker still
+ * learns nothing but the handle it is given back.
+ */
+export const dropdownSeedSchema = z
+  .object({
+    /** The scan's own field id, so a run's two records can be tied together. */
+    fieldId: idSchema,
+    /** How the scanner addresses the element. Resolved in-frame, never executed. */
+    selector: z.string().max(2000),
+    label: z.string().max(600),
+    sectionContext: z.string().max(600).default(''),
+    /** The intent the scan resolved, which is better than re-deriving it here. */
+    canonicalQuestion: canonicalQuestionSchema.optional(),
+    required: z.boolean().default(false),
+    recordIndex: z.number().int().nonnegative().max(50).optional(),
+    /**
+     * The choices the scan recorded, carried for the report only.
+     *
+     * Never matched against: the engine's whole reason for existing is that it
+     * reads the list the control is offering at the moment of the attempt. A
+     * scan snapshot is a planning hint and nothing selects from it.
+     */
+    knownOptions: z.array(z.string().max(600)).max(200).default([]),
+  })
+  .strict();
+
+export type DropdownSeed = z.infer<typeof dropdownSeedSchema>;
+
+/**
+ * How a control is built, in structure only.
+ *
+ * This exists because a live employer failure could not be diagnosed from the
+ * outcome alone. "The list did not open" is the same sentence for a control
+ * whose trigger was never found, one that has no `aria-haspopup` and ignores a
+ * click, and one that opened a menu this code could not recognise — three
+ * different repairs. These are the facts that tell them apart, and every one of
+ * them is markup rather than content: tags, roles, ARIA wiring, and a class
+ * *fingerprint* rather than the classes themselves.
+ *
+ * Nothing here can carry an answer. No option text, no displayed value, no
+ * label content beyond the question wording the run already records elsewhere.
+ */
+export const dropdownControlStructureSchema = z
+  .object({
+    triggerTag: z.string().max(40),
+    triggerRole: z.string().max(60).default(''),
+    triggerType: z.string().max(40).default(''),
+    ariaHasPopup: z.string().max(40).default(''),
+    ariaExpandedBefore: z.string().max(20).default(''),
+    ariaExpandedAfter: z.string().max(20).default(''),
+    /** Whether the trigger names its own popup, not the id it names. */
+    hasAriaControls: z.boolean().default(false),
+    /**
+     * A stable, non-identifying digest of the control's class list.
+     *
+     * The classes themselves are omitted on purpose: an emotion-hashed class
+     * name is not personal data but it is not diagnostic either, and a vendor
+     * class list occasionally embeds a requisition id. A digest still answers
+     * the question a trace is for — "are these nine failing controls the same
+     * widget or nine different ones".
+     */
+    classFingerprint: z.string().max(40).default(''),
+  })
+  .strict();
+
+export type DropdownControlStructure = z.infer<typeof dropdownControlStructureSchema>;
+
+/** How the open menu was located, when one was. */
+export const menuDetectionStrategySchema = z.enum([
+  /** The trigger's own `aria-controls` / `aria-owns`. */
+  'aria_controls',
+  /** A `[role=listbox]` / `[role=menu]` container beside or under the trigger. */
+  'aria_role_container',
+  /** A portal container carrying an explicit dropdown data attribute. */
+  'portal_attribute',
+  /** Newly mounted after the click, with no role to recognise it by. */
+  'mutation_fallback',
+  /** Nothing was found. */
+  'none',
+]);
+
+export type MenuDetectionStrategy = z.infer<typeof menuDetectionStrategySchema>;
+
+/** How the entries inside a located menu were recognised. */
+export const optionCandidateStrategySchema = z.enum([
+  /** `role=option` / `role=menuitem` and friends. */
+  'aria_option_role',
+  /** Plain `li` / `button` / `a` / `[data-value]` inside the associated menu. */
+  'structural_candidates',
+  'none',
+]);
+
+export type OptionCandidateStrategy = z.infer<typeof optionCandidateStrategySchema>;
+
+/**
  * One option control, as the page presents it before anything is done to it.
  *
  * Minted in the frame that owns the control and returned to the worker. The
@@ -104,6 +230,21 @@ export const dropdownDescriptorSchema = z
      * answered from the first.
      */
     recordIndex: z.number().int().nonnegative().optional(),
+    /** Which pass found this control. Defaults to the pass's own DOM walk. */
+    discoverySource: dropdownDiscoverySourceSchema.default('dropdown_scan'),
+    /** The application scan's field id, when a seed named this element. */
+    scanFieldId: idSchema.optional(),
+    /**
+     * The intent the application scan resolved for this control.
+     *
+     * Preferred over re-reading the label here. The scan has the section
+     * context, the repeat index and the adapter's own knowledge of the page, and
+     * two independent readings of one question that can disagree is one reading
+     * too many.
+     */
+    scanCanonicalQuestion: canonicalQuestionSchema.optional(),
+    /** How the control is built, for the trace. No values, ever. */
+    structure: dropdownControlStructureSchema.optional(),
   })
   .strict();
 
@@ -126,6 +267,40 @@ export const intendedAnswerSourceSchema = z.enum([
 ]);
 
 export type IntendedAnswerSource = z.infer<typeof intendedAnswerSourceSchema>;
+/**
+ * The answer the deterministic plan already resolved for one option control.
+ *
+ * Carried because deferring an option action to this engine must not throw away
+ * what the planner knew. The two resolvers do not know the same things: the
+ * planner has the scan's intent, the adapter's knowledge of the page, and the
+ * structural rules that answer "Phone Type", "Address Type" and "How did you
+ * hear about us" — none of which `resolveIntendedAnswer` derives on its own. The
+ * first version of the deferral dropped those three answers on a form that had
+ * been filling them correctly for months.
+ *
+ * So the division of labour is explicit: the **planner** decides what the answer
+ * is, and this engine decides how to get it into the control. The engine's own
+ * resolver remains the fallback for every control the planner said nothing
+ * about, which is the majority of them.
+ *
+ * Worker-side only. This never travels to a frame during discovery — it reaches
+ * the page only inside a `DropdownDirective`, exactly as every other answer
+ * does.
+ */
+export const plannedOptionAnswerSchema = z
+  .object({
+    /** The scan's field id, which is how this is matched to a control. */
+    fieldId: idSchema,
+    /** The answer the planner resolved. Always a restatement of a saved fact. */
+    intendedAnswer: z.string().max(600),
+    intendedAnswerSource: intendedAnswerSourceSchema.default('profile_fact'),
+    alternativeValues: z.array(z.string().max(600)).max(12).default([]),
+    searchText: z.string().max(600).optional(),
+    sensitive: z.boolean().default(false),
+  })
+  .strict();
+
+export type PlannedOptionAnswer = z.infer<typeof plannedOptionAnswerSchema>;
 
 /**
  * What the worker tells a frame to do with one control it offered.
@@ -262,6 +437,26 @@ export const dropdownRunResultSchema = z
      * the field that separates them.
      */
     executorInvoked: z.boolean().default(false),
+    /** Which pass found this control. See `dropdownDiscoverySourceSchema`. */
+    discoverySource: dropdownDiscoverySourceSchema.default('dropdown_scan'),
+    /** The application scan's field id, when a seed named this element. */
+    scanFieldId: idSchema.optional(),
+    /** How the control is built. Structure only — see the schema. */
+    structure: dropdownControlStructureSchema.optional(),
+    /** Whether a trigger element was resolved at all. */
+    triggerResolved: z.boolean().default(false),
+    /** Whether opening was attempted, as distinct from whether it worked. */
+    openAttempted: z.boolean().default(false),
+    menuDetection: menuDetectionStrategySchema.default('none'),
+    optionCandidates: optionCandidateStrategySchema.default('none'),
+    /** How many times the menu was scrolled while being read. */
+    scrollIterations: z.number().int().nonnegative().max(200).default(0),
+    /** Whether a matching option was found among the choices offered. */
+    targetFound: z.boolean().default(false),
+    /** Whether a click or keypress was dispatched at the matched option. */
+    clickAttempted: z.boolean().default(false),
+    /** What the control displayed after the attempt — as a yes/no, never text. */
+    verificationObserved: z.boolean().default(false),
   })
   .strict();
 
@@ -322,6 +517,166 @@ export function toDropdownEngineTrace(result: DropdownRunResult): DropdownEngine
     ...(result.errorCode ? { failureCode: result.errorCode } : {}),
     durationMs: result.durationMs,
   });
+}
+
+/**
+ * The Live Dropdown Trace: one option control, end to end, with no answers.
+ *
+ * Wider than `dropdownEngineTraceSchema` on purpose. That one is a per-field
+ * summary; this is the record a live employer failure is diagnosed from without
+ * another architecture rewrite, so it says which pass found the control, how the
+ * control is built, how its menu was located, and which stage the attempt
+ * stopped at.
+ *
+ * What may never be in here: any option text, any displayed value, any answer,
+ * any sensitive selection, any token. `matchedOption` is deliberately absent —
+ * an option label is an answer once a control has been driven to it. The
+ * question wording survives because it is the employer's text, and a trace of
+ * nine dropdowns without it is nine indistinguishable rows.
+ */
+export const liveDropdownTraceSchema = z
+  .object({
+    // ---- Field ------------------------------------------------------------
+    dropdownId: z.string().max(200),
+    scanFieldId: z.string().max(200).optional(),
+    canonicalQuestion: canonicalQuestionSchema,
+    question: z.string().max(300),
+    frameId: z.number().int().nonnegative(),
+    mainScannerFound: z.boolean(),
+    dedicatedScannerFound: z.boolean(),
+    discoverySource: dropdownDiscoverySourceSchema,
+
+    // ---- Control structure -------------------------------------------------
+    structure: dropdownControlStructureSchema.optional(),
+    controlStrategy: dropdownKindSchema,
+
+    // ---- Execution ---------------------------------------------------------
+    engineCalled: z.boolean(),
+    executorInvoked: z.boolean(),
+    triggerResolved: z.boolean(),
+    openAttempted: z.boolean(),
+    openSucceeded: z.boolean(),
+    menuDetection: menuDetectionStrategySchema,
+    menuFound: z.boolean(),
+    optionCandidates: optionCandidateStrategySchema,
+    optionsFound: z.number().int().nonnegative(),
+    scrolled: z.boolean(),
+    scrollIterations: z.number().int().nonnegative().max(200),
+    intendedAnswerSource: intendedAnswerSourceSchema,
+    intendedAnswerResolved: z.boolean(),
+    targetFound: z.boolean(),
+    /** That an option matched — never which one. */
+    matchedOption: z.boolean(),
+    clickAttempted: z.boolean(),
+    selected: z.boolean(),
+    verificationObserved: z.boolean(),
+    verified: z.boolean(),
+    finalStatus: dropdownFinalStatusSchema,
+    failureCode: dropdownFailureCodeSchema.optional(),
+    durationMs: z.number().nonnegative().max(600_000),
+  })
+  .strict();
+
+export type LiveDropdownTrace = z.infer<typeof liveDropdownTraceSchema>;
+
+/**
+ * The sanitized live record of one control.
+ *
+ * Every answer-bearing field is dropped here rather than at the point of
+ * export, so a future caller cannot forget to. `matchedOption` becomes a
+ * boolean; `availableOptions` never leaves this function.
+ */
+export function toLiveDropdownTrace(result: DropdownRunResult): LiveDropdownTrace {
+  return liveDropdownTraceSchema.parse({
+    dropdownId: result.dropdownId,
+    ...(result.scanFieldId ? { scanFieldId: result.scanFieldId } : {}),
+    canonicalQuestion: result.canonicalQuestion,
+    question: result.question.slice(0, 300),
+    frameId: result.frameId,
+    mainScannerFound: result.discoverySource !== 'dropdown_scan',
+    dedicatedScannerFound: result.discoverySource !== 'main_scan',
+    discoverySource: result.discoverySource,
+    ...(result.structure ? { structure: result.structure } : {}),
+    controlStrategy: result.controlStrategy,
+    // A result exists at all only because a directive was built for it, which is
+    // what "the engine was called on this control" means.
+    engineCalled: true,
+    executorInvoked: result.executorInvoked,
+    triggerResolved: result.triggerResolved,
+    openAttempted: result.openAttempted,
+    openSucceeded: result.opened,
+    menuDetection: result.menuDetection,
+    menuFound: result.menuDetection !== 'none',
+    optionCandidates: result.optionCandidates,
+    optionsFound: result.optionsFound,
+    scrolled: result.scrolled,
+    scrollIterations: result.scrollIterations,
+    intendedAnswerSource: result.intendedAnswerSource,
+    intendedAnswerResolved: result.intendedAnswerResolved,
+    targetFound: result.targetFound,
+    matchedOption: result.matchedOption !== undefined,
+    clickAttempted: result.clickAttempted,
+    selected: result.selected,
+    verificationObserved: result.verificationObserved,
+    verified: result.verified,
+    finalStatus: result.finalStatus,
+    ...(result.errorCode ? { failureCode: result.errorCode } : {}),
+    durationMs: result.durationMs,
+  });
+}
+
+/**
+ * One live trace as a sentence, for a bug report to carry verbatim.
+ *
+ * The stages are named in the order they happen and the *first* one that failed
+ * is the diagnosis, because everything after it is a consequence. A reader who
+ * knows nothing about this codebase should be able to say what to fix from this
+ * line alone — that is the entire reason the trace exists.
+ *
+ * No answers. The question wording is the employer's own text; every other part
+ * of this string is a stage name, a count, or a code.
+ */
+export function describeLiveDropdown(trace: LiveDropdownTrace): string {
+  const where =
+    trace.discoverySource === 'main_scan'
+      ? 'found only by the application scan'
+      : trace.discoverySource === 'dropdown_scan'
+        ? 'found only by the dropdown scan'
+        : 'found by both scans';
+  const shape = trace.structure
+    ? `${trace.structure.triggerTag}${trace.structure.triggerRole ? `[role=${trace.structure.triggerRole}]` : ''}`
+    : trace.controlStrategy;
+  const stage = !trace.triggerResolved
+    ? 'no trigger could be resolved'
+    : !trace.openAttempted
+      ? 'it was never opened'
+      : !trace.openSucceeded
+        ? 'nothing opened for a click, a keypress, or typing'
+        : !trace.menuFound
+          ? 'a menu opened and could not be recognised'
+          : trace.optionsFound === 0
+            ? 'the menu opened holding nothing'
+            : !trace.intendedAnswerResolved
+              ? `${trace.optionsFound} choices were read and nothing saved answers this`
+              : !trace.targetFound
+                ? `${trace.optionsFound} choices were read and none of them is the saved answer`
+                : !trace.clickAttempted
+                  ? 'a match was found and never clicked'
+                  : !trace.verificationObserved
+                    ? 'it was clicked and the control reported nothing back'
+                    : trace.verified
+                      ? `answered from ${trace.optionsFound} choices`
+                      : 'it was clicked and the control still shows something else';
+  const menu =
+    trace.menuDetection === 'mutation_fallback'
+      ? ' via the no-ARIA fallback'
+      : trace.menuDetection === 'none'
+        ? ''
+        : ` via ${trace.menuDetection}`;
+  const scrolls = trace.scrollIterations > 1 ? `, ${trace.scrollIterations} reads` : '';
+  return `${trace.question || '(unlabelled)'} — frame ${trace.frameId}, ${shape}, ${where}: ${stage}${menu}${scrolls}${
+    trace.failureCode ? ` [${trace.failureCode}]` : ''
+  } (${trace.durationMs}ms)`;
 }
 
 /**

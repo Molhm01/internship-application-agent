@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hostile dropdowns — no ARIA anywhere</title>
+    <style>
+      /* Layout only, and load-bearing: the fallback ranks candidate menus by how
+         near they are to their trigger and by whether they are laid out at all,
+         so a fixture without boxes would prove nothing about either. */
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+      }
+      .fld {
+        margin-top: 14px;
+        position: relative;
+      }
+      .lbl {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      input {
+        display: block;
+        min-width: 280px;
+        min-height: 24px;
+      }
+      /* The trigger. A div wearing an emotion-hashed React-Select class and
+         nothing else: no role, no aria-haspopup, no aria-expanded, no
+         aria-controls, not a button, not a select.
+
+         That class is the point. `domScanner`'s CONTROL_SELECTOR matches
+         `[class*="-control"][class*="css-"]`, so the application scan finds
+         these and classifies them as comboboxes. `dropdownScanner`'s
+         CANDIDATE_SELECTOR does not match it — it wants `.select__control` or a
+         `[class*="react-select"]` *ancestor* — so the dedicated walk is blind to
+         every one of them. This is the exact gap that let a live form's
+         State/Province, Employment Type, Education Type, Education Country,
+         Education State, School, Area of Study and Graduated? controls reach the
+         Dropdown Engine through neither route. */
+      .picker {
+        display: block;
+        min-width: 280px;
+        min-height: 28px;
+        border: 1px solid #999;
+        background: #fff;
+        padding: 3px 6px;
+        cursor: pointer;
+        user-select: none;
+      }
+      /* The menu, mounted under document.body. Positioned near its trigger
+         because that is how a real portal behaves and how the fallback tells one
+         open menu from another. */
+      .pop {
+        position: absolute;
+        z-index: 10;
+        border: 1px solid #666;
+        background: #fff;
+        min-width: 280px;
+      }
+      .pop ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .pop li {
+        display: block;
+        min-height: 24px;
+        line-height: 24px;
+        padding: 0 6px;
+        cursor: pointer;
+      }
+      /* A long menu whose overflow lives on the list rather than the popup — the
+         common real shape, and the one that makes `scrollableOf` matter. */
+      .pop--tall ul {
+        max-height: 144px;
+        overflow-y: auto;
+      }
+      /* Rows built as plain divs rather than list items, to exercise the
+         repeated-sibling rule rather than the tagged-candidate rule. */
+      .pop--divs .row {
+        display: block;
+        min-height: 24px;
+        line-height: 24px;
+        padding: 0 6px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Quanta Robotics — Application</h1>
+    <p>
+      Every option control on this page is deliberately hostile: a plain
+      <code>div</code> trigger, a menu created under <code>document.body</code> on click, and
+      entries with no <code>role</code> of any kind. Nothing here can be found by
+      <code>aria-controls</code>, <code>role="listbox"</code>, <code>role="menu"</code>, or a portal
+      data attribute — which is exactly what a live employer portal ships and exactly what the
+      declared routes cannot see.
+    </p>
+
+    <form id="application">
+      <!-- The text controls. Present so a run that breaks ordinary autofill in
+           the course of repairing dropdowns fails visibly here. -->
+      <div class="fld">
+        <label class="lbl" for="firstName">First Name *</label>
+        <input id="firstName" name="firstName" required />
+      </div>
+      <div class="fld">
+        <label class="lbl" for="lastName">Last Name *</label>
+        <input id="lastName" name="lastName" required />
+      </div>
+      <div class="fld">
+        <label class="lbl" for="email">Email *</label>
+        <input id="email" name="email" type="email" required />
+      </div>
+      <div class="fld">
+        <label class="lbl" for="phone">Phone *</label>
+        <input id="phone" name="phone" type="tel" required />
+      </div>
+      <div class="fld">
+        <label class="lbl" for="address">Address *</label>
+        <input id="address" name="address" required />
+      </div>
+      <div class="fld">
+        <label class="lbl" for="city">City *</label>
+        <input id="city" name="city" required />
+      </div>
+      <div class="fld">
+        <label class="lbl" for="postalCode">Postal Code *</label>
+        <input id="postalCode" name="postalCode" required />
+      </div>
+
+      <!-- A. Trigger is a plain div. B. Menu created under document.body.
+           C. Options are plain li elements. -->
+      <div class="fld" data-question="state">
+        <span class="lbl" id="lbl-state">State/Province *</span>
+        <div
+          class="picker css-1q7bmzn-control"
+          id="state"
+          data-name="state"
+          aria-labelledby="lbl-state"
+        >
+          <span class="val">No Selection</span>
+        </div>
+      </div>
+
+      <div class="fld" data-question="employmentType">
+        <span class="lbl" id="lbl-emp">Employment Type *</span>
+        <div
+          class="picker css-1q7bmzn-control"
+          id="employmentType"
+          data-name="employmentType"
+          aria-labelledby="lbl-emp"
+        >
+          <span class="val">No Selection</span>
+        </div>
+      </div>
+
+      <!-- F. Education Type, built the same way. -->
+      <div class="fld" data-question="educationType">
+        <span class="lbl" id="lbl-edu">Education Type *</span>
+        <div
+          class="picker css-1q7bmzn-control"
+          id="educationType"
+          data-name="educationType"
+          aria-labelledby="lbl-edu"
+        >
+          <span class="val">No Selection</span>
+        </div>
+      </div>
+
+      <!-- G. Education Country, whose rows are plain divs rather than list
+           items — the repeated-sibling rule rather than the tagged one. -->
+      <div class="fld" data-question="educationCountry">
+        <span class="lbl" id="lbl-country">Education Country *</span>
+        <div
+          class="picker css-1q7bmzn-control"
+          id="educationCountry"
+          data-name="educationCountry"
+          aria-labelledby="lbl-country"
+        >
+          <span class="val">No Selection</span>
+        </div>
+      </div>
+
+      <div class="fld" data-question="educationState">
+        <span class="lbl" id="lbl-edu-state">Education State *</span>
+        <div
+          class="picker css-1q7bmzn-control"
+          id="educationState"
+          data-name="educationState"
+          aria-labelledby="lbl-edu-state"
+        >
+          <span class="val">No Selection</span>
+        </div>
+      </div>
+
+      <div class="fld" data-question="school">
+        <span class="lbl" id="lbl-school">School *</span>
+        <div
+          class="picker css-1q7bmzn-control"
+          id="school"
+          data-name="school"
+          aria-labelledby="lbl-school"
+        >
+          <span class="val">No Selection</span>
+        </div>
+      </div>
+
+      <!-- D + H. A long scrollable menu with no ARIA, whose answer sits far
+           below the fold. -->
+      <div class="fld" data-question="areaOfStudy">
+        <span class="lbl" id="lbl-area">Area of Study *</span>
+        <div
+          class="picker css-1q7bmzn-control"
+          id="areaOfStudy"
+          data-name="areaOfStudy"
+          aria-labelledby="lbl-area"
+        >
+          <span class="val">No Selection</span>
+        </div>
+      </div>
+
+      <!-- E. The Yes/No control whose placeholder is "No Selection".
+           "No Selection".includes("No") is true, so a substring verification
+           reports this question answered while the page plainly says otherwise.
+           This control exists to make that impossible to ship again. -->
+      <div class="fld" data-question="graduated">
+        <span class="lbl" id="lbl-grad">Graduated? *</span>
+        <div
+          class="picker css-1q7bmzn-control"
+          id="graduated"
+          data-name="graduated"
+          aria-labelledby="lbl-grad"
+        >
+          <span class="val">No Selection</span>
+        </div>
+      </div>
+
+      <!-- Never clicked by anything in this repository, and present so that is
+           checkable rather than trusted. -->
+      <button id="submit" type="submit">Submit Application</button>
+    </form>
+
+    <script>
+      // The vendor picker: one behaviour, eight controls.
+      //
+      // Deliberately built out of nothing a screen reader could use. The menu is
+      // appended to document.body — so no ancestor relationship to the trigger
+      // survives — carries no role, and its rows are li or div elements with no
+      // role either. The only signals available to anything driving this are
+      // that a container appeared after the click, that it sits near the
+      // trigger, and that it holds several same-shaped rows. That is precisely
+      // the evidence the no-ARIA fallback is built on.
+      const CHOICES = {
+        state: ['Alabama', 'California', 'New Jersey', 'New York', 'Texas'],
+        employmentType: ['Full Time', 'Part Time', 'Internship', 'Contract'],
+        educationType: [
+          'High School',
+          'Certificate',
+          'Associate Degree',
+          "Bachelor's Degree",
+          "Master's Degree",
+          'Doctorate',
+        ],
+        educationCountry: ['Canada', 'Mexico', 'United States of America', 'United Kingdom'],
+        educationState: ['California', 'New Jersey', 'New York'],
+        school: ['Princeton University', 'Rutgers University', 'Stevens Institute of Technology'],
+        // Long on purpose: the answer is past the fold, so the menu has to be
+        // scrolled to reach it and the fallback has to keep working while it is.
+        areaOfStudy: [
+          ...Array.from(
+            { length: 40 },
+            (_, index) => `Programme ${String(index).padStart(2, '0')}`,
+          ),
+          'Electrical Engineering',
+          ...Array.from({ length: 20 }, (_, index) => `Programme ${index + 41}`),
+        ],
+        graduated: ['Yes', 'No'],
+      };
+
+      /** Rows as plain divs for these controls, and as list items for the rest. */
+      const DIV_ROWS = new Set(['educationCountry']);
+      /** Controls whose menu scrolls rather than growing. */
+      const TALL = new Set(['areaOfStudy', 'state']);
+
+      let open = null;
+
+      function closeMenu() {
+        if (open) {
+          open.remove();
+          open = null;
+        }
+      }
+
+      document.addEventListener('mousedown', (event) => {
+        if (!(event.target instanceof Element)) return;
+        if (!event.target.closest('.picker') && !event.target.closest('.pop')) closeMenu();
+      });
+
+      for (const picker of document.querySelectorAll('.picker')) {
+        const name = picker.dataset.name;
+        const display = picker.querySelector('.val');
+
+        picker.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          if (open && open.dataset.owner === name) return;
+          closeMenu();
+
+          const pop = document.createElement('div');
+          pop.className = `pop${TALL.has(name) ? ' pop--tall' : ''}${
+            DIV_ROWS.has(name) ? ' pop--divs' : ''
+          }`;
+          pop.dataset.owner = name;
+
+          const list = document.createElement('ul');
+          for (const choice of CHOICES[name] ?? []) {
+            const row = document.createElement(DIV_ROWS.has(name) ? 'div' : 'li');
+            if (DIV_ROWS.has(name)) row.className = 'row';
+            row.textContent = choice;
+            row.addEventListener('mousedown', (rowEvent) => {
+              rowEvent.stopPropagation();
+              display.textContent = choice;
+              picker.dataset.value = choice;
+              closeMenu();
+              // Dependents rebuild here, exactly as a real form does — which is
+              // why re-selecting a value a control already holds is dangerous.
+              if (name === 'educationCountry') {
+                CHOICES.educationState =
+                  choice === 'United States of America'
+                    ? ['California', 'New Jersey', 'New York']
+                    : ['Ontario', 'Quebec'];
+              }
+            });
+            list.append(row);
+          }
+          pop.append(list);
+
+          // Positioned against the trigger's own box. The fallback will not
+          // accept a container mounted far from the control that opened it.
+          const box = picker.getBoundingClientRect();
+          pop.style.top = `${box.bottom + window.scrollY}px`;
+          pop.style.left = `${box.left + window.scrollX}px`;
+          document.body.append(pop);
+          open = pop;
+        });
+      }
+
+      // The application is never submitted by anything in this repository. The
+      // handler is here so that a submission would be *observable* if one ever
+      // happened, rather than merely believed not to.
+      document.getElementById('application').addEventListener('submit', (event) => {
+        event.preventDefault();
+        document.body.dataset.submitted = 'true';
+      });
+    </script>
+  </body>
+</html>

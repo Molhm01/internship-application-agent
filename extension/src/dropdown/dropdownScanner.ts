@@ -1,8 +1,11 @@
 import {
+  dropdownControlStructureSchema,
   dropdownDescriptorSchema,
+  type DropdownControlStructure,
   type DropdownDependencyState,
   type DropdownDescriptor,
   type DropdownKind,
+  type DropdownSeed,
 } from '@internship-agent/shared';
 import {
   answersFromList,
@@ -229,14 +232,132 @@ export interface ScannedDropdown {
 }
 
 /**
+ * The element a seed names, resolved in this frame under this frame's own rules.
+ *
+ * A seed is a *claim* about the page, not an instruction. The selector is
+ * resolved here, in the document that owns the control, and the result is
+ * subject to the same ownership test as anything the walk found — so a seed
+ * naming the extension's own UI, or an element that has left the page since the
+ * scan, resolves to nothing rather than to a control that gets driven.
+ *
+ * Shadow roots are searched too, because the application scan descends into them
+ * and a seed for a control inside one would otherwise never resolve.
+ */
+function resolveSeed(root: Document, selector: string): HTMLElement | null {
+  if (!selector.trim()) return null;
+  for (const scope of scopesOf(root)) {
+    let candidate: Element | null = null;
+    try {
+      candidate = scope.querySelector(selector);
+    } catch {
+      // A selector the scanner produced that this document will not parse is a
+      // seed that simply does not resolve. Never a thrown pass.
+      continue;
+    }
+    if (!(candidate instanceof HTMLElement)) continue;
+    if (isExtensionOwned(candidate)) continue;
+    return candidate;
+  }
+  return null;
+}
+
+/**
+ * A digest of an element's classes, carrying the shape and none of the content.
+ *
+ * Deliberately lossy. The question a trace has to answer is "are these nine
+ * failing controls the same widget", and a stable short digest answers it
+ * without publishing an emotion hash or a vendor class that occasionally embeds
+ * a requisition id.
+ */
+function classFingerprint(element: HTMLElement): string {
+  const classes = [...element.classList].sort().join(' ');
+  if (!classes) return '';
+  let hash = 0;
+  for (let index = 0; index < classes.length; index += 1) {
+    hash = (hash * 31 + classes.charCodeAt(index)) | 0;
+  }
+  return `c${(hash >>> 0).toString(36)}/${element.classList.length}`;
+}
+
+/** How the control is built, in structure only. No values, ever. */
+function structureOf(element: HTMLElement): DropdownControlStructure {
+  const trigger = resolveTrigger(element);
+  return dropdownControlStructureSchema.parse({
+    triggerTag: trigger.tagName.toLowerCase(),
+    triggerRole: trigger.getAttribute('role') ?? '',
+    triggerType: trigger.getAttribute('type') ?? '',
+    ariaHasPopup: trigger.getAttribute('aria-haspopup') ?? '',
+    ariaExpandedBefore: trigger.getAttribute('aria-expanded') ?? '',
+    hasAriaControls: trigger.hasAttribute('aria-controls') || trigger.hasAttribute('aria-owns'),
+    classFingerprint: classFingerprint(element),
+  });
+}
+
+/** Everything this frame knows about one control, before anything is done to it. */
+function describeControl(
+  element: HTMLElement,
+  owner: Document | ShadowRoot,
+  extra: Partial<DropdownDescriptor>,
+): ScannedDropdown {
+  const { label } = extractAccessibleLabel(element);
+  const kind = classifyDropdown(element);
+  const dropdownId = `dropdown-${crypto.randomUUID()}`;
+  const recordIndex = recordIndexOf(element, label, owner);
+  return {
+    element,
+    descriptor: dropdownDescriptorSchema.parse({
+      dropdownId,
+      // Replaced by the worker, which is the only side that knows frame ids.
+      frameId: 0,
+      label: label.slice(0, 600),
+      selector: selectorFor(element),
+      sectionContext: sectionContextOf(element),
+      required:
+        element.getAttribute('aria-required') === 'true' ||
+        (element instanceof HTMLSelectElement && element.required) ||
+        /\*\s*$/.test(label.trim()),
+      controlStrategy: kind,
+      currentValue: readSelectedText(element).slice(0, 600),
+      disabled: isDisabled(element),
+      dependencyState: dependencyStateOf(element, kind),
+      structure: structureOf(element),
+      ...(recordIndex > 0 ? { recordIndex } : {}),
+      ...extra,
+    }),
+  };
+}
+
+/**
  * Every option control in this document, described but not touched.
  *
  * Nothing here opens a menu, focuses a control, or writes anything. A page that
  * is only scanned must look, to the applicant, exactly as it did before — and a
  * discovery pass that opened nine menus to see what was in them would be
  * indistinguishable from the agent flailing.
+ *
+ * ## Two sources, one control each
+ *
+ * The walk below is this pass's own opinion, and it is *not* the only one. The
+ * application scan already found the form's controls, with the section context,
+ * the repeat index and the adapter's knowledge behind them, and it recognises
+ * widgets this file's `CANDIDATE_SELECTOR` does not. A live employer's
+ * State/Province, Employment Type, Education Type, Education Country, Education
+ * State, School, Area of Study and Graduated? controls were found by the scan
+ * and by nothing else — and because the stage discarded the scan and this walk
+ * did not recognise the markup, they reached the engine through neither route.
+ *
+ * So `seeds` are merged in. A control both sources found is one control, marked
+ * `both`; the walk keeps its own reading of it, because the walk read the live
+ * element and a seed is a description from a moment ago. A control only the
+ * scan found is added, marked `main_scan`, and bypasses `isDropdownLike` — the
+ * scan already classified it as answered from a list, and a second opinion that
+ * disagrees is exactly what dropped it. A control only the walk found is kept,
+ * marked `dropdown_scan`, which is what stops a planner gap hiding a menu.
  */
-export function scanDropdowns(root: Document): readonly ScannedDropdown[] {
+export function scanDropdowns(
+  root: Document,
+  seeds: readonly DropdownSeed[] = [],
+): readonly ScannedDropdown[] {
   const found: ScannedDropdown[] = [];
   const elements: HTMLElement[] = [];
 
@@ -253,37 +374,74 @@ export function scanDropdowns(root: Document): readonly ScannedDropdown[] {
     }
   }
 
+  // Resolved before the walk's own controls are described, so a control both
+  // sources found is described once and marked `both` rather than twice.
+  const seededByElement = new Map<HTMLElement, DropdownSeed>();
+  for (const seed of seeds) {
+    const element = resolveSeed(root, seed.selector);
+    if (!element) continue;
+    // First seed wins for an element two seeds happen to name — a duplicate is
+    // one question, and answering it twice is worse than answering it once.
+    if (!seededByElement.has(element)) seededByElement.set(element, seed);
+  }
+
+  const seededExtras = (element: HTMLElement): Partial<DropdownDescriptor> => {
+    const seed = seededByElement.get(element);
+    if (!seed) return {};
+    return {
+      scanFieldId: seed.fieldId,
+      ...(seed.canonicalQuestion ? { scanCanonicalQuestion: seed.canonicalQuestion } : {}),
+      // The scan's own reading of the question, used only where this frame read
+      // nothing. A control whose label lives outside the markup this file walks
+      // is exactly the control that reached the engine unnamed.
+      ...(seed.label.trim() ? { label: seed.label.slice(0, 600) } : {}),
+      ...(seed.sectionContext.trim() ? { sectionContext: seed.sectionContext.slice(0, 600) } : {}),
+      ...(seed.recordIndex ? { recordIndex: seed.recordIndex } : {}),
+    };
+  };
+
   for (const element of elements) {
     if (isRedundant(element, elements)) continue;
     const scope = element.getRootNode();
     const owner: Document | ShadowRoot =
       scope instanceof ShadowRoot ? scope : element.ownerDocument;
-    const { label } = extractAccessibleLabel(element);
-    const kind = classifyDropdown(element);
-    const dropdownId = `dropdown-${crypto.randomUUID()}`;
-    const recordIndex = recordIndexOf(element, label, owner);
-    const scanned: ScannedDropdown = {
-      element,
-      descriptor: dropdownDescriptorSchema.parse({
-        dropdownId,
-        // Replaced by the worker, which is the only side that knows frame ids.
-        frameId: 0,
-        label: label.slice(0, 600),
-        selector: selectorFor(element),
-        sectionContext: sectionContextOf(element),
-        required:
-          element.getAttribute('aria-required') === 'true' ||
-          (element instanceof HTMLSelectElement && element.required) ||
-          /\*\s*$/.test(label.trim()),
-        controlStrategy: kind,
-        currentValue: readSelectedText(element).slice(0, 600),
-        disabled: isDisabled(element),
-        dependencyState: dependencyStateOf(element, kind),
-        ...(recordIndex > 0 ? { recordIndex } : {}),
-      }),
-    };
-    REGISTRY.set(dropdownId, scanned);
-    found.push(scanned);
+    const seed = seededByElement.get(element);
+    const described = describeControl(element, owner, {
+      discoverySource: seed ? 'both' : 'dropdown_scan',
+      // The walk read the live element, so its label and section win; only the
+      // ids and the intent are taken from the seed.
+      ...(seed
+        ? {
+            scanFieldId: seed.fieldId,
+            ...(seed.canonicalQuestion ? { scanCanonicalQuestion: seed.canonicalQuestion } : {}),
+          }
+        : {}),
+    });
+    REGISTRY.set(described.descriptor.dropdownId, described);
+    found.push(described);
+  }
+
+  // Whatever the walk did not reach. This is the repair: a control the
+  // authoritative scan found is driven even when nothing in this file would
+  // have recognised its markup.
+  for (const element of seededByElement.keys()) {
+    if (elements.includes(element)) continue;
+    if (!element.isConnected) continue;
+    if (isRedundant(element, elements)) continue;
+    // Still not driven if it is not on screen and not a `<select>` — the same
+    // rule the walk applies, because an off-screen widget cannot be operated by
+    // a pointer whoever discovered it.
+    if (!(element instanceof HTMLSelectElement) && !isVisibleControl(element)) continue;
+    const scope = element.getRootNode();
+    const owner: Document | ShadowRoot =
+      scope instanceof ShadowRoot ? scope : element.ownerDocument;
+    const described = describeControl(element, owner, {
+      ...seededExtras(element),
+      discoverySource: 'main_scan',
+    });
+    REGISTRY.set(described.descriptor.dropdownId, described);
+    found.push(described);
+    elements.push(element);
   }
 
   return found;

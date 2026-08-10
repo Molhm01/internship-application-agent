@@ -40,6 +40,37 @@ export const OPTION_ACTIONS: readonly ControlAction[] = [
   'toggle_checkbox',
 ];
 
+/**
+ * The actions the dedicated Dropdown Engine owns, exclusively.
+ *
+ * There are exactly two things that can drive an option control in this
+ * extension, and for a while both of them did: the deterministic plan sent
+ * these actions through `executor/dropdownEngine`, and the dedicated pass then
+ * drove the same control again through `dropdown/*`. One `<select>` answered
+ * twice fires `change` twice, and a page that rebuilds a dependent list on that
+ * event discards the answer chosen moments earlier — so the second engine could
+ * undo the first engine's work and both would report success.
+ *
+ * This list is the boundary. When the dedicated pass is available, an action
+ * named here is not executed by the deterministic stage at all; it is deferred,
+ * and the dropdown engine is the only thing that touches the control.
+ *
+ * `choose_radio` and `toggle_checkbox` are deliberately *not* here. A radio
+ * group's choices are all in the DOM already, there is nothing to open, and the
+ * ordinary executor drives it correctly — routing it through a menu engine
+ * would be complexity with no failure behind it.
+ */
+export const DROPDOWN_ENGINE_ACTIONS: readonly ControlAction[] = [
+  'select_option',
+  'select_suggested_option',
+  'select_resolved_option',
+];
+
+/** True when this action must be left to the dedicated Dropdown Engine. */
+export function isDropdownEngineAction(action: string): boolean {
+  return (DROPDOWN_ENGINE_ACTIONS as readonly string[]).includes(action);
+}
+
 /** Actions that answer by writing a value into the control. */
 export const TEXT_ACTIONS: readonly ControlAction[] = [
   'fill_text',

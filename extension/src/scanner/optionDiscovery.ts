@@ -4,7 +4,17 @@ import {
   type DetectedField,
   type DiscoveredOption,
   type DiscoveredOptionSet,
+  type MenuDetectionStrategy,
+  type OptionCandidateStrategy,
 } from '@internship-agent/shared';
+import {
+  findStructuralMenu,
+  forgetMenu,
+  isStructuralMenu,
+  rememberedMenu,
+  structuralOptionItems,
+  watchForMenu,
+} from './structuralMenu.js';
 
 /**
  * Reads the choices a control actually offers, from the live page.
@@ -199,6 +209,15 @@ function textWithoutOptionList(root: HTMLElement): string {
  * this field's options.
  */
 export function findListbox(trigger: HTMLElement): HTMLElement | null {
+  // A menu this trigger was already opened onto, before anything is re-derived.
+  //
+  // Not an optimisation: a role-less menu is *only* recognisable at the moment
+  // it appears, and every later step — enumerating, re-finding the element to
+  // click, verifying — asks for the popup again. Without this, the second ask
+  // returned nothing and the selection failed on a menu that was still open.
+  const remembered = rememberedMenu(trigger);
+  if (remembered && isVisible(remembered)) return remembered;
+
   const scope = scopeOf(trigger);
   const controls = trigger.getAttribute('aria-controls') ?? trigger.getAttribute('aria-owns') ?? '';
   const declared = controls.split(/\s+/).filter(Boolean);
@@ -327,7 +346,12 @@ const MAX_SCROLL_STEPS = 40;
  * nothing new ends it". A list that is already complete costs one read and no
  * scrolling at all.
  */
-export async function enumerateAllOptions(container: HTMLElement): Promise<DiscoveredOption[]> {
+export async function enumerateAllOptions(
+  container: HTMLElement,
+  /** Filled with how many reads this took, for the trace. Optional out-param. */
+  observed?: { scrollIterations: number },
+): Promise<DiscoveredOption[]> {
+  if (observed) observed.scrollIterations = 1;
   const collected = new Map<string, DiscoveredOption>();
   const absorb = (): number => {
     let added = 0;
@@ -353,6 +377,7 @@ export async function enumerateAllOptions(container: HTMLElement): Promise<Disco
       // everything in between — which is exactly the option being looked for.
       scroller.scrollTop = before + Math.max(scroller.clientHeight, 1);
       if (scroller.scrollTop === before) break;
+      if (observed) observed.scrollIterations += 1;
       // Let a virtualized list render the rows it just scrolled into.
       await sleep(POLL_MS);
       const added = absorb();
@@ -388,8 +413,7 @@ export async function revealOption(
   container: HTMLElement,
   matches: (element: HTMLElement) => boolean,
 ): Promise<HTMLElement | null> {
-  const find = (): HTMLElement | null =>
-    Array.from(container.querySelectorAll<HTMLElement>(OPTION_ITEM_SELECTOR)).find(matches) ?? null;
+  const find = (): HTMLElement | null => optionItemsIn(container).find(matches) ?? null;
 
   const already = find();
   if (already) return already;
@@ -412,9 +436,25 @@ export async function revealOption(
   return last;
 }
 
+/**
+ * The elements inside an open menu that behave as one choice.
+ *
+ * The ARIA roles first, always. A container this code found by watching what a
+ * click changed — and only such a container — falls back to conservative
+ * structural candidates, because that is the family of menus that has no roles
+ * to read. Everything downstream (enumeration, scrolling to a virtualized row,
+ * finding the element to click, walking the keyboard highlight) goes through
+ * here, so the two kinds of menu are driven by exactly the same machinery.
+ */
+export function optionItemsIn(container: HTMLElement): HTMLElement[] {
+  const byRole = Array.from(container.querySelectorAll<HTMLElement>(OPTION_ITEM_SELECTOR));
+  if (byRole.length > 0) return byRole;
+  return isStructuralMenu(container) ? structuralOptionItems(container) : [];
+}
+
 /** Reads the selectable entries of an open popup, whatever role it uses. */
 export function readOptions(listbox: HTMLElement): DiscoveredOption[] {
-  return Array.from(listbox.querySelectorAll<HTMLElement>(OPTION_ITEM_SELECTOR))
+  return optionItemsIn(listbox)
     .filter(isVisible)
     .map((element) => {
       const label = cleanLabel(element.textContent);
@@ -633,15 +673,72 @@ function openPopupWithOptions(trigger: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * What the open sequence observed, for the trace.
+ *
+ * An out-parameter rather than a return value so every existing caller is
+ * unchanged: a caller that does not want diagnostics passes nothing, and this
+ * function behaves exactly as it did.
+ */
+export interface OpenDiagnostics {
+  openAttempted: boolean;
+  ariaExpandedAfter: string;
+  menuDetection: MenuDetectionStrategy;
+  optionCandidates: OptionCandidateStrategy;
+}
+
+/** How a located menu was recognised, named after the fact. */
+function describeMenu(trigger: HTMLElement, container: HTMLElement): MenuDetectionStrategy {
+  const declared = (
+    trigger.getAttribute('aria-controls') ??
+    trigger.getAttribute('aria-owns') ??
+    ''
+  )
+    .split(/\s+/)
+    .filter(Boolean);
+  if (container.id && declared.includes(container.id)) return 'aria_controls';
+  if (container.matches('[role="listbox"],[role="menu"]')) return 'aria_role_container';
+  if (container.matches('[data-portal-menu],[data-dropdown-menu]')) return 'portal_attribute';
+  if (isStructuralMenu(container)) return 'mutation_fallback';
+  return 'aria_role_container';
+}
+
+function record(
+  into: OpenDiagnostics | undefined,
+  trigger: HTMLElement,
+  container: HTMLElement | null,
+): void {
+  if (!into) return;
+  into.ariaExpandedAfter = trigger.getAttribute('aria-expanded') ?? '';
+  if (!container) return;
+  into.menuDetection = describeMenu(trigger, container);
+  into.optionCandidates = container.querySelector(OPTION_ITEM_SELECTOR)
+    ? 'aria_option_role'
+    : structuralOptionItems(container).length > 0
+      ? 'structural_candidates'
+      : 'none';
+}
+
+/**
  * Opens a control that hides its options until asked, and waits for the options
  * themselves rather than for the container.
+ *
+ * The declared routes are tried first and are unchanged. What is new is the last
+ * one: if nothing the control *says* about itself leads to a menu, the elements
+ * the press actually changed are examined, and a container that appeared because
+ * of the click — near the trigger, holding repeated entries — is accepted as the
+ * menu. That is the whole of the repair for the widgets that ship no roles at
+ * all, and it is scoped to that one container. See `structuralMenu.ts`.
  */
 export async function openControl(
   trigger: HTMLElement,
   searchText?: string,
+  diagnostics?: OpenDiagnostics,
 ): Promise<HTMLElement | null> {
   const already = openPopupWithOptions(trigger);
-  if (already && reportsExpanded(trigger)) return already;
+  if (already && reportsExpanded(trigger)) {
+    record(diagnostics, trigger, already);
+    return already;
+  }
 
   const autocomplete =
     trigger instanceof HTMLInputElement &&
@@ -652,26 +749,55 @@ export async function openControl(
   if (autocomplete && searchText) {
     trigger.focus();
     const typed = await typeSearchNarrowing(trigger, searchText);
-    if (typed) return typed;
+    if (typed) {
+      record(diagnostics, trigger, typed);
+      return typed;
+    }
   }
 
+  // The watch starts *before* the press, which is the only moment at which a
+  // role-less menu is distinguishable from the rest of the page: afterwards it
+  // is just another div. A control that opens through a declared route never
+  // consults this, and the observer is disconnected either way.
+  const watch = watchForMenu(scopeOf(trigger));
+  if (diagnostics) diagnostics.openAttempted = true;
   trigger.focus();
   pressPointer(trigger);
   // Waits for a list with entries in it, so a menu mounted empty and filled a
   // frame later is read after it has been filled rather than before.
   const clicked = await waitFor(() => openPopupWithOptions(trigger), OPEN_WAIT_MS);
-  if (clicked) return clicked;
+  if (clicked) {
+    watch.settle();
+    record(diagnostics, trigger, clicked);
+    return clicked;
+  }
 
   // Some implementations open only on keyboard interaction.
   trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
   trigger.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true }));
   const keyed = await waitFor(() => openPopupWithOptions(trigger), FALLBACK_WAIT_MS);
-  if (keyed) return keyed;
+  if (keyed) {
+    watch.settle();
+    record(diagnostics, trigger, keyed);
+    return keyed;
+  }
 
   if (searchText && trigger instanceof HTMLInputElement) {
     const typed = await typeSearchNarrowing(trigger, searchText);
-    if (typed) return typed;
+    if (typed) {
+      watch.settle();
+      record(diagnostics, trigger, typed);
+      return typed;
+    }
   }
+
+  // Nothing the control declares led anywhere. What did the click actually do?
+  const structural = findStructuralMenu(trigger, watch.settle());
+  if (structural.container) {
+    record(diagnostics, trigger, structural.container);
+    return structural.container;
+  }
+
   // Last: a container that opened and is still empty. Reported as an open
   // control with no choices, which is a different repair from one that never
   // opened, and the caller distinguishes them.
@@ -680,7 +806,10 @@ export async function openControl(
   // — it has no rows to give it a height — and refusing it here reported every
   // control that opened onto nothing as one that had never opened at all.
   const visible = findListbox(trigger);
-  if (visible) return visible;
+  if (visible) {
+    record(diagnostics, trigger, visible);
+    return visible;
+  }
   const scope = scopeOf(trigger);
   for (const id of (
     trigger.getAttribute('aria-controls') ??
@@ -690,8 +819,12 @@ export async function openControl(
     .split(/\s+/)
     .filter(Boolean)) {
     const declared = elementById(scope, id);
-    if (declared) return declared;
+    if (declared) {
+      record(diagnostics, trigger, declared);
+      return declared;
+    }
   }
+  record(diagnostics, trigger, null);
   return null;
 }
 
@@ -737,6 +870,10 @@ export function activeOption(trigger: HTMLElement, container: HTMLElement): HTML
  * then attempted a second way — and never by clicking an option.
  */
 export function closeControl(trigger: HTMLElement): void {
+  // Forgotten first. A role-less menu is remembered so the steps after opening
+  // can find it again; keeping that memory past a close would let the *next*
+  // pass over this control read a stale, detached container as an open menu.
+  forgetMenu(trigger);
   trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   trigger.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', bubbles: true }));
   if (findListbox(trigger) && reportsExpanded(trigger)) {

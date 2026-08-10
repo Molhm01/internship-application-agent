@@ -12,11 +12,12 @@ import type {
 } from '@internship-agent/shared';
 import {
   describeDependency,
+  describeLiveDropdown,
   describeRepeaterSection,
   describeRunTrace,
 } from '@internship-agent/shared';
 import { sendMessage, type ExtensionResponse } from '../../messaging/messages.js';
-import { loadSettings } from '../../storage/settings.js';
+import { loadSettings, saveSettings } from '../../storage/settings.js';
 import { BUILD_ID, BUILD_INFO } from '../../generated/buildInfo.js';
 
 interface Diagnostics {
@@ -373,6 +374,39 @@ export function DiagnosticsSection(): JSX.Element {
         </p>
       )}
 
+      {/*
+        The switch that turns the rest of this on.
+
+        It lives here rather than in a Preferences panel because here is where a
+        person is told they need it: the export buttons below used to say "turn
+        on developer mode in Preferences" with no such control anywhere in the
+        extension, and the setting was dropped by settings normalization on
+        every read even if one had existed. Both halves of that are fixed; this
+        is the half a user can see.
+      */}
+      <h3>Developer mode</h3>
+      <label htmlFor="developer-mode">
+        <input
+          id="developer-mode"
+          type="checkbox"
+          checked={developerMode}
+          onChange={(event) => {
+            const enabled = event.target.checked;
+            setDeveloperMode(enabled);
+            void saveSettings({ developerMode: enabled }).catch((cause: unknown) => {
+              // Reverted rather than left showing a state that was not stored.
+              setDeveloperMode(!enabled);
+              setError(cause instanceof Error ? cause.message : String(cause));
+            });
+          }}
+        />{' '}
+        Show diagnostic tools
+      </label>
+      <p className="muted">
+        Adds the run-trace and dropdown-trace exports, the fill-plan builder, and raw confidence and
+        validation output. No personal data is shown either way.
+      </p>
+
       <h3>Autofill run traces</h3>
       {/*
         Counts and outcomes only — no field values, no passwords, no document
@@ -393,9 +427,7 @@ export function DiagnosticsSection(): JSX.Element {
           {exporting ? 'Collecting the run…' : 'Export Autofill Run Trace'}
         </button>
       ) : (
-        <p className="muted">
-          Turn on developer mode in Preferences to export the last run field by field.
-        </p>
+        <p className="muted">Turn on developer mode above to export the last run field by field.</p>
       )}
       <button type="button" onClick={exportTraces} disabled={traces.length === 0}>
         Export run traces
@@ -469,6 +501,36 @@ export function DiagnosticsSection(): JSX.Element {
                     <li key={`${section.type}:${section.frameId ?? 0}`}>
                       {describeRepeaterSection(section)}
                     </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+            {/*
+              The Live Dropdown Trace.
+
+              The record a failure on a real employer page is diagnosed from
+              without another rewrite. One line per option control, naming which
+              pass found it, how the control is built, how its menu was located,
+              and the *first* stage that did not happen — because everything
+              after that stage is a consequence of it.
+
+              Stage names, counts and codes only. `liveDropdownTraceSchema` is
+              strict and has no member able to hold an option label, a displayed
+              value, or an answer, so this list cannot leak one even if a future
+              caller tries.
+            */}
+            {exported.trace.dropdownEngineTraces.length > 0 ? (
+              <>
+                <strong>Dropdown Engine — live trace</strong>
+                <p className="muted">
+                  {exported.trace.optionActionsDeferred} option action
+                  {exported.trace.optionActionsDeferred === 1 ? '' : 's'} deferred to this engine ·{' '}
+                  {exported.trace.legacyOptionExecutions} driven by the retired executor
+                  {exported.trace.legacyOptionExecutions === 0 ? ' (as it must be)' : ''}
+                </p>
+                <ul className="diagnostics-dropdowns">
+                  {exported.trace.dropdownEngineTraces.map((entry) => (
+                    <li key={entry.dropdownId}>{describeLiveDropdown(entry)}</li>
                   ))}
                 </ul>
               </>

@@ -4,6 +4,9 @@ import {
   QuestionLedger,
   auditRequiredFields,
   contractViolation,
+  isDropdownEngineAction,
+  plannedOptionAnswerSchema,
+  toLiveDropdownTrace,
   autofillFieldResultSchema,
   type AgentError,
   type ApplicationAutofillReport,
@@ -43,6 +46,8 @@ import {
   type FinalFieldStatus,
   type RequiredSource,
   type DropdownRunResult,
+  type LiveDropdownTrace,
+  type PlannedOptionAnswer,
   type EngineInvocation,
   type EngineMarker,
   engineInvocationSchema,
@@ -189,7 +194,15 @@ export interface AutofillDependencies {
    * this stage exists to replace — so `verify-engine-wiring` fails a production
    * worker that does not supply it.
    */
-  runDropdownStage?(scan: ApplicationScanResult): Promise<readonly DropdownRunResult[]>;
+  runDropdownStage?(
+    scan: ApplicationScanResult,
+    /**
+     * What the deterministic plan resolved for the option controls this stage
+     * now owns, by field id. Carried because deferring their *execution* must
+     * not discard their *answers* — see `plannedOptionAnswerSchema`.
+     */
+    plannedAnswers?: ReadonlyMap<string, PlannedOptionAnswer>,
+  ): Promise<readonly DropdownRunResult[]>;
   now(): string;
 }
 
@@ -613,6 +626,44 @@ export async function runApplicationAutofill(
   const dropdownEngineFields = new Set<string>();
   /** Fields whose in-page dropdown executor actually ran. */
   const dropdownExecutorFields = new Set<string>();
+  /**
+   * Option actions the deterministic and AI stages handed to the dropdown
+   * engine instead of executing themselves.
+   */
+  let optionActionsDeferred = 0;
+  /**
+   * Option controls the *old* executor path drove anyway.
+   *
+   * Must be zero on any run where the dedicated pass is wired in, and it is
+   * recorded rather than assumed so that "one engine drives dropdowns" is a
+   * fact a finished run states about itself. A `FillExecutionResult` carrying a
+   * `dropdown` trace can only have come from `executor/dropdownEngine`, so
+   * counting those counts exactly the thing that must not happen.
+   */
+  let legacyOptionExecutions = 0;
+  /** Live traces from the dropdown stage, for the diagnostic export. */
+  const dropdownTraces: LiveDropdownTrace[] = [];
+  /**
+   * The most choices each control was ever seen to offer, across the whole run.
+   *
+   * Keyed by frame and question, because that is the only identity that
+   * survives what happens here: a dependent control is *rendered by answering
+   * its parent*, so on the pass that drove it the scan did not contain it yet,
+   * and on the pass whose scan does contain it the control is already answered
+   * and correctly not opened again. Neither pass alone can report both the
+   * field and the list — "Education State" came back verified, displaying New
+   * Jersey, over a record saying its list had offered nothing.
+   *
+   * A count only. Nothing about which option was chosen crosses a pass.
+   */
+  const optionsSeenByControl = new Map<string, number>();
+  /**
+   * The answers the planner resolved for controls handed to the dropdown stage.
+   *
+   * Keyed by the scan's field id, filled as each plan is approved, and read by
+   * the dropdown stage a few lines later in the same pass.
+   */
+  const plannedOptionAnswers = new Map<string, PlannedOptionAnswer>();
 
   const mark = (marker: EngineMarker, pass: number, durationMs: number, count: number): void => {
     const invocation = engineInvocationSchema.parse({
@@ -715,9 +766,55 @@ export async function runApplicationAutofill(
       if (field.selector) byLocation.set(`${field.frameId ?? 0}::${field.selector}`, field);
     }
 
+    const byId = new Map(fields.map((field) => [field.id, field]));
+
+    /**
+     * The last resort: the frame, the question, and which repeated block it is in.
+     *
+     * A control the page *replaces* when its parent is answered — an Education
+     * State list rebuilt after Education Country — comes back from the frame
+     * with a selector the scan's own reading no longer produces, and with no
+     * seed, because the seed was resolved before the rebuild. Neither of the two
+     * keys above finds it, and the result was silently dropped: "Education
+     * State" was opened, read over three choices, selected and verified, and
+     * the run recorded a control whose list had offered nothing at all.
+     *
+     * Built only from questions that are unambiguous within their frame and
+     * block. A form that repeats a heading gets no entry here rather than a
+     * guess — answering the wrong question's record is worse than leaving one
+     * result untied.
+     */
+    const byQuestion = new Map<string, DetectedField | null>();
+    for (const field of fields) {
+      const label = (field.label || field.question).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!label) continue;
+      const key = `${field.frameId ?? 0}::${label}::${field.recordIndex ?? 0}`;
+      byQuestion.set(key, byQuestion.has(key) ? null : field);
+    }
+
     let driven = 0;
     for (const result of results) {
-      const field = byLocation.get(`${result.frameId}::${result.selector}`);
+      // Every result gets a trace, whether or not it ties back to a scanned
+      // field. A control the scan never saw is exactly the one a live-failure
+      // report needs to name.
+      dropdownTraces.push(toLiveDropdownTrace(result));
+      // The scan's own field id first. It is present whenever the control was
+      // seeded from the scan, and it is exact — matching on `frameId::selector`
+      // relies on two independent computations of a selector agreeing, which
+      // they need not for a control the dropdown pass described from its own
+      // reading of the DOM.
+      const question = result.question.replace(/\s+/g, ' ').trim().toLowerCase();
+      // Recorded for every result, tied to a field or not — a control the scan
+      // did not yet contain is precisely the one whose count would otherwise be
+      // lost.
+      const controlKey = `${result.frameId}::${question}`;
+      if (result.optionsFound > (optionsSeenByControl.get(controlKey) ?? 0)) {
+        optionsSeenByControl.set(controlKey, result.optionsFound);
+      }
+      const field =
+        (result.scanFieldId ? byId.get(result.scanFieldId) : undefined) ??
+        byLocation.get(`${result.frameId}::${result.selector}`) ??
+        (question ? (byQuestion.get(`${result.frameId}::${question}::0`) ?? undefined) : undefined);
       if (!field) continue;
       // Recorded before any verdict: the engine reached this control, whatever
       // it managed to do with it. That claim is the point of the whole stage.
@@ -757,13 +854,38 @@ export async function runApplicationAutofill(
       // writing this engine's empty-handedness over that turned a verified
       // "+1" into a red "Autofill failed" badge.
       if (!verified && !result.intendedAnswerResolved && existing) continue;
+      // A control that never opened has told this engine nothing about what it
+      // holds, and that is not enough to overturn a stage that *looked* at the
+      // value and found it right.
+      //
+      // The combined phone widget is the case: its country code is rendered
+      // from the number typed beside it and there is no menu behind it at all,
+      // so reconciliation settles it and this engine's attempt to open it
+      // cannot succeed. Letting that attempt write over the verified record
+      // turned a control displaying exactly the right "+1" into a red "Autofill
+      // failed" — the precise outcome the phase-3 gate exists to forbid.
+      if (!verified && !result.opened && existing?.verification === 'verified') continue;
 
       const previousTrace = existing?.dropdown;
+      // The most this control was ever seen to offer, not what this visit saw.
+      //
+      // The two differ for exactly one shape of control, and it is a common
+      // one: a dependent list that does not exist until its parent is answered.
+      // The pass that drove it held a scan taken before the control was
+      // rendered, so its result tied to no field; the next pass has the field
+      // and finds the control already answered and correctly does not reopen
+      // it. Reporting this visit's zero would say the list was empty about a
+      // list this run read three choices out of.
+      const everSeen = Math.max(
+        result.optionsFound,
+        optionsSeenByControl.get(controlKey) ?? 0,
+        previousTrace?.optionCount ?? 0,
+      );
       const trace =
-        result.optionsFound > 0 || previousTrace === undefined
+        everSeen > 0 || previousTrace === undefined
           ? {
               kind: result.controlStrategy,
-              optionCount: result.optionsFound,
+              optionCount: everSeen,
               matchMethod: result.matchedOption ? ('literal' as const) : ('none' as const),
               ...(result.errorCode ? { failureCode: result.errorCode } : {}),
             }
@@ -1354,7 +1476,77 @@ export async function runApplicationAutofill(
       const planStage = (stageSequence += 1);
       const decisions = new Map<string, ApprovalDecision>();
       const approvals = new Map<string, boolean>();
+      // ---- One engine drives an option control. -----------------------------
+      //
+      // Every action that answers by choosing from a menu is handed to the
+      // dedicated Dropdown Engine and executed *only* there. It is not approved
+      // here, so `EXECUTE_FILL` reports it `skipped` and the old
+      // `executor/dropdownEngine` path is never entered for it.
+      //
+      // Both paths used to be live in one run. The deterministic plan drove a
+      // control through one engine, and minutes later the dedicated pass drove
+      // the same control through another — and that is worse than duplicated
+      // work: re-selecting a value a control already holds fires `change`, and a
+      // page that rebuilds its dependent list on that event discards the answer
+      // chosen moments earlier. The second engine could undo the first one's
+      // work while both reported success.
+      //
+      // The deferral is conditional on the dedicated pass actually being wired
+      // in. Without it there is one engine again — the old one — and deferring
+      // to a stage that will never run would simply stop answering dropdowns.
+      const deferredToDropdownEngine = new Set(
+        dependencies.runDropdownStage
+          ? plan.actions
+              .filter((action) => isDropdownEngineAction(action.action))
+              .map((action) => action.id)
+          : [],
+      );
+      optionActionsDeferred += deferredToDropdownEngine.size;
       for (const action of plan.actions) {
+        if (deferredToDropdownEngine.has(action.id)) {
+          decisions.set(action.id, {
+            approved: false,
+            reason: 'Left to the dropdown engine, which drives every option control on this page.',
+          });
+          approvals.set(action.id, false);
+          // Deferring the *execution* must not discard the *answer*.
+          //
+          // The planner knows things this engine's own resolver does not — the
+          // scan's intent, the section, the adapter's reading of the page — and
+          // it is what answers "Phone Type", "Address Type" and "How did you
+          // hear about us". The first version of this deferral simply dropped
+          // those, and three questions a working form had been filling for
+          // months came back blank.
+          //
+          // Only answers the approval policy would have executed. A sensitive
+          // or unapproved action is not laundered into the dropdown stage by
+          // being deferred to it — it is decided here, by the same policy, as
+          // though it were about to be written.
+          const decision = decideApproval(action, settings, fieldsById.get(action.fieldId));
+          const value = String(
+            action.matchedOption?.label ??
+              action.matchedOption?.value ??
+              action.proposedValue ??
+              '',
+          );
+          if (decision.approved && !action.sensitive && value.trim().length > 0) {
+            plannedOptionAnswers.set(
+              action.fieldId,
+              plannedOptionAnswerSchema.parse({
+                fieldId: action.fieldId,
+                intendedAnswer: value,
+                intendedAnswerSource:
+                  action.source === 'approved_answer' ? 'approved_answer' : 'profile_fact',
+                alternativeValues: (action.matchHint?.alternativeValues ?? []).slice(0, 12),
+                ...(action.matchHint?.searchText
+                  ? { searchText: action.matchHint.searchText }
+                  : {}),
+                sensitive: action.sensitive,
+              }),
+            );
+          }
+          continue;
+        }
         const decision = decideApproval(action, settings, fieldsById.get(action.fieldId));
         decisions.set(action.id, decision);
         approvals.set(action.id, decision.approved);
@@ -1401,6 +1593,14 @@ export async function runApplicationAutofill(
           warnings.push(`Some fields could not be filled: ${executed.error.message}`);
         }
         run = executed.report;
+        // Counted here rather than trusted: a result carrying a dropdown trace
+        // came from the old in-executor engine, and after the deferral above
+        // there must be none on a run where the dedicated pass is wired in.
+        if (dependencies.runDropdownStage) {
+          legacyOptionExecutions += (run?.results ?? []).filter(
+            (result) => result.dropdown !== undefined,
+          ).length;
+        }
         emit(
           stage === 'deterministic' ? 'verifying' : 'verifying_ai',
           stage === 'deterministic' ? 'Verifying saved answers' : 'Verifying analyzed answers',
@@ -1409,6 +1609,24 @@ export async function runApplicationAutofill(
 
       for (const action of plan.actions) {
         const field = fieldsById.get(action.fieldId);
+        // A deferred option action gets no verdict from this stage.
+        //
+        // Not "not attempted" and not "needs review" — those are claims about a
+        // control this stage looked at, and this stage deliberately did not.
+        // The dropdown stage a few lines below runs in the same pass and writes
+        // the only record this control should have; committing a placeholder
+        // here would mean a field whose reported outcome depends on which stage
+        // wrote last.
+        if (deferredToDropdownEngine.has(action.id)) {
+          if (field) {
+            selectorsByField.set(action.fieldId, field.selector);
+            // Observed, not recorded as an attempt: the convergence ledger must
+            // not count a control nothing touched as tried, or a page whose
+            // dropdowns all defer would look like a pass that made progress.
+            ledger.observe(field);
+          }
+          continue;
+        }
         const decision: ApprovalDecision = decisions.get(action.id) ?? {
           approved: false,
           reason: 'No decision was recorded for this action.',
@@ -1594,7 +1812,7 @@ export async function runApplicationAutofill(
         'DROPDOWN_ENGINE_STARTED',
         'DROPDOWN_ENGINE_FINISHED',
         pass,
-        () => dependencies.runDropdownStage!(scan),
+        () => dependencies.runDropdownStage!(scan, plannedOptionAnswers),
         (value) => value.length,
       );
       attemptedCount += mergeDropdownResults(dropdownResults, scan.fields, dropdownStage);
@@ -1643,6 +1861,34 @@ export async function runApplicationAutofill(
           dropdownEngineFields.add(edge.dependent.nodeId);
         }
         if (edge.dependentExecuted) dropdownExecutorFields.add(edge.dependent.nodeId);
+        // The option count this engine observed, kept for the dependent
+        // control's own record.
+        //
+        // A control the Dependency Engine answers is never opened by the
+        // dropdown stage: on the pass before its parent was set it was empty,
+        // and on every pass after it already holds the answer and is correctly
+        // left alone. So neither pass ever reports an option count for it, and
+        // "Education State" came back verified with `optionCount: 0` — a record
+        // saying the list had nothing in it beside a control displaying New
+        // Jersey. This number was previously supplied by the *duplicate* run of
+        // the retired executor, which is not a reason to keep a second engine.
+        const counted = edge.dependentOptionCount || (edge.newFingerprint?.usableOptionCount ?? 0);
+        if (edge.dependentExecuted && counted > 0) {
+          const existing = resultsByField.get(edge.dependent.nodeId);
+          if (existing && (existing.dropdown?.optionCount ?? 0) === 0) {
+            resultsByField.set(
+              edge.dependent.nodeId,
+              autofillFieldResultSchema.parse({
+                ...existing,
+                dropdown: {
+                  kind: existing.dropdown?.kind ?? 'unknown',
+                  optionCount: counted,
+                  matchMethod: edge.dependentVerified ? 'literal' : 'none',
+                },
+              }),
+            );
+          }
+        }
       }
       attemptedCount += resolved.filter((edge) => edge.dependentExecuted).length;
     }
@@ -2045,6 +2291,9 @@ export async function runApplicationAutofill(
         repeatOutcomes,
         dependencyEdges,
         engineInvocations,
+        dropdownTraces,
+        optionActionsDeferred,
+        legacyOptionExecutions,
       }),
     );
   }
@@ -2085,6 +2334,12 @@ function buildRunTrace(input: {
   dependencyEdges: readonly DependencyTrace[];
   /** Every engine the run entered and left, in order. */
   engineInvocations: readonly EngineInvocation[];
+  /** One sanitized record per option control the dropdown stage drove. */
+  dropdownTraces: readonly LiveDropdownTrace[];
+  /** Option actions handed to the dropdown engine rather than executed here. */
+  optionActionsDeferred: number;
+  /** Option controls the old executor path drove anyway. Must be zero. */
+  legacyOptionExecutions: number;
 }): RunTrace {
   // Copied from the orchestrator's own record, never re-derived. Re-deriving is
   // how a trace comes to disagree with the report it describes, and a trace that
@@ -2183,6 +2438,12 @@ function buildRunTrace(input: {
     // each control change; re-deriving that here from a later scan would
     // produce a second answer that can disagree with the one that acted.
     dependencies: input.dependencyEdges,
+    // Carried through from the frames that drove the controls. Sanitized at
+    // construction by `toLiveDropdownTrace`, so nothing that could hold an
+    // answer reaches here even if a future caller forgets.
+    dropdownEngineTraces: input.dropdownTraces,
+    optionActionsDeferred: input.optionActionsDeferred,
+    legacyOptionExecutions: input.legacyOptionExecutions,
     // Carried through as recorded. These are the run's own account of which
     // engines it entered and how long each took, and re-deriving them from the
     // stage timings would produce a second answer that can disagree with the

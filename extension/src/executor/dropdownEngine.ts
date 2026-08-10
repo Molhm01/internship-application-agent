@@ -1,4 +1,5 @@
 import {
+  displaysSelection,
   dropdownExecutionResultSchema,
   matchDropdownOption,
   normalizeOptionText,
@@ -17,7 +18,7 @@ import {
   isVisible,
   enumerateAllOptions,
   openControl,
-  OPTION_ITEM_SELECTOR,
+  optionItemsIn,
   pressKey,
   pressPointer,
   readOptions,
@@ -267,7 +268,7 @@ interface Stopped {
 /** Finds the live element for a matched option by its own label, never by index. */
 function optionElementFor(container: HTMLElement, option: FieldOption): HTMLElement | undefined {
   const wanted = normalizeOptionText(option.label);
-  const items = Array.from(container.querySelectorAll<HTMLElement>(OPTION_ITEM_SELECTOR));
+  const items = optionItemsIn(container);
   return (
     items.find((element) => element.getAttribute('data-value') === option.value && option.value) ??
     items.find((element) => normalizeOptionText(element.textContent ?? '') === wanted)
@@ -343,11 +344,10 @@ async function selectByKeyboard(
  * new place.
  */
 async function keyboardSettled(root: HTMLElement, option: FieldOption): Promise<boolean> {
-  const wanted = normalizeOptionText(option.label);
   const shown = await waitFor(() => {
     if (!root.isConnected) return null;
     const text = readSelectedText(root);
-    return normalizeOptionText(text).includes(wanted) ? text : null;
+    return displaysSelection(text, option.label, { aliases: [option.value] }) ? text : null;
   }, KEY_VERIFY_MS);
   return shown !== null;
 }
@@ -650,12 +650,17 @@ async function executeCustomDropdown(
   target.scrollIntoView?.({ block: 'nearest' });
   pressPointer(target);
 
-  const wanted = normalizeOptionText(match.option.label);
+  // Placeholder-aware throughout, exactly as in the authoritative engine: a
+  // control still showing "No Selection" must never satisfy an answer of "No",
+  // and this path historically decided that with `String.includes`.
+  const chosen = match.option;
+  const holdsAnswer = (text: string): boolean =>
+    displaysSelection(text, chosen.label, { aliases: [chosen.value] });
   const observed =
     (await waitFor(() => {
       if (!root.isConnected) return null;
       const text = readSelectedText(root);
-      return normalizeOptionText(text).includes(wanted) ? text : null;
+      return holdsAnswer(text) ? text : null;
     }, VERIFY_WAIT_MS)) ?? (root.isConnected ? readSelectedText(root) : null);
 
   if (observed === null) {
@@ -673,7 +678,7 @@ async function executeCustomDropdown(
   // not show the answer — the signature of a widget that commits only from its
   // own key handler. The menu is re-found rather than reused, because a widget
   // that half-processed the click may have remounted it.
-  if (!normalizeOptionText(observed).includes(wanted)) {
+  if (!holdsAnswer(observed)) {
     const reopened = findListbox(resolveTrigger(root)) ?? (await openControl(resolveTrigger(root)));
     if (reopened) {
       const trailing = resolveTrigger(root);
@@ -695,7 +700,7 @@ async function executeCustomDropdown(
 
   closeControl(resolveTrigger(root));
 
-  if (!normalizeOptionText(observed).includes(wanted)) {
+  if (!holdsAnswer(observed)) {
     // Re-read rather than reuse: the keyboard attempt above ran against this
     // control, and the outcome must be decided from the state the field was
     // actually left in, not the one it held before the last thing that touched
@@ -703,7 +708,7 @@ async function executeCustomDropdown(
     // failure reported over a control that is displaying the right answer is as
     // wrong as a success reported over an empty one.
     const settled = root.isConnected ? readSelectedText(root) : observed;
-    if (normalizeOptionText(settled).includes(wanted)) {
+    if (holdsAnswer(settled)) {
       return {
         ok: true,
         method: match.method,

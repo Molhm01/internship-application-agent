@@ -210,6 +210,7 @@ describe('the question is understood before the control is opened', () => {
       currentValue: '',
       disabled: false,
       dependencyState: 'independent',
+      discoverySource: 'dropdown_scan',
     });
 
   it.each([
@@ -636,6 +637,15 @@ describe('what a diagnostic is allowed to say', () => {
     availableOptions: [],
     mayHaveEnabledDependents: true,
     executorInvoked: true,
+    discoverySource: 'both',
+    triggerResolved: true,
+    openAttempted: true,
+    menuDetection: 'aria_role_container',
+    optionCandidates: 'aria_option_role',
+    scrollIterations: 3,
+    targetFound: true,
+    clickAttempted: true,
+    verificationObserved: true,
     ...overrides,
   });
 

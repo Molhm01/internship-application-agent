@@ -4,6 +4,8 @@ import {
   realChoices,
   type CollectedOption,
   type FieldOption,
+  type MenuDetectionStrategy,
+  type OptionCandidateStrategy,
 } from '@internship-agent/shared';
 import {
   closeControl,
@@ -13,6 +15,7 @@ import {
   readOptions,
   resolveTrigger,
   waitFor,
+  type OpenDiagnostics,
 } from '../scanner/optionDiscovery.js';
 
 /**
@@ -52,6 +55,21 @@ export interface CollectedOptions {
   scrolled: boolean;
   /** The open menu, when there is one, so the executor can click inside it. */
   container: HTMLElement | null;
+  /**
+   * How the control behaved while being opened, for the trace.
+   *
+   * Observed here rather than reconstructed later: "the list did not open" is
+   * the same sentence whether the trigger was never found, whether nothing
+   * responded to the press, or whether a menu appeared that this code could not
+   * recognise — and a live employer failure cannot be diagnosed without knowing
+   * which of the three it was.
+   */
+  openAttempted: boolean;
+  ariaExpandedAfter: string;
+  menuDetection: MenuDetectionStrategy;
+  optionCandidates: OptionCandidateStrategy;
+  /** How many reads the enumeration needed. One means nothing was scrolled. */
+  scrollIterations: number;
 }
 
 function toCollected(option: FieldOption, index: number): CollectedOption {
@@ -90,11 +108,24 @@ function asFieldOptions(
   }));
 }
 
+/** The diagnostics of a control nothing was opened on. */
+const NO_OPEN: Pick<
+  CollectedOptions,
+  'openAttempted' | 'ariaExpandedAfter' | 'menuDetection' | 'optionCandidates' | 'scrollIterations'
+> = {
+  openAttempted: false,
+  ariaExpandedAfter: '',
+  menuDetection: 'none',
+  optionCandidates: 'none',
+  scrollIterations: 0,
+};
+
 function describe(
   options: readonly FieldOption[],
   opened: boolean,
   scrolled: boolean,
   container: HTMLElement | null,
+  observed: Partial<CollectedOptions> = {},
 ): CollectedOptions {
   const all = options.map(toCollected);
   const realSet = new Set(realChoices(options).map((option) => normalizeOptionText(option.label)));
@@ -104,6 +135,8 @@ function describe(
     opened,
     scrolled,
     container,
+    ...NO_OPEN,
+    ...observed,
   };
 }
 
@@ -117,7 +150,14 @@ function describe(
  * same word to mean the same thing.
  */
 export function collectNativeOptions(select: HTMLSelectElement): CollectedOptions {
-  return describe(fromNative(select), true, false, null);
+  return describe(fromNative(select), true, false, null, {
+    // A `<select>` carries its own list; there is no menu to detect and no
+    // opening to attempt. Reported as its own shape rather than as a failure.
+    menuDetection: 'aria_role_container',
+    optionCandidates: 'aria_option_role',
+    ariaExpandedAfter: '',
+    scrollIterations: 1,
+  });
 }
 
 /**
@@ -139,14 +179,21 @@ export async function collectCustomOptions(
   searchText?: string,
 ): Promise<CollectedOptions> {
   const trigger = resolveTrigger(root);
-  const container = await openControl(trigger, searchText);
-  if (!container) return describe([], false, false, null);
+  const opening: OpenDiagnostics = {
+    openAttempted: false,
+    ariaExpandedAfter: '',
+    menuDetection: 'none',
+    optionCandidates: 'none',
+  };
+  const container = await openControl(trigger, searchText, opening);
+  if (!container) return describe([], false, false, null, opening);
 
   // What is rendered before any scrolling. The difference between this and the
   // full read is the evidence that scrolling was needed — reported rather than
   // assumed, so "the long list was scrolled" is an observation.
   const rendered = readOptions(container).length;
-  let live = await enumerateAllOptions(container);
+  const scrolling = { scrollIterations: 0 };
+  let live = await enumerateAllOptions(container, scrolling);
 
   if (live.length === 0) {
     // A menu that mounts empty and fills asynchronously. Waited for once, then
@@ -155,7 +202,7 @@ export async function collectCustomOptions(
       const current = findListbox(trigger) ?? container;
       return readOptions(current).length > 0 ? current : null;
     }, SETTLE_WAIT_MS);
-    if (filled) live = await enumerateAllOptions(filled);
+    if (filled) live = await enumerateAllOptions(filled, scrolling);
   }
 
   return describe(
@@ -163,6 +210,7 @@ export async function collectCustomOptions(
     true,
     live.length > rendered,
     findListbox(trigger) ?? container,
+    { ...opening, ...scrolling },
   );
 }
 

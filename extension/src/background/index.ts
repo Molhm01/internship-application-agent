@@ -101,7 +101,7 @@ import { ensureContentScript } from './contentScript.js';
 import { askEveryFrame, discoverFrames, tellEveryFrame, type FrameTarget } from './frames.js';
 import { asRepeatedSectionOutcome, runRepeaterAutofill } from './repeatersAcrossFrames.js';
 import { runDependencyResolution } from './dependenciesAcrossFrames.js';
-import { runDropdownAutofill } from './dropdownAcrossFrames.js';
+import { dropdownSeedsByFrame, runDropdownAutofill } from './dropdownAcrossFrames.js';
 import { mergeFrameScans, type FrameScan } from './mergeFrameScans.js';
 import { fillAcrossFrames } from './fillAcrossFrames.js';
 import { fillAccountForm } from './accountForm.js';
@@ -1881,7 +1881,7 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
        * no handler for either of its two messages. The engine was not broken.
        * It was never called.
        */
-      runDropdownStage: async () => {
+      runDropdownStage: async (scan, plannedAnswers) => {
         const [tab, profileResult, answersResult] = await Promise.all([
           activeApplicationTab(targetUrl).catch(() => null),
           getProfile(),
@@ -1896,6 +1896,21 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
           frames: await discoverFrames(tab.id, tab.url),
           runId: state.runId,
           profile,
+          // The authoritative scan, consumed rather than ignored.
+          //
+          // This argument was in the signature and unused: the stage discarded
+          // the scan it was handed and let each frame rediscover the page with
+          // `dropdownScanner`'s own selector list. That list does not recognise
+          // every employer's widget, and a control the scan classified as a
+          // dropdown but the walk did not reached the engine through neither
+          // route — State/Province, Employment Type, Education Type, Education
+          // Country, Education State, School, Area of Study and Graduated? on
+          // the live form all failed exactly this way. The walk still runs; it
+          // is simply no longer the only source.
+          seedsByFrame: dropdownSeedsByFrame(scan),
+          // What the planner already settled for the controls this stage took
+          // over. Consulted only where this pass's own resolver has nothing.
+          ...(plannedAnswers ? { plannedAnswers } : {}),
           approvedAnswers: [
             ...(bundle?.approvedAnswers ?? []),
             ...(answersResult.data?.answers ?? []),
@@ -1907,9 +1922,23 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
         });
         // Counts and outcomes only — never an answer. The one line that says
         // whether the pass reached the page at all.
+        // Counts and outcomes only — never an answer. The discovery split is
+        // here because it is the one number that says whether the seeding is
+        // doing anything: a control counted under `main_scan` is one the
+        // frame's own walk did not recognise and would have dropped.
         console.info('[agent] dropdown engine', {
           runId: state.runId,
           ...outcome.summary,
+          seeded: [...dropdownSeedsByFrame(scan).values()].reduce(
+            (total, seeds) => total + seeds.length,
+            0,
+          ),
+          fromMainScanOnly: outcome.results.filter(
+            (result) => result.discoverySource === 'main_scan',
+          ).length,
+          fromDropdownScanOnly: outcome.results.filter(
+            (result) => result.discoverySource === 'dropdown_scan',
+          ).length,
           unreachableFrames: outcome.unreachableFrames.length,
         });
         return outcome.results;
