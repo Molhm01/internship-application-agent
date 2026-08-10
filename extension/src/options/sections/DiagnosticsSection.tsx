@@ -10,7 +10,7 @@ import type {
   ProfileFieldStatus,
   RunTrace,
 } from '@internship-agent/shared';
-import { describeRunTrace } from '@internship-agent/shared';
+import { describeRepeaterSection, describeRunTrace } from '@internship-agent/shared';
 import { sendMessage, type ExtensionResponse } from '../../messaging/messages.js';
 import { loadSettings } from '../../storage/settings.js';
 import { BUILD_ID, BUILD_INFO } from '../../generated/buildInfo.js';
@@ -424,6 +424,29 @@ export function DiagnosticsSection(): JSX.Element {
                 <li key={line}>{line}</li>
               ))}
             </ul>
+            {/*
+              The Repeater Engine Trace.
+
+              Shown separately because it is the one part of a run that cannot
+              be read off the field list: a Work Experience block that was never
+              created has no field to appear as unanswered, so "you have one job
+              saved" and "this page's Add button was never pressed" produced
+              identical field-by-field exports. These lines are the difference,
+              and they carry indices and counts only — never an employer or a
+              school.
+            */}
+            {exported.trace.repeaters.length > 0 ? (
+              <>
+                <strong>Repeater Engine</strong>
+                <ul className="diagnostics-repeaters">
+                  {exported.trace.repeaters.map((section) => (
+                    <li key={`${section.type}:${section.frameId ?? 0}`}>
+                      {describeRepeaterSection(section)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
           </li>
         </ul>
       ) : null}

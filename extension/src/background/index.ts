@@ -98,6 +98,7 @@ import {
 } from '../storage/runState.js';
 import { ensureContentScript } from './contentScript.js';
 import { askEveryFrame, discoverFrames, tellEveryFrame, type FrameTarget } from './frames.js';
+import { asRepeatedSectionOutcome, runRepeaterAutofill } from './repeatersAcrossFrames.js';
 import { mergeFrameScans, type FrameScan } from './mergeFrameScans.js';
 import { fillAcrossFrames } from './fillAcrossFrames.js';
 import { fillAccountForm } from './accountForm.js';
@@ -1834,6 +1835,37 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
           // is the truthful reading: nothing observed those options arriving.
         }
         return { populated: [...populated], pending: [...pending] };
+      },
+      /**
+       * Presses each repeating section's Add control until the page holds one
+       * block per saved record.
+       *
+       * This dependency is why an applicant with three jobs used to submit one.
+       * The orchestrator has called it on the first pass since repeating
+       * sections were supported; this worker never passed it, so the optional
+       * chaining read `undefined`, the whole block was skipped without a
+       * warning, and every run filled whatever blocks the page happened to load
+       * with. The only caller that ever supplied it was a test — which passed,
+       * the entire time.
+       */
+      growRepeatedSections: async () => {
+        const [tab, profileResult] = await Promise.all([
+          activeApplicationTab(targetUrl).catch(() => null),
+          getProfile(),
+        ]);
+        // The bundle for *this* page when the tab named one, so two
+        // applications open in two tabs each grow from their own profile.
+        const bundle = tab?.url ? await bundleForUrl(tab.url).catch(() => null) : null;
+        const profile = bundle?.profile ?? profileResult.data?.profile;
+        if (!tab?.id || !profile) return [];
+
+        const outcome = await runRepeaterAutofill({
+          tabId: tab.id,
+          frames: await discoverFrames(tab.id, tab.url),
+          runId: state.runId,
+          profile,
+        });
+        return outcome.sections.map(asRepeatedSectionOutcome);
       },
       now: () => new Date().toISOString(),
     });

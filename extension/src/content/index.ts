@@ -20,7 +20,10 @@ import {
   attachToControlResponseSchema,
   discoverUploadControlsMessageSchema,
   uploadControlsResponseSchema,
+  runRepeaterAutofillMessageSchema,
+  repeaterRunCompleteSchema,
 } from '@internship-agent/shared';
+import { runRepeaterAutofill } from '../repeaters/repeaterEngine.js';
 import { attachInFrame, discoverInFrame } from '../uploads/frameUploads.js';
 import { BUILD_ID } from '../generated/buildInfo.js';
 import { activateNavigation } from './navigate.js';
@@ -320,6 +323,53 @@ function handleMessage(
         dependentOptionsResultSchema.parse({ type: 'DEPENDENT_OPTIONS_RESULT', ...outcome }),
       );
     });
+    return true;
+  }
+
+  /**
+   * Grow this frame's repeating sections to hold one block per saved record.
+   *
+   * The frame presses the page's own Add control and observes what the page
+   * does. It is told how many blocks are needed and what each record is called;
+   * it is never told anything else about the applicant, and it decides nothing
+   * about how many there should be.
+   */
+  if (raw?.type === 'RUN_REPEATER_AUTOFILL') {
+    const message = runRepeaterAutofillMessageSchema.parse(raw);
+    void runRepeaterAutofill({ document, directives: message.directives })
+      .then((sections) => {
+        sendResponse(
+          repeaterRunCompleteSchema.parse({
+            type: 'REPEATER_RUN_COMPLETE',
+            runId: message.runId,
+            sections,
+          }),
+        );
+      })
+      .catch((cause: unknown) => {
+        // A frame that threw still answers. Silence here is indistinguishable
+        // from a frame that has gone away, and the two need different responses.
+        sendResponse(
+          repeaterRunCompleteSchema.parse({
+            type: 'REPEATER_RUN_COMPLETE',
+            runId: message.runId,
+            sections: message.directives.map((directive) => ({
+              type: directive.kind,
+              profileRecords: directive.recordCount,
+              existingBlocksInitially: 0,
+              blocksNeeded: 0,
+              addControlFound: false,
+              addClicksAttempted: 0,
+              blocksCreated: 0,
+              blocksVerified: 0,
+              recordBindings: [],
+              errorCode: 'REPEATER_TIMEOUT' as const,
+              durationMs: 0,
+            })),
+          }),
+        );
+        console.warn('[agent] repeater pass failed in this frame', cause);
+      });
     return true;
   }
 

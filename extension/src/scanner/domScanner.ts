@@ -1062,7 +1062,13 @@ function semanticFromCanonical(
   return canonical === 'unknown' ? undefined : 'other';
 }
 
-function selectorFor(element: HTMLElement): string {
+/**
+ * A stable CSS path for a control, preferring whatever the page already names it
+ * by. Exported because the dropdown scanner records one per control for its own
+ * diagnostics — it is never sent to the worker and never used to reach a control
+ * the frame did not itself volunteer.
+ */
+export function selectorFor(element: HTMLElement): string {
   if (element.id) return `#${cssEscape(element.id)}`;
   const name = element.getAttribute('name');
   if (name) return `${element.tagName.toLowerCase()}[name="${cssEscape(name)}"]`;

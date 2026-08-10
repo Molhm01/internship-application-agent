@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatus.js';
 import { requiredSourceSchema } from './fields.js';
 import { dropdownTraceSchema } from './dropdownExecution.js';
+import { repeaterSectionTraceSchema } from './repeaterRun.js';
 
 /**
  * One autofill run, described in counts and outcomes only.
@@ -208,6 +209,21 @@ export const runTraceSchema = z
      * from the trace alone rather than only from an assertion inside the worker.
      */
     pendingAtCompletion: z.number().int().nonnegative().default(0),
+
+    /**
+     * The Repeater Engine Trace: one entry per repeating section the run saw.
+     *
+     * Separate from `fields` because it answers a question no per-field record
+     * can. A work history missing two jobs shows up in the field list as
+     * *nothing at all* — a block that was never created has no field to be
+     * reported as unanswered — so "you have one job saved" and "this page's Add
+     * button was never pressed" produced byte-identical traces. These counts are
+     * the difference.
+     *
+     * Sanitized by construction: record indices, block indices, counts, and
+     * error codes. No employer, no institution, no field value.
+     */
+    repeaters: z.array(repeaterSectionTraceSchema).max(12).default([]),
 
     stages: z.array(stageTraceSchema).max(200),
     fields: z.array(fieldTraceSchema).max(500),

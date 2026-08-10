@@ -37,6 +37,7 @@ import {
   type DropdownTrace,
   type RecordMapping,
   type RepeatedSectionKind,
+  type RepeaterSectionTrace,
   type FinalFieldOutcome,
   type FinalFieldStatus,
   type RequiredSource,
@@ -167,6 +168,16 @@ export interface RepeatedSectionOutcome {
   blocksAfter: number;
   addPressesPerformed: number;
   mappings: readonly RecordMapping[];
+  /**
+   * The Repeater Engine's own trace for this section, when the host has one.
+   *
+   * Optional because the outcome above is the orchestrator's vocabulary and has
+   * to stay answerable by a host that only knows how to press a button and
+   * count. The trace is the richer record — which Add control was found, how
+   * many clicks it took, which block each record was bound to and why — and it
+   * is what the diagnostics panel exports.
+   */
+  trace?: RepeaterSectionTrace;
 }
 
 export interface HighlightPlan {
@@ -1470,6 +1481,7 @@ export async function runApplicationAutofill(
         scanStartedAt,
         scanCompletedAt,
         pendingAtCompletion: stillPending.length,
+        repeatOutcomes,
       }),
     );
   }
@@ -1504,6 +1516,8 @@ function buildRunTrace(input: {
   scanStartedAt: string;
   scanCompletedAt: string;
   pendingAtCompletion: number;
+  /** What each repeating section did. Empty when the host cannot grow one. */
+  repeatOutcomes: readonly RepeatedSectionOutcome[];
 }): RunTrace {
   // Copied from the orchestrator's own record, never re-derived. Re-deriving is
   // how a trace comes to disagree with the report it describes, and a trace that
@@ -1590,6 +1604,12 @@ function buildRunTrace(input: {
     ).length,
     finalStatusCounts,
     pendingAtCompletion: input.pendingAtCompletion,
+    // Carried through from the host, never re-derived. A host that grew the
+    // sections reported exactly what it observed doing so, and re-computing it
+    // here from block counts would produce a second answer that can disagree.
+    repeaters: input.repeatOutcomes
+      .map((outcome) => outcome.trace)
+      .filter((trace): trace is RepeaterSectionTrace => trace !== undefined),
     stages: input.timings.map((entry) => ({
       stage: entry.stage,
       pass: entry.pass,

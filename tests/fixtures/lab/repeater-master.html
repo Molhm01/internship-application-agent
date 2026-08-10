@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Repeating sections — master fixture</title>
+  </head>
+  <body>
+    <!--
+      The shape the live application actually has.
+
+      One Work Experience block and a "+ Add" button. One Education block and a
+      "+ Add" button. Neither button names its own section — the section name is
+      in the heading above it — which is precisely what made them invisible to a
+      search that demanded the section be named in the control's own text.
+
+      Education carries a real dependency chain: Country populates State, State
+      populates School, and the two "If other" boxes only apply when their own
+      parent selects Other. Each block's chain is independent, so a fixture where
+      block 0's Country leaked into block 1's State would fail visibly.
+
+      The employer and school names are fictional. The submit button exists to be
+      *not* clicked.
+    -->
+    <h1>Application</h1>
+    <form id="application" onsubmit="return false;">
+      <section id="experienceSection">
+        <h2>Work Experience</h2>
+        <div id="experienceBlocks"></div>
+        <button type="button" id="addExperience">+ Add</button>
+      </section>
+
+      <section id="educationSection">
+        <h2>Education</h2>
+        <div id="educationBlocks"></div>
+        <button type="button" id="addEducation">+ Add</button>
+      </section>
+
+      <button type="submit" id="submit">Submit Application</button>
+    </form>
+
+    <script>
+      (function () {
+        function option(select, value, text) {
+          var element = document.createElement('option');
+          element.value = value;
+          element.textContent = text;
+          select.appendChild(element);
+        }
+
+        function fill(select, entries, prompt) {
+          select.innerHTML = '';
+          option(select, '', prompt);
+          for (var index = 0; index < entries.length; index += 1) {
+            option(select, entries[index], entries[index]);
+          }
+        }
+
+        var EMPLOYMENT_TYPES = [
+          'Full Time',
+          'Part Time',
+          'Internship',
+          'Contract',
+          'Temporary',
+          'Self-Employed',
+        ];
+        var LEAVING_REASONS = [
+          'Resigned',
+          'End of Contract',
+          'Internship Completed',
+          'Laid Off',
+          'Still Employed',
+        ];
+        var EDUCATION_TYPES = [
+          "Bachelor's Degree",
+          "Master's Degree",
+          'Doctorate',
+          'High School',
+          'Associate Degree',
+        ];
+        var COUNTRIES = ['United States', 'Canada', 'United Kingdom', 'Germany', 'India'];
+
+        /** State lists, produced only once a country is chosen. */
+        var STATES = {
+          'United States': ['California', 'Michigan', 'New Jersey', 'New York', 'Texas'],
+          Canada: ['Alberta', 'British Columbia', 'Ontario', 'Quebec'],
+          'United Kingdom': ['England', 'Scotland', 'Wales'],
+          Germany: ['Bavaria', 'Berlin', 'Hesse'],
+          India: ['Karnataka', 'Maharashtra', 'Tamil Nadu'],
+        };
+
+        /** Schools, produced only once a state is chosen. */
+        var SCHOOLS = {
+          Michigan: [
+            'Michigan State University',
+            'University of Michigan',
+            'Wayne State University',
+          ],
+          California: ['Stanford University', 'University of California, Berkeley'],
+          'New Jersey': ['Princeton University', 'Rutgers University'],
+          'New York': ['Columbia University', 'New York University'],
+          Texas: ['Rice University', 'University of Texas at Austin'],
+          Ontario: ['McMaster University', 'University of Toronto'],
+          Alberta: ['University of Alberta', 'University of Calgary'],
+          'British Columbia': ['University of British Columbia'],
+          Quebec: ['McGill University'],
+          England: ['Imperial College London', 'University of Oxford'],
+          Scotland: ['University of Edinburgh'],
+          Wales: ['Cardiff University'],
+          Bavaria: ['Technical University of Munich'],
+          Berlin: ['Humboldt University of Berlin'],
+          Hesse: ['Goethe University Frankfurt'],
+          Karnataka: ['Indian Institute of Science'],
+          Maharashtra: ['University of Mumbai'],
+          'Tamil Nadu': ['Anna University'],
+        };
+
+        var AREAS = [
+          'Computer Science',
+          'Electrical Engineering',
+          'Mechanical Engineering',
+          'Mathematics',
+          'Business Administration',
+          'Other',
+        ];
+
+        var experienceCount = 0;
+        var educationCount = 0;
+
+        function labelled(parent, id, text) {
+          var label = document.createElement('label');
+          label.setAttribute('for', id);
+          label.textContent = text;
+          parent.appendChild(label);
+        }
+
+        function textField(parent, id, name, text, type) {
+          labelled(parent, id, text);
+          var input = document.createElement('input');
+          input.id = id;
+          input.name = name;
+          input.type = type || 'text';
+          parent.appendChild(input);
+          return input;
+        }
+
+        function selectField(parent, id, name, text, entries, prompt) {
+          labelled(parent, id, text);
+          var select = document.createElement('select');
+          select.id = id;
+          select.name = name;
+          fill(select, entries, prompt || 'Select one');
+          parent.appendChild(select);
+          return select;
+        }
+
+        function addExperienceBlock() {
+          var index = experienceCount;
+          experienceCount += 1;
+
+          var block = document.createElement('fieldset');
+          block.className = 'experience-block';
+          block.dataset.block = 'experience-' + index;
+
+          textField(
+            block,
+            'exp-company-' + index,
+            'experience[' + index + '].company',
+            'Company Name',
+          );
+          textField(
+            block,
+            'exp-title-' + index,
+            'experience[' + index + '].title',
+            'Position Title',
+          );
+          textField(
+            block,
+            'exp-from-' + index,
+            'experience[' + index + '].from',
+            'From Date',
+            'month',
+          );
+          textField(block, 'exp-to-' + index, 'experience[' + index + '].to', 'End Date', 'month');
+          selectField(
+            block,
+            'exp-type-' + index,
+            'experience[' + index + '].type',
+            'Employment Type',
+            EMPLOYMENT_TYPES,
+          );
+          selectField(
+            block,
+            'exp-leaving-' + index,
+            'experience[' + index + '].leaving',
+            'Reason for Leaving',
+            LEAVING_REASONS,
+          );
+
+          document.getElementById('experienceBlocks').appendChild(block);
+        }
+
+        function addEducationBlock() {
+          var index = educationCount;
+          educationCount += 1;
+
+          var block = document.createElement('fieldset');
+          block.className = 'education-block';
+          block.dataset.block = 'education-' + index;
+
+          selectField(
+            block,
+            'edu-type-' + index,
+            'education[' + index + '].type',
+            'Education Type',
+            EDUCATION_TYPES,
+          );
+          var country = selectField(
+            block,
+            'edu-country-' + index,
+            'education[' + index + '].country',
+            'Education Country',
+            COUNTRIES,
+          );
+          var state = selectField(
+            block,
+            'edu-state-' + index,
+            'education[' + index + '].state',
+            'Education State/Province',
+            [],
+            'Select a country first',
+          );
+          var school = selectField(
+            block,
+            'edu-school-' + index,
+            'education[' + index + '].school',
+            'School/Institution',
+            [],
+            'Select a state first',
+          );
+          var area = selectField(
+            block,
+            'edu-area-' + index,
+            'education[' + index + '].area',
+            'Area of Study',
+            AREAS,
+          );
+          selectField(
+            block,
+            'edu-graduated-' + index,
+            'education[' + index + '].graduated',
+            'Graduated?',
+            ['Yes', 'No'],
+          );
+          textField(
+            block,
+            'edu-other-school-' + index,
+            'education[' + index + '].otherSchool',
+            'If other, enter School/Institution Name',
+          );
+          textField(
+            block,
+            'edu-other-area-' + index,
+            'education[' + index + '].otherArea',
+            'If other, enter Area of Study',
+          );
+
+          // Each block's chain is wired to its own controls. Nothing here reads
+          // or writes another block's selects, which is what keeps education[0]
+          // and education[1] independent.
+          country.addEventListener('change', function () {
+            fill(state, STATES[country.value] || [], 'Select a country first');
+            fill(school, [], 'Select a state first');
+          });
+          state.addEventListener('change', function () {
+            var options = (SCHOOLS[state.value] || []).slice();
+            options.push('Other');
+            fill(school, options, 'Select a state first');
+          });
+
+          document.getElementById('educationBlocks').appendChild(block);
+        }
+
+        document.getElementById('addExperience').addEventListener('click', addExperienceBlock);
+        document.getElementById('addEducation').addEventListener('click', addEducationBlock);
+
+        // The page loads holding exactly one of each, which is the state the
+        // live application is in when the applicant arrives.
+        addExperienceBlock();
+        addEducationBlock();
+      })();
+    </script>
+  </body>
+</html>

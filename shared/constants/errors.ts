@@ -164,6 +164,28 @@ export const ERROR_CODES = [
   'MFA_DETECTED',
   'FINAL_SUBMISSION_STAGE',
   'MAX_ITERATIONS_REACHED',
+  /**
+   * Repeating sections — Work Experience, Education, Projects — and the Add
+   * control that grows them.
+   *
+   * Ten codes rather than one, because "this page has no Education section",
+   * "the Add button could not be found", "Add was pressed and nothing appeared"
+   * and "an existing block already holds something the applicant typed" are four
+   * completely different situations with four different remedies, and every one
+   * of them used to surface as the same red "Autofill failed" — or, worse, as
+   * nothing at all, because a block that was never created has no field to be
+   * reported as unanswered.
+   */
+  'REPEATER_SECTION_NOT_FOUND',
+  'REPEATER_ADD_NOT_FOUND',
+  'REPEATER_ADD_CLICK_FAILED',
+  'REPEATER_BLOCK_NOT_CREATED',
+  'REPEATER_BLOCK_COUNT_UNCHANGED',
+  'REPEATER_BLOCK_BIND_FAILED',
+  'REPEATER_RECORD_COUNT_MISMATCH',
+  'REPEATER_DUPLICATE_BLOCK',
+  'REPEATER_BINDING_REQUIRES_REVIEW',
+  'REPEATER_TIMEOUT',
   // Website → extension application-bundle handoff.
   'BUNDLE_MISSING',
   'BUNDLE_REJECTED',
@@ -363,6 +385,26 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'This is the final submission step. Review every answer and submit it yourself.',
   MAX_ITERATIONS_REACHED:
     'The form kept revealing new questions. Run autofill again to continue from where it stopped.',
+  REPEATER_SECTION_NOT_FOUND:
+    'This application has no section for these saved records, so none of them were entered. Add them yourself if the form expects them elsewhere.',
+  REPEATER_ADD_NOT_FOUND:
+    'This section has more saved records than blocks, and no Add control could be identified. Press Add yourself for each extra record, then run autofill again.',
+  REPEATER_ADD_CLICK_FAILED:
+    'The Add control would not accept a click. Press it yourself once per missing record, then run autofill again.',
+  REPEATER_BLOCK_NOT_CREATED:
+    'Add was pressed and the page never showed a new block. Add the section yourself, then run autofill again to fill it.',
+  REPEATER_BLOCK_COUNT_UNCHANGED:
+    'The page reported the same number of blocks after Add as before it. Add the remaining entries yourself, then run autofill again.',
+  REPEATER_BLOCK_BIND_FAILED:
+    'A block on this page could not be matched to one of your saved records, so it was left untouched. Fill it yourself.',
+  REPEATER_RECORD_COUNT_MISMATCH:
+    'The page ended up with a different number of blocks than you have saved records. Check the section and correct it before submitting.',
+  REPEATER_DUPLICATE_BLOCK:
+    'Pressing Add produced more than one block, so a duplicate was left empty rather than filled twice. Delete the extra block yourself.',
+  REPEATER_BINDING_REQUIRES_REVIEW:
+    'A block already contains something you typed that does not match the saved record for that position. It was left exactly as it is — check it yourself.',
+  REPEATER_TIMEOUT:
+    'The page did not finish adding a block in time. Add the remaining entries yourself, then run autofill again.',
   BUNDLE_MISSING:
     'Open the job on Internship Pilot and click "Apply with Application Agent" to send the tailored documents to the extension.',
   BUNDLE_REJECTED:

@@ -4,6 +4,7 @@ import { applicationScanResultSchema, scanProgressSchema } from './scan.js';
 import { deterministicFillPlanSchema, fillProgressSchema, fillRunReportSchema } from './fill.js';
 import { fieldValueSchema } from './fields.js';
 import { documentContentResponseSchema } from './documents.js';
+import { repeaterDirectiveSchema, repeaterSectionTraceSchema } from './repeaterRun.js';
 import {
   answerGenerationRecordSchema,
   answerGenerationStateSchema,
@@ -142,6 +143,33 @@ export const dependentOptionsResultSchema = z.object({
 });
 export type AwaitDependentOptionsMessage = z.infer<typeof awaitDependentOptionsMessageSchema>;
 export type DependentOptionsResult = z.infer<typeof dependentOptionsResultSchema>;
+
+/**
+ * Grow every repeating section in this frame to hold one block per saved record.
+ *
+ * Sent to every frame on the first pass. A frame with no Work Experience section
+ * answers with a trace saying exactly that, rather than with silence — "this
+ * page has no education section" and "this frame never replied" are different
+ * facts and only one of them is a problem.
+ *
+ * The directive carries counts and anchor values only. The frame presses the
+ * page's own Add control and observes what the page does; it never decides how
+ * many blocks there should be, because that is a fact about the applicant.
+ */
+export const runRepeaterAutofillMessageSchema = z.object({
+  type: z.literal('RUN_REPEATER_AUTOFILL'),
+  runId: z.string().min(1).max(120),
+  directives: z.array(repeaterDirectiveSchema).max(12),
+});
+
+export const repeaterRunCompleteSchema = z.object({
+  type: z.literal('REPEATER_RUN_COMPLETE'),
+  runId: z.string().min(1).max(120),
+  sections: z.array(repeaterSectionTraceSchema).max(12),
+});
+
+export type RunRepeaterAutofillMessage = z.infer<typeof runRepeaterAutofillMessageSchema>;
+export type RepeaterRunComplete = z.infer<typeof repeaterRunCompleteSchema>;
 
 export const fillProgressMessageSchema = z.object({
   type: z.literal('FILL_PROGRESS'),

@@ -21,6 +21,7 @@ import type {
   ProfileUpdate,
   SavedDocument,
   DocumentExtraction,
+  RepeaterDirective,
   ScanApplicationResponse,
   ScanMessage,
   GetLastScanResponse,
@@ -154,6 +155,13 @@ export type ExtensionMessage =
    * neither open a control nor write to one.
    */
   | { type: 'AWAIT_DEPENDENT_OPTIONS'; selectors: readonly string[]; timeoutMs?: number }
+  /**
+   * Grows this frame's repeating sections to hold one block per saved record.
+   * Carries counts and the employer/institution names that identify a record,
+   * so a block the applicant already filled by hand is recognised rather than
+   * overwritten. Sent to every frame; a frame with no such section says so.
+   */
+  | { type: 'RUN_REPEATER_AUTOFILL'; runId: string; directives: readonly RepeaterDirective[] }
   | { type: 'FOCUS_REVIEW_FIELD'; fieldId: string }
   | { type: 'CLEAR_REVIEW_HIGHLIGHTS' }
   | { type: 'PROFILE_GET' }
