@@ -6,6 +6,7 @@ import { fieldValueSchema } from './fields.js';
 import { documentContentResponseSchema } from './documents.js';
 import { repeaterDirectiveSchema, repeaterSectionTraceSchema } from './repeaterRun.js';
 import { dependencyDirectiveSchema, dependencyTraceSchema } from './dependencyRun.js';
+import { dropdownDirectiveSchema } from './dropdownRun.js';
 import {
   answerGenerationRecordSchema,
   answerGenerationStateSchema,
@@ -195,6 +196,34 @@ export const dependencyRunCompleteSchema = z.object({
 
 export type RunDependencyResolutionMessage = z.infer<typeof runDependencyResolutionMessageSchema>;
 export type DependencyRunComplete = z.infer<typeof dependencyRunCompleteSchema>;
+
+/**
+ * The two halves of the Dropdown Engine pass, addressed to one frame.
+ *
+ * Discovery carries nothing but a run id: the frame answers with descriptors of
+ * the option controls it holds, having opened none of them. The drive carries
+ * directives the worker resolved from saved facts, each naming a control by a
+ * handle *that frame itself minted* — never a selector the worker invented, so a
+ * control discovered in one frame can never be driven in another.
+ *
+ * These messages are the wiring that was missing. Every part of the engine
+ * existed — the worker pass, the frame executor, the schemas above — and no
+ * message type joined them, so the pass was unreachable from the button and the
+ * frame had nothing to answer even if it had been called.
+ */
+export const discoverDropdownsMessageSchema = z.object({
+  type: z.literal('DISCOVER_DROPDOWNS'),
+  runId: z.string().min(1).max(120),
+});
+
+export const runDropdownDirectivesMessageSchema = z.object({
+  type: z.literal('RUN_DROPDOWN_DIRECTIVES'),
+  runId: z.string().min(1).max(120),
+  directives: z.array(dropdownDirectiveSchema).max(400),
+});
+
+export type DiscoverDropdownsMessage = z.infer<typeof discoverDropdownsMessageSchema>;
+export type RunDropdownDirectivesMessage = z.infer<typeof runDropdownDirectivesMessageSchema>;
 
 export const fillProgressMessageSchema = z.object({
   type: z.literal('FILL_PROGRESS'),

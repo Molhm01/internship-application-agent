@@ -141,6 +141,7 @@ describe('every phase maps onto exactly one run state', () => {
     ['scanning', 'SCANNING'],
     ['rescanning', 'SCANNING'],
     ['normalizing', 'NORMALIZING'],
+    ['filling_dropdowns', 'PROCESSING_DROPDOWNS'],
     ['rescanning_dependencies', 'RESCANNING_DEPENDENCIES'],
     ['discovering_options', 'RESOLVING_DETERMINISTIC'],
     ['resolving', 'RESOLVING_DETERMINISTIC'],
@@ -173,6 +174,10 @@ describe('every phase maps onto exactly one run state', () => {
       'ANALYZING_AI',
       'EXECUTING_AI',
       'VERIFYING_AI',
+      // The Dropdown Engine pass. A run is still working while it holds this
+      // state, which is what stops the popup showing a summary over menus that
+      // are still being opened.
+      'PROCESSING_DROPDOWNS',
       'RESCANNING_DEPENDENCIES',
       'WAITING_FOR_USER',
       'COMPLETED',

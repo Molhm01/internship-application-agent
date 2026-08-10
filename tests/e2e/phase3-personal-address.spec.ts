@@ -85,6 +85,8 @@ const PROFILE = {
 };
 
 interface Report {
+  /** The run's own id, so a stored report can be told from a *newer* one. */
+  id: string;
   status: string;
   url: string;
   submissionPrevented: boolean;
@@ -233,6 +235,19 @@ let aiRequests = -1;
  * popup shows a summary only for the page its bundle names, and the combined
  * phone variant is deliberately a second page.
  */
+/**
+ * Report ids this suite has already accepted.
+ *
+ * Without this, a second run over the same page returns instantly with the
+ * *first* run's report — it is stored, terminal, and for the right URL — and
+ * the suite then navigates away while the second run is still driving the page.
+ * The run it interrupts finishes reporting fields it never reached, which is
+ * both a false report and a failure that has nothing to do with the code under
+ * test. Waiting for a report the suite has not seen before is what makes each
+ * `autofill()` mean "this run finished".
+ */
+const consumedReportIds = new Set<string>();
+
 async function autofill(page: Page, firstFilledSelector: string, url: string): Promise<Report> {
   const button = popup.getByRole('button', { name: 'Autofill Application' });
   await expect(button).toBeEnabled({ timeout: 20_000 });
@@ -250,7 +265,13 @@ async function autofill(page: Page, firstFilledSelector: string, url: string): P
     const { report: current } = await message<{ report?: Report }>(evidencePage, {
       type: 'GET_AUTOFILL_REPORT',
     });
-    if (current && current.url === url && TERMINAL.includes(current.status)) {
+    if (
+      current &&
+      current.url === url &&
+      TERMINAL.includes(current.status) &&
+      !consumedReportIds.has(current.id)
+    ) {
+      consumedReportIds.add(current.id);
       produced = current;
       break;
     }

@@ -22,6 +22,7 @@ import type {
   SavedDocument,
   DocumentExtraction,
   DependencyDirective,
+  DropdownDirective,
   RepeaterDirective,
   ScanApplicationResponse,
   ScanMessage,
@@ -173,6 +174,19 @@ export type ExtensionMessage =
       runId: string;
       directives: readonly DependencyDirective[];
     }
+  /**
+   * Asks this frame which option controls it holds. Read-only: the frame
+   * describes every menu it can see and opens none of them, so a page that has
+   * only been discovered looks to the applicant exactly as it did before.
+   */
+  | { type: 'DISCOVER_DROPDOWNS'; runId: string }
+  /**
+   * Drives the option controls this frame described, one after another, in the
+   * order the worker resolved them — parents before the controls that depend on
+   * them. Each directive names a control by the handle this frame itself
+   * minted, never by a selector the worker invented.
+   */
+  | { type: 'RUN_DROPDOWN_DIRECTIVES'; runId: string; directives: readonly DropdownDirective[] }
   | { type: 'FOCUS_REVIEW_FIELD'; fieldId: string }
   | { type: 'CLEAR_REVIEW_HIGHLIGHTS' }
   | { type: 'PROFILE_GET' }

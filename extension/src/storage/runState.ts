@@ -59,6 +59,8 @@ export const AUTOFILL_RUN_STATES = [
   'ANALYZING_AI',
   'EXECUTING_AI',
   'VERIFYING_AI',
+  /** The Dropdown Engine pass: every option control on the page, one by one. */
+  'PROCESSING_DROPDOWNS',
   /** Re-reading a control whose choices another field had to produce first. */
   'RESCANNING_DEPENDENCIES',
   'WAITING_FOR_USER',
@@ -79,6 +81,7 @@ const ACTIVE_STATES: readonly AutofillRunPhaseState[] = [
   'ANALYZING_AI',
   'EXECUTING_AI',
   'VERIFYING_AI',
+  'PROCESSING_DROPDOWNS',
   'RESCANNING_DEPENDENCIES',
 ];
 
@@ -91,6 +94,8 @@ export function stateForPhase(phase: AutofillProgress['phase']): AutofillRunPhas
       return 'SCANNING';
     case 'normalizing':
       return 'NORMALIZING';
+    case 'filling_dropdowns':
+      return 'PROCESSING_DROPDOWNS';
     case 'rescanning_dependencies':
       return 'RESCANNING_DEPENDENCIES';
     case 'discovering_options':

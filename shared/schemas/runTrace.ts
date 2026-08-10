@@ -137,6 +137,25 @@ export const fieldTraceSchema = z
      * on this form", which were one red badge between them.
      */
     dropdown: dropdownTraceSchema.optional(),
+    /**
+     * Whether the Dropdown Engine produced a directive for this control.
+     *
+     * This is the claim the whole wiring repair turns on, and it is deliberately
+     * separate from every other flag here: an engine that exists, builds, and is
+     * covered by tests can still be unreachable from the button the user
+     * presses, and from outside that is indistinguishable from an engine that
+     * ran and found nothing. `false` on a control the page plainly offers means
+     * the pass never reached it.
+     */
+    dropdownEngineCalled: z.boolean().default(false),
+    /**
+     * Whether the in-page dropdown executor was actually invoked on it.
+     *
+     * "The engine returned a plan" and "the DOM was driven" are different
+     * claims. This one is the second, observed in the frame that owns the
+     * control rather than inferred in the worker that asked for it.
+     */
+    dropdownExecutorCalled: z.boolean().default(false),
     /** How long this field spent in the executor, when it reached one. */
     durationMs: z.number().nonnegative().max(600_000).optional(),
   })
@@ -155,6 +174,51 @@ export const stageTraceSchema = z
   .strict();
 
 export type StageTrace = z.infer<typeof stageTraceSchema>;
+
+/**
+ * The markers a run emits as each engine is entered and left.
+ *
+ * These exist to answer one question that no other record here can: *was this
+ * engine invoked by the button the user pressed?* A per-field trace cannot
+ * answer it, because a field the engine never reached and a field the engine
+ * reached and could not settle both end up as an unfilled control. A marker
+ * pair is the proof that the orchestrator called the engine and waited for it.
+ *
+ * Counts and durations only. `count` is fields, directives, or edges depending
+ * on the engine, and nothing here can hold a value.
+ */
+export const ENGINE_MARKERS = [
+  'AUTOFILL_ORCHESTRATOR_STARTED',
+  'TEXT_STAGE_STARTED',
+  'TEXT_STAGE_FINISHED',
+  'DROPDOWN_ENGINE_STARTED',
+  'DROPDOWN_ENGINE_FINISHED',
+  'DEPENDENCY_ENGINE_STARTED',
+  'DEPENDENCY_ENGINE_FINISHED',
+  'REPEATER_ENGINE_STARTED',
+  'REPEATER_ENGINE_FINISHED',
+  'FINAL_AUDIT_STARTED',
+  'FINAL_AUDIT_FINISHED',
+  'RUN_COMPLETED',
+] as const;
+
+export type EngineMarker = (typeof ENGINE_MARKERS)[number];
+
+export const engineInvocationSchema = z
+  .object({
+    marker: z.enum(ENGINE_MARKERS),
+    runId: z.string().max(200),
+    buildId: z.string().max(120),
+    /** Which pass of the loop emitted it. 0 for run-level markers. */
+    pass: z.number().int().nonnegative(),
+    /** Zero on a STARTED marker; the stage's own elapsed time on a FINISHED. */
+    durationMs: z.number().nonnegative().max(600_000),
+    /** Fields, directives, edges, or results — whatever the stage counted. */
+    count: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type EngineInvocation = z.infer<typeof engineInvocationSchema>;
 
 export const runTraceSchema = z
   .object({
@@ -240,6 +304,16 @@ export const runTraceSchema = z
      * booleans and error codes. No option texts, and no answers.
      */
     dependencies: z.array(dependencyTraceSchema).max(120).default([]),
+
+    /**
+     * Every engine entered and left, in the order the run entered them.
+     *
+     * The record that makes "the Dropdown Engine is wired into the button"
+     * checkable from a finished run rather than from reading imports. A run
+     * whose markers hold a STARTED without its FINISHED did not wait for that
+     * engine, and the completion assertion refuses to produce one.
+     */
+    engineInvocations: z.array(engineInvocationSchema).max(200).default([]),
 
     stages: z.array(stageTraceSchema).max(200),
     fields: z.array(fieldTraceSchema).max(500),

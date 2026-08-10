@@ -278,6 +278,10 @@ export async function runOneDropdown(directive: DropdownDirective): Promise<Drop
       finalStatus: 'FAILED_EXECUTION',
       reason: 'The attempt produced no outcome.',
       durationMs: Math.round(performance.now() - started),
+      // Every path through this function ran here, in the frame that owns the
+      // control. The worker's own placeholder for a frame that never answered
+      // leaves this false, which is what tells the two apart.
+      executorInvoked: true,
       ...patch,
     });
 

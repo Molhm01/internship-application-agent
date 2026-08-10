@@ -102,6 +102,15 @@ export const autofillPhaseSchema = z.enum([
   'filling_ai',
   'verifying_ai',
   'rescanning',
+  /**
+   * The Dropdown Engine pass, driving every option control on the page.
+   *
+   * Named separately from `filling` because it is a separate stage with a
+   * separate failure mode, and because the popup must not be able to show a
+   * finished run while it is still going. A run whose summary appeared while
+   * nine menus were still being opened is what made the engine look absent.
+   */
+  'filling_dropdowns',
   'rescanning_dependencies',
   'completed',
   'completed_with_review',
@@ -126,6 +135,7 @@ export const AUTOFILL_PHASE_LABELS: Record<AutofillPhase, string> = {
   filling_ai: 'Filling analyzed answers',
   verifying_ai: 'Verifying analyzed answers',
   rescanning: 'Rescanning dynamic fields',
+  filling_dropdowns: 'Processing dropdown menus',
   rescanning_dependencies: 'Reading choices the page just produced',
   completed: 'Autofill complete',
   completed_with_review: 'Autofill complete — some fields need review',

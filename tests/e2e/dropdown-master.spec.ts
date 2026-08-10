@@ -228,16 +228,39 @@ interface FieldTrace {
     matchMethod: string;
     failureCode?: string;
   };
+  /** The Dropdown Engine produced a directive for this control. */
+  dropdownEngineCalled?: boolean;
+  /** The in-page dropdown executor actually ran on it. */
+  dropdownExecutorCalled?: boolean;
+}
+
+interface EngineInvocation {
+  marker: string;
+  pass: number;
+  durationMs: number;
+  count: number;
 }
 
 interface RunTrace {
   buildId: string;
   fields: FieldTrace[];
+  engineInvocations: EngineInvocation[];
   totalDurationMs: number;
 }
 
-/** The five stages one control passed, or stopped at. */
+/** The stages one control passed, or stopped at. */
 interface Stages {
+  /**
+   * The two stages that come before the other five.
+   *
+   * They exist because the five below could all read false for two completely
+   * different reasons: an engine that ran and could not drive the control, and
+   * an engine the production run never called at all. The second is what was
+   * actually happening — the pass was unreachable from the button — and no
+   * amount of repair to the engine could have shown up in a stage record.
+   */
+  engineCalled: boolean;
+  executorCalled: boolean;
   opened: boolean;
   optionsFound: boolean;
   targetFound: boolean;
@@ -420,6 +443,8 @@ test.beforeAll(async () => {
     const dropdown = record?.dropdown;
     const verified = observed.trim() === control.expected;
     stages[control.name] = {
+      engineCalled: record?.dropdownEngineCalled === true,
+      executorCalled: record?.dropdownExecutorCalled === true,
       // A native select has its choices in the DOM already, so "opened" for it
       // is "its option list was read". For everything else the option count is
       // evidence the menu actually came up.
@@ -468,6 +493,10 @@ test.describe('every dropdown shape reaches the page', () => {
     test(`${control.name} opens, offers options, matches, selects and verifies`, () => {
       const stage = evidence.stages[control.name]!;
       const detail = `kind=${stage.kind} frame=${stage.frameId} options=${stage.optionCount} failure=${stage.failureCode} observed="${stage.observed}"`;
+      // Wiring first. A control that fails these two failed before any engine
+      // logic was reached, and repairing the engine cannot help it.
+      expect(stage.engineCalled, `ENGINE_CALLED — ${detail}`).toBe(true);
+      expect(stage.executorCalled, `EXECUTOR_CALLED — ${detail}`).toBe(true);
       expect(stage.opened, `OPENED — ${detail}`).toBe(true);
       expect(stage.optionsFound, `OPTIONS_FOUND — ${detail}`).toBe(true);
       expect(stage.targetFound, `TARGET_FOUND — ${detail}`).toBe(true);
@@ -475,6 +504,41 @@ test.describe('every dropdown shape reaches the page', () => {
       expect(stage.verified, `VERIFIED — ${detail}`).toBe(true);
     });
   }
+});
+
+test.describe('the production run reached the engines and waited for them', () => {
+  test('marks the Dropdown Engine started and finished', () => {
+    const markers = evidence.trace.engineInvocations.map((entry) => entry.marker);
+    expect(markers, 'the run never entered the Dropdown Engine').toContain(
+      'DROPDOWN_ENGINE_STARTED',
+    );
+    expect(markers, 'the run never waited for the Dropdown Engine').toContain(
+      'DROPDOWN_ENGINE_FINISHED',
+    );
+  });
+
+  test('marks the Dependency Engine started and finished', () => {
+    const markers = evidence.trace.engineInvocations.map((entry) => entry.marker);
+    expect(markers).toContain('DEPENDENCY_ENGINE_STARTED');
+    expect(markers).toContain('DEPENDENCY_ENGINE_FINISHED');
+  });
+
+  test('finishes both engines before the final audit begins', () => {
+    const markers = evidence.trace.engineInvocations.map((entry) => entry.marker);
+    const audit = markers.indexOf('FINAL_AUDIT_STARTED');
+    expect(audit).toBeGreaterThan(-1);
+    expect(markers.lastIndexOf('DROPDOWN_ENGINE_FINISHED')).toBeLessThan(audit);
+    expect(markers.lastIndexOf('DEPENDENCY_ENGINE_FINISHED')).toBeLessThan(audit);
+    expect(markers.at(-1)).toBe('RUN_COMPLETED');
+  });
+
+  test('drove at least one control per dropdown pass', () => {
+    const finished = evidence.trace.engineInvocations.filter(
+      (entry) => entry.marker === 'DROPDOWN_ENGINE_FINISHED',
+    );
+    expect(finished.length).toBeGreaterThan(0);
+    expect(finished[0]!.count, 'the pass discovered no controls at all').toBeGreaterThan(0);
+  });
 });
 
 test.describe('the widget shapes each control actually was', () => {

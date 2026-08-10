@@ -56,6 +56,7 @@ const RUN_STATE_LABELS: Record<AutofillRunPhaseState, string> = {
   ANALYZING_AI: 'Analyzing custom questions…',
   EXECUTING_AI: 'Filling analyzed answers…',
   VERIFYING_AI: 'Verifying analyzed answers…',
+  PROCESSING_DROPDOWNS: 'Processing dropdown menus…',
   RESCANNING_DEPENDENCIES: 'Reading choices the page just produced…',
   WAITING_FOR_USER: 'Waiting for your answers',
   COMPLETED: 'Autofill complete',

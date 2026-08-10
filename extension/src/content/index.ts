@@ -24,9 +24,16 @@ import {
   repeaterRunCompleteSchema,
   runDependencyResolutionMessageSchema,
   dependencyRunCompleteSchema,
+  discoverDropdownsMessageSchema,
+  runDropdownDirectivesMessageSchema,
+  dropdownsDiscoveredSchema,
+  dropdownDirectivesCompleteSchema,
+  dropdownRunResultSchema,
 } from '@internship-agent/shared';
 import { runRepeaterAutofill } from '../repeaters/repeaterEngine.js';
 import { runDependencyResolution } from '../dependencies/dependencyEngine.js';
+import { runDropdownDirectives } from '../dropdown/dropdownEngine.js';
+import { resetDropdownRegistry, scanDropdowns } from '../dropdown/dropdownScanner.js';
 import { attachInFrame, discoverInFrame } from '../uploads/frameUploads.js';
 import { BUILD_ID } from '../generated/buildInfo.js';
 import { activateNavigation } from './navigate.js';
@@ -412,6 +419,74 @@ function handleMessage(
           }),
         );
         console.warn('[agent] dependency pass failed in this frame', cause);
+      });
+    return true;
+  }
+
+  /**
+   * Describe every option control in this frame, touching none of them.
+   *
+   * The registry is cleared first, so a handle minted for an earlier run against
+   * a page that has since re-rendered cannot resolve to anything. Each handle is
+   * this frame's own; the worker stamps the frame id, because a frame cannot
+   * learn its own and a control discovered here must never be driven elsewhere.
+   */
+  if (raw?.type === 'DISCOVER_DROPDOWNS') {
+    discoverDropdownsMessageSchema.parse(raw);
+    resetDropdownRegistry();
+    const found = scanDropdowns(document);
+    sendResponse(
+      dropdownsDiscoveredSchema.parse({
+        dropdowns: found.map((entry) => entry.descriptor),
+      }),
+    );
+    return false;
+  }
+
+  /**
+   * Drive the controls this frame described, in the order they were given.
+   *
+   * The worker decided what each question means and what the answer is; this
+   * side opens, enumerates, matches against what is actually offered, selects,
+   * and verifies against the control's own state. Every directive comes back
+   * with a result — a control that threw, timed out, or left the page mid-drive
+   * is a named outcome, never an absence.
+   */
+  if (raw?.type === 'RUN_DROPDOWN_DIRECTIVES') {
+    const message = runDropdownDirectivesMessageSchema.parse(raw);
+    void runDropdownDirectives(message.directives)
+      .then((results) => {
+        sendResponse(dropdownDirectivesCompleteSchema.parse({ results }));
+      })
+      .catch((cause: unknown) => {
+        // A frame that threw still answers. Silence here is indistinguishable
+        // from a frame that has gone away, and the two need different responses.
+        sendResponse(
+          dropdownDirectivesCompleteSchema.parse({
+            results: message.directives.map((directive) =>
+              dropdownRunResultSchema.parse({
+                dropdownId: directive.dropdownId,
+                frameId: 0,
+                question: '',
+                selector: '',
+                canonicalQuestion: directive.canonicalQuestion,
+                controlStrategy: 'unknown',
+                intendedAnswerSource: directive.intendedAnswerSource,
+                intendedAnswerResolved: directive.intendedAnswer.trim().length > 0,
+                optionsFound: 0,
+                opened: false,
+                scrolled: false,
+                selected: false,
+                verified: false,
+                finalStatus: 'FAILED_EXECUTION',
+                errorCode: 'OPTION_CLICK_FAILED',
+                reason: 'The dropdown pass threw in this frame before this control was driven.',
+                durationMs: 0,
+              }),
+            ),
+          }),
+        );
+        console.warn('[agent] dropdown pass failed in this frame', cause);
       });
     return true;
   }

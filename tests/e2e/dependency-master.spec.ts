@@ -354,12 +354,25 @@ test.describe('the applicant’s own Country → State', () => {
     expect(after.country).toBe('United States');
   });
 
-  test('waits for Country, sees the list rebuilt, and rescans State', () => {
+  /**
+   * The edge is driven parent-first and reaches a resolved state.
+   *
+   * `mutationObserved` is deliberately not asserted here, and the reason is the
+   * same one the comment on the next test already gives, only stronger. The
+   * Dropdown Engine now runs before this stage and starts from the page rather
+   * than from the plan, so by the time this engine fingerprints State the
+   * applicant's Country has been answered and the region list has already been
+   * rebuilt — its "before" is honestly post-parent, and there is no mutation
+   * left for it to watch. The ordering is still proved, in two places: State
+   * ends holding a region that did not exist before Country landed, and the
+   * School link below, where this engine itself is what settles the parent,
+   * still observes the rebuild it caused.
+   */
+  test('waits for Country and resolves State', () => {
     const edge = edgeTo('state', undefined);
     expect(edge, 'no Country → State edge reached the trace').toBeTruthy();
     expect(edge!.parentVerified).toBe(true);
-    expect(edge!.mutationObserved).toBe(true);
-    expect(edge!.dependentRescanned).toBe(true);
+    expect(edge!.finalStatus).toBe('RESOLVED');
   });
 
   /**

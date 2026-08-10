@@ -635,6 +635,7 @@ describe('what a diagnostic is allowed to say', () => {
     durationMs: 12,
     availableOptions: [],
     mayHaveEnabledDependents: true,
+    executorInvoked: true,
     ...overrides,
   });
 

@@ -42,6 +42,10 @@ import {
   type FinalFieldOutcome,
   type FinalFieldStatus,
   type RequiredSource,
+  type DropdownRunResult,
+  type EngineInvocation,
+  type EngineMarker,
+  engineInvocationSchema,
 } from '@internship-agent/shared';
 import { finalizePendingResult, pendingResults } from '@internship-agent/shared';
 import { decideApproval, type ApprovalDecision } from './approvalPolicy.js';
@@ -168,6 +172,24 @@ export interface AutofillDependencies {
    * State control the page had not been asked to populate yet.
    */
   resolveDependencies?(scan: ApplicationScanResult): Promise<DependencyTrace[]>;
+  /**
+   * Drives every option control the *page* offers, rather than every option
+   * control the planner happened to produce an action for.
+   *
+   * This is the Dropdown Engine, and it is a separate stage on purpose. The
+   * ordinary pipeline reaches a menu only if the scan classified the control,
+   * the classifier recognised the question, and the matcher produced a value —
+   * and a control that falls out at any of those three steps does not fail, it
+   * *disappears*, which is exactly how a form full of dropdowns came back
+   * reading "No Selection" with nothing in the report to say why.
+   *
+   * Optional, like every other engine here, and for the same reason: a host
+   * that cannot reach a page must not have to fabricate a pass. But a host that
+   * omits it fills only the menus the planner found, which is the behaviour
+   * this stage exists to replace — so `verify-engine-wiring` fails a production
+   * worker that does not supply it.
+   */
+  runDropdownStage?(scan: ApplicationScanResult): Promise<readonly DropdownRunResult[]>;
   now(): string;
 }
 
@@ -390,6 +412,10 @@ export interface FieldDiagnostic {
   failureCode?: string;
   /** The dropdown stage record, when this field drove one. Values stripped. */
   dropdown?: DropdownTrace;
+  /** Whether the Dropdown Engine produced a directive for this control. */
+  dropdownEngineCalled: boolean;
+  /** Whether the in-page dropdown executor actually ran on it. */
+  dropdownExecutorCalled: boolean;
   durationMs?: number;
 }
 
@@ -523,6 +549,14 @@ export async function runApplicationAutofill(
    * fill can look like a working one.
    */
   const preexisting = new Map<string, string>();
+  /**
+   * The fields the very first scan saw, before anything had been driven.
+   *
+   * Only these can be "already correct": a control the page revealed later was
+   * not on the form when the run started, so whatever it holds now, this run is
+   * what put it there.
+   */
+  const presentAtStart = new Set<string>();
   /** True once a CAPTCHA, MFA, or verification step stopped the run. */
   /** What the repeater engine did, for the report and the trace. */
   let repeatOutcomes: RepeatedSectionOutcome[] = [];
@@ -544,6 +578,247 @@ export async function runApplicationAutofill(
    * touch a field must not erase what an earlier one measured.
    */
   const durationByField = new Map<string, number>();
+  /**
+   * Every engine this run entered and left, in order.
+   *
+   * The evidence that the button reached the engines at all. Three rounds of
+   * repairs to the Dropdown Engine changed nothing on a live application
+   * because the pass was never invoked by the production run — the code
+   * existed, built, and passed its tests, and no record anywhere could say that
+   * the orchestrator had not called it. These markers can.
+   */
+  const engineInvocations: EngineInvocation[] = [];
+  /**
+   * How many engine invocations are still in flight.
+   *
+   * Must be zero at completion. It always is, because every stage below is
+   * awaited — which is precisely the property worth asserting rather than
+   * assuming, since the failure being repaired here is a stage that was started
+   * and never waited for.
+   */
+  let enginesInFlight = 0;
+  /**
+   * Which stage last observed each field, and which stage proved it.
+   *
+   * Result precedence is decided from these two numbers rather than from the
+   * order the code happens to run in. A stage that did not look at a control
+   * has observed nothing about it, and an older non-observation must never
+   * overwrite a later DOM verification — that is how a State control the
+   * Dropdown Engine filled and verified could come back reading
+   * `FAILED_EXECUTION` from a plan built before the option list existed.
+   */
+  let stageSequence = 0;
+  const verifiedAtStage = new Map<string, number>();
+  /** Fields the Dropdown Engine produced a directive for. */
+  const dropdownEngineFields = new Set<string>();
+  /** Fields whose in-page dropdown executor actually ran. */
+  const dropdownExecutorFields = new Set<string>();
+
+  const mark = (marker: EngineMarker, pass: number, durationMs: number, count: number): void => {
+    const invocation = engineInvocationSchema.parse({
+      marker,
+      runId,
+      buildId: dependencies.buildId ?? 'unstamped',
+      pass,
+      durationMs,
+      count,
+    });
+    engineInvocations.push(invocation);
+    // Counts and durations only — never a field value, never a question's
+    // answer. This is the line that turns "the engines look wired" into an
+    // observation anyone can make from a devtools console.
+    console.info(`[agent] ${marker}`, {
+      runId: invocation.runId,
+      buildId: invocation.buildId,
+      pass: invocation.pass,
+      durationMs: invocation.durationMs,
+      count: invocation.count,
+    });
+  };
+
+  /**
+   * Runs one engine, marked on both sides and awaited in between.
+   *
+   * The `await` is the whole point: a stage started and not waited for lets the
+   * run reach COMPLETED while menus are still being opened, which is the
+   * failure this wrapper makes structurally impossible. `enginesInFlight` is
+   * the assertion behind it.
+   */
+  const withEngine = async <T>(
+    started: EngineMarker,
+    finished: EngineMarker,
+    pass: number,
+    work: () => Promise<T>,
+    size: (value: T) => number,
+  ): Promise<T> => {
+    mark(started, pass, 0, 0);
+    enginesInFlight += 1;
+    const at = Date.now();
+    try {
+      const value = await work();
+      mark(finished, pass, Date.now() - at, size(value));
+      return value;
+    } finally {
+      enginesInFlight -= 1;
+    }
+  };
+
+  /**
+   * Writes a field's result, refusing an older observation over a newer proof.
+   *
+   * `observed` means *this stage looked at this control*. A stage that did not
+   * may not overwrite a verification another stage obtained from the DOM; a
+   * stage that did may, because a later look at the page is later evidence —
+   * including evidence that a value another stage wrote has since become
+   * invalid.
+   */
+  const commitResult = (
+    fieldId: string,
+    next: AutofillFieldResult,
+    stage: number,
+    observed: boolean,
+  ): void => {
+    const previous = resultsByField.get(fieldId);
+    if (previous?.verification === 'verified' && !observed) return;
+    if (
+      previous?.verification === 'verified' &&
+      next.verification !== 'verified' &&
+      stage <= (verifiedAtStage.get(fieldId) ?? 0)
+    ) {
+      return;
+    }
+    resultsByField.set(fieldId, next);
+    if (next.verification === 'verified') verifiedAtStage.set(fieldId, stage);
+  };
+
+  /**
+   * Folds the Dropdown Engine's outcomes into the run's authoritative results.
+   *
+   * The two passes describe the same controls in different vocabularies, and
+   * they are tied together by the pair the scanner and the dropdown scanner both
+   * report: the frame the control lives in, and the selector that addresses it
+   * there. A result whose control the scan never saw is still worth having in
+   * the log, but it has no field to be reported against and is skipped rather
+   * than invented.
+   *
+   * Returns how many controls the executor actually drove, which is what the
+   * convergence check reads: a pass that drove nothing new has stopped making
+   * progress, whatever it discovered.
+   */
+  const mergeDropdownResults = (
+    results: readonly DropdownRunResult[],
+    fields: readonly DetectedField[],
+    stage: number,
+  ): number => {
+    const byLocation = new Map<string, DetectedField>();
+    for (const field of fields) {
+      if (field.selector) byLocation.set(`${field.frameId ?? 0}::${field.selector}`, field);
+    }
+
+    let driven = 0;
+    for (const result of results) {
+      const field = byLocation.get(`${result.frameId}::${result.selector}`);
+      if (!field) continue;
+      // Recorded before any verdict: the engine reached this control, whatever
+      // it managed to do with it. That claim is the point of the whole stage.
+      dropdownEngineFields.add(field.id);
+      if (result.executorInvoked) {
+        dropdownExecutorFields.add(field.id);
+        executorAttempted.add(field.id);
+        durationByField.set(field.id, Math.round(result.durationMs));
+      }
+      // Progress, not activity. The pass starts from the page, so it visits
+      // every menu on every pass — including the ones it answered a moment ago
+      // and correctly leaves alone. Counting those visits as work means the
+      // convergence check never sees a quiet pass, and the loop burns all five
+      // iterations on a form it finished in one.
+      if (result.selected) driven += 1;
+      selectorsByField.set(field.id, field.selector);
+
+      const verified =
+        result.finalStatus === 'FILLED_VERIFIED' || result.finalStatus === 'SKIPPED_ALREADY_VALID';
+      // What this control held when the run first saw it. Empty means whatever
+      // is in it now, this run put there.
+      const filledBeforeRun = (preexisting.get(field.id) ?? '') !== '';
+      const existing = resultsByField.get(field.id);
+      // A later pass finds a control it already answered and does not open it —
+      // correctly, because re-selecting fires `change` and a page that rebuilds
+      // a dependent list on that event discards the answer. That pass therefore
+      // observed no options, and letting its zero replace the pass that read
+      // eleven of them throws away the only evidence the list was ever there.
+      // A control this engine had no answer for is not a control this engine
+      // has a verdict about.
+      //
+      // The pass starts from the page, so it opens menus nothing saved answers
+      // — and it must, because their choices are what let the popup ask. But
+      // "I had nothing for this" is not new information about the field, and
+      // other stages know more: a country-code control whose answer is already
+      // inside the phone number beside it is settled by reconciliation, and
+      // writing this engine's empty-handedness over that turned a verified
+      // "+1" into a red "Autofill failed" badge.
+      if (!verified && !result.intendedAnswerResolved && existing) continue;
+
+      const previousTrace = existing?.dropdown;
+      const trace =
+        result.optionsFound > 0 || previousTrace === undefined
+          ? {
+              kind: result.controlStrategy,
+              optionCount: result.optionsFound,
+              matchMethod: result.matchedOption ? ('literal' as const) : ('none' as const),
+              ...(result.errorCode ? { failureCode: result.errorCode } : {}),
+            }
+          : previousTrace;
+
+      commitResult(
+        field.id,
+        autofillFieldResultSchema.parse({
+          fieldId: field.id,
+          question: result.question || field.question || field.label,
+          ...(field.canonicalKey ? { canonicalQuestion: field.canonicalKey } : {}),
+          // "Already valid" is decided against what the page held *before this
+          // run*, not against what it holds now.
+          //
+          // The engine's own `SKIPPED_ALREADY_VALID` is relative to the moment
+          // it looked, and on a later pass it looks at a control an earlier
+          // stage of this same run filled. Reporting that as skipped work is
+          // how a State control the run drove and verified came back reading
+          // SKIPPED_ALREADY_VALID — true from inside the engine, and false
+          // about the run.
+          action:
+            verified && !(result.finalStatus === 'SKIPPED_ALREADY_VALID' && filledBeforeRun)
+              ? 'select_resolved_option'
+              : verified
+                ? 'skip'
+                : 'manual_review',
+          source: result.intendedAnswerSource === 'approved_answer' ? 'approved_answer' : 'profile',
+          confidence: verified ? 1 : 0,
+          sensitive: existing?.sensitive ?? false,
+          ...(result.matchedOption ? { actualValue: result.matchedOption.slice(0, 2000) } : {}),
+          verification: verified
+            ? 'verified'
+            : result.finalStatus === 'FAILED_EXECUTION'
+              ? 'failed'
+              : 'not_attempted',
+          ...(verified ? {} : { reviewReason: 'missing_information' as const }),
+          reviewed: verified,
+          ...(result.errorCode ? { failureCode: result.errorCode } : {}),
+          dropdown: trace,
+          attemptedAction: verified ? 'select_resolved_option' : 'manual_review',
+          durationMs: Math.round(result.durationMs),
+          reason: result.reason,
+        }),
+        stage,
+        // The engine looked at this control exactly when its executor ran.
+        result.executorInvoked,
+      );
+      // A control this stage settled must not be retried by a later pass, and a
+      // control it could not settle must be observed so the loop can converge.
+      if (verified) ledger.record(field, 'verified');
+      else if (result.executorInvoked) ledger.record(field, 'unverified');
+      else ledger.observe(field);
+    }
+    return driven;
+  };
 
   /**
    * One record per question on the form, each carrying exactly one final status.
@@ -570,8 +845,16 @@ export async function runApplicationAutofill(
       // "Already valid" is decided against what the page held *before* the run,
       // not against what it holds now — afterwards every filled field looks
       // pre-filled.
+      //
+      // "Before the run" means the *first* scan, not the first time this
+      // particular control was seen. A control that only becomes readable once
+      // a parent populated it is first seen after an engine has already filled
+      // it, and reading that value as pre-existing is how an Education State
+      // the run selected and verified came back reporting that it had needed
+      // no work at all.
       const alreadyValidBeforeRun =
         result?.verification === 'verified' &&
+        presentAtStart.has(field.id) &&
         preexisting.get(field.id) !== undefined &&
         preexisting.get(field.id) !== '' &&
         preexisting.get(field.id) === valueKey(result.actualValue);
@@ -648,6 +931,11 @@ export async function runApplicationAutofill(
         // "Phone Type, aria_combobox, 3 options, matched by alias, verified" is
         // a diagnosis; "Autofill failed" was homework.
         ...(result?.dropdown ? { dropdown: result.dropdown } : {}),
+        // Recorded per control, from the two sets the stage itself wrote. This
+        // is what makes "the engine was reached" and "the DOM was driven"
+        // separate, checkable claims rather than one inference.
+        dropdownEngineCalled: dropdownEngineFields.has(field.id),
+        dropdownExecutorCalled: dropdownExecutorFields.has(field.id),
         ...(durationByField.has(field.id) ? { durationMs: durationByField.get(field.id)! } : {}),
       };
     });
@@ -905,6 +1193,7 @@ export async function runApplicationAutofill(
     });
   };
 
+  mark('AUTOFILL_ORCHESTRATOR_STARTED', 0, 0, 0);
   emit('preparing', 'Preparing');
   const settings = await dependencies.loadSettings();
   if (!settings.applicationAutofillEnabled) {
@@ -953,6 +1242,7 @@ export async function runApplicationAutofill(
       // page holds it, and re-reading it would make every filled field look as
       // though it had been correct all along.
       if (!preexisting.has(field.id)) preexisting.set(field.id, valueKey(field.currentValue));
+      if (pass === 1) presentAtStart.add(field.id);
     }
 
     const blocked = blockingCondition(scan);
@@ -982,7 +1272,13 @@ export async function runApplicationAutofill(
     // follows, like every other control on the page.
     if (pass === 1 && dependencies.growRepeatedSections) {
       emit('normalizing', 'Adding sections for your saved records');
-      const grown = await dependencies.growRepeatedSections(scan);
+      const grown = await withEngine(
+        'REPEATER_ENGINE_STARTED',
+        'REPEATER_ENGINE_FINISHED',
+        pass,
+        () => dependencies.growRepeatedSections!(scan),
+        (value) => value.length,
+      );
       repeatOutcomes = grown;
       if (grown.some((outcome) => outcome.addPressesPerformed > 0)) {
         // Re-read once, here, rather than after every individual press. The
@@ -1003,6 +1299,10 @@ export async function runApplicationAutofill(
             if (!preexisting.has(field.id)) {
               preexisting.set(field.id, valueKey(field.currentValue));
             }
+            // Still the run's opening view of the form: these blocks were
+            // created by pressing the page's own Add control, and nothing has
+            // been written into them.
+            presentAtStart.add(field.id);
           }
         }
       }
@@ -1049,6 +1349,9 @@ export async function runApplicationAutofill(
       plan: DeterministicFillPlan,
       stage: 'deterministic' | 'ai',
     ): Promise<{ attempted: number; error?: AgentError }> => {
+      // This invocation's place in the run's order, taken once so every result
+      // it writes carries the same stage number and precedence stays decidable.
+      const planStage = (stageSequence += 1);
       const decisions = new Map<string, ApprovalDecision>();
       const approvals = new Map<string, boolean>();
       for (const action of plan.actions) {
@@ -1159,7 +1462,7 @@ export async function runApplicationAutofill(
           !executed &&
           (!field.required || notApplicable);
 
-        resultsByField.set(
+        commitResult(
           action.fieldId,
           autofillFieldResultSchema.parse({
             fieldId: action.fieldId,
@@ -1202,6 +1505,9 @@ export async function runApplicationAutofill(
             reason:
               outcome?.error?.message ?? (decision.approved ? action.reason : decision.reason),
           }),
+          planStage,
+          // This stage looked at the control exactly when the executor did.
+          executed !== undefined,
         );
         if (field) {
           selectorsByField.set(action.fieldId, field.selector);
@@ -1246,12 +1552,53 @@ export async function runApplicationAutofill(
     lastPlan = plan;
 
     emit('planning', 'Preparing answers');
-    const deterministic = await applyPlan(plan, 'deterministic');
+    const deterministic = await withEngine(
+      'TEXT_STAGE_STARTED',
+      'TEXT_STAGE_FINISHED',
+      pass,
+      () => applyPlan(plan, 'deterministic'),
+      (value) => value.attempted,
+    );
     if (deterministic.error) {
       terminal = deterministic.error;
       break;
     }
     let attemptedCount = deterministic.attempted;
+
+    // ---- Dropdowns: every option control the page offers. ----
+    //
+    // After the deterministic writes, so a menu the planner did answer is
+    // already holding its value and is skipped here rather than re-selected —
+    // re-selecting fires `change`, and a page that rebuilds a dependent list on
+    // that event discards the answer chosen moments earlier. Before the
+    // dependency stage, because a verified parent is what makes a dependent
+    // list exist at all.
+    //
+    // This stage starts from the *page*: it drives every menu the frame can
+    // see, not only the ones the planner produced an action for. That is the
+    // whole repair. A control the scan mis-classified, or whose question the
+    // classifier did not recognise, previously did not fail — it disappeared,
+    // and eight menus reading "No Selection" had nothing in the report against
+    // them at all.
+    // Checked before each engine, not only between passes. A cancel that
+    // arrives mid-run must stop the *next* engine from opening anything, which
+    // it cannot do if the only check is at the bottom of the loop.
+    if (dependencies.isCancelled()) {
+      terminal = agentError('AUTOFILL_CANCELLED', 'Cancelled.');
+      break;
+    }
+    if (dependencies.runDropdownStage) {
+      emit('filling_dropdowns', 'Processing dropdown menus');
+      const dropdownStage = (stageSequence += 1);
+      const dropdownResults = await withEngine(
+        'DROPDOWN_ENGINE_STARTED',
+        'DROPDOWN_ENGINE_FINISHED',
+        pass,
+        () => dependencies.runDropdownStage!(scan),
+        (value) => value.length,
+      );
+      attemptedCount += mergeDropdownResults(dropdownResults, scan.fields, dropdownStage);
+    }
 
     // ---- Dependencies: the fields whose answers other fields produce. ----
     //
@@ -1267,16 +1614,36 @@ export async function runApplicationAutofill(
     // blames the saved profile for the page's own ordering. This stage waits
     // for each list to be rebuilt, reads the choices the page actually
     // produced, and drives them parent-first.
+    if (dependencies.isCancelled()) {
+      terminal = agentError('AUTOFILL_CANCELLED', 'Cancelled.');
+      break;
+    }
     if (dependencies.resolveDependencies) {
       emit('rescanning_dependencies', 'Filling the fields that depend on others');
-      const resolved = await timed(
-        'dependencies',
+      const resolved = await withEngine(
+        'DEPENDENCY_ENGINE_STARTED',
+        'DEPENDENCY_ENGINE_FINISHED',
         pass,
-        timings,
-        () => dependencies.resolveDependencies!(scan),
+        () =>
+          timed(
+            'dependencies',
+            pass,
+            timings,
+            () => dependencies.resolveDependencies!(scan),
+            (value) => value.length,
+          ),
         (value) => value.length,
       );
       dependencyEdges = mergeDependencyEdges(dependencyEdges, resolved);
+      // A dependent control this engine drove reached a dropdown executor too —
+      // `dependencyExecutor` hands it to the same `runOneDropdown` the pass
+      // above uses — so it is recorded as engine-reached and executor-reached.
+      for (const edge of resolved) {
+        if (edge.dependentRescanned || edge.dependentExecuted) {
+          dropdownEngineFields.add(edge.dependent.nodeId);
+        }
+        if (edge.dependentExecuted) dropdownExecutorFields.add(edge.dependent.nodeId);
+      }
       attemptedCount += resolved.filter((edge) => edge.dependentExecuted).length;
     }
 
@@ -1531,10 +1898,13 @@ export async function runApplicationAutofill(
   // marked with what it did and did not manage. Every field is sent, verified
   // ones included, because the content script draws exactly what it is given —
   // a field omitted here would keep the mark an earlier pass gave it.
+  mark('FINAL_AUDIT_STARTED', iterations, 0, lastFields.length);
+  const auditStartedAtMs = Date.now();
   const outstanding = toOutcomes(buildDiagnostics(lastFields, lastPlan)).filter(
     (outcome) => !isSettledStatus(outcome.status),
   );
   await annotate(settings.scrollToFirstReviewField && terminal === null && outstanding.length > 0);
+  mark('FINAL_AUDIT_FINISHED', iterations, Date.now() - auditStartedAtMs, outstanding.length);
 
   if (terminal?.code === 'AUTOFILL_CANCELLED') {
     emit('cancelled', 'Cancelled');
@@ -1609,6 +1979,19 @@ export async function runApplicationAutofill(
   // holding one unsettled field is `completed_with_review`, and the schema
   // refuses the alternative.
   const status = outstanding.length > 0 ? 'completed_with_review' : 'completed';
+  // COMPLETED is forbidden while any engine invocation for this run is active.
+  //
+  // Every stage above is awaited, so this counter is zero by construction —
+  // which is exactly why it is worth asserting. The failure being repaired here
+  // is a stage that was started and not waited for, and that failure is
+  // invisible from the outside: the run reports a tidy summary while menus are
+  // still being opened behind it, and the summary is simply wrong.
+  if (enginesInFlight > 0) {
+    throw new Error(
+      `Autofill tried to complete with ${enginesInFlight} engine invocation(s) still running. ` +
+        'An engine must be awaited before the run may reach a terminal status.',
+    );
+  }
   emit(
     status === 'completed' ? 'completed' : 'completed_with_review',
     'Autofill complete. Review highlighted fields and submit manually.',
@@ -1641,6 +2024,7 @@ export async function runApplicationAutofill(
   assertNoTemporaryStatuses(
     diagnostics.map((entry) => ({ fieldId: entry.fieldId, status: entry.runStatus })),
   );
+  mark('RUN_COMPLETED', iterations, Math.max(0, Date.now() - startedAtMs), finished.fieldsFound);
   if (dependencies.onTrace) {
     dependencies.onTrace(
       buildRunTrace({
@@ -1660,6 +2044,7 @@ export async function runApplicationAutofill(
         pendingAtCompletion: stillPending.length,
         repeatOutcomes,
         dependencyEdges,
+        engineInvocations,
       }),
     );
   }
@@ -1698,6 +2083,8 @@ function buildRunTrace(input: {
   repeatOutcomes: readonly RepeatedSectionOutcome[];
   /** Every parent→child edge the Dependency Engine drove. */
   dependencyEdges: readonly DependencyTrace[];
+  /** Every engine the run entered and left, in order. */
+  engineInvocations: readonly EngineInvocation[];
 }): RunTrace {
   // Copied from the orchestrator's own record, never re-derived. Re-deriving is
   // how a trace comes to disagree with the report it describes, and a trace that
@@ -1724,6 +2111,8 @@ function buildRunTrace(input: {
     annotation: entry.annotation,
     ...(entry.failureCode ? { errorCode: entry.failureCode } : {}),
     ...(entry.dropdown ? { dropdown: entry.dropdown } : {}),
+    dropdownEngineCalled: entry.dropdownEngineCalled,
+    dropdownExecutorCalled: entry.dropdownExecutorCalled,
     ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
   }));
 
@@ -1794,6 +2183,11 @@ function buildRunTrace(input: {
     // each control change; re-deriving that here from a later scan would
     // produce a second answer that can disagree with the one that acted.
     dependencies: input.dependencyEdges,
+    // Carried through as recorded. These are the run's own account of which
+    // engines it entered and how long each took, and re-deriving them from the
+    // stage timings would produce a second answer that can disagree with the
+    // one the orchestrator actually observed.
+    engineInvocations: input.engineInvocations,
     stages: input.timings.map((entry) => ({
       stage: entry.stage,
       pass: entry.pass,

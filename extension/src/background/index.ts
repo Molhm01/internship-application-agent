@@ -101,6 +101,7 @@ import { ensureContentScript } from './contentScript.js';
 import { askEveryFrame, discoverFrames, tellEveryFrame, type FrameTarget } from './frames.js';
 import { asRepeatedSectionOutcome, runRepeaterAutofill } from './repeatersAcrossFrames.js';
 import { runDependencyResolution } from './dependenciesAcrossFrames.js';
+import { runDropdownAutofill } from './dropdownAcrossFrames.js';
 import { mergeFrameScans, type FrameScan } from './mergeFrameScans.js';
 import { fillAcrossFrames } from './fillAcrossFrames.js';
 import { fillAccountForm } from './accountForm.js';
@@ -1868,6 +1869,50 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
           profile,
         });
         return outcome.sections.map(asRepeatedSectionOutcome);
+      },
+      /**
+       * The Dropdown Engine pass, over every frame of this application.
+       *
+       * This dependency is why a live form came back with eight menus reading
+       * "No Selection" while the engine that drives them built cleanly and
+       * passed its own tests. Nothing imported `runDropdownAutofill`: it was a
+       * complete pass — discovery, resolution, dependency rounds, per-control
+       * outcomes — reachable only from a test file, and the content script had
+       * no handler for either of its two messages. The engine was not broken.
+       * It was never called.
+       */
+      runDropdownStage: async () => {
+        const [tab, profileResult, answersResult] = await Promise.all([
+          activeApplicationTab(targetUrl).catch(() => null),
+          getProfile(),
+          listAnswers(),
+        ]);
+        const bundle = tab?.url ? await bundleForUrl(tab.url).catch(() => null) : null;
+        const profile = bundle?.profile ?? profileResult.data?.profile;
+        if (!tab?.id || !profile) return [];
+
+        const outcome = await runDropdownAutofill({
+          tabId: tab.id,
+          frames: await discoverFrames(tab.id, tab.url),
+          runId: state.runId,
+          profile,
+          approvedAnswers: [
+            ...(bundle?.approvedAnswers ?? []),
+            ...(answersResult.data?.answers ?? []),
+          ],
+          companyName: bundle?.company ?? '',
+          ...(bundle?.companyRelationship === undefined
+            ? {}
+            : { companyRelationship: bundle.companyRelationship }),
+        });
+        // Counts and outcomes only — never an answer. The one line that says
+        // whether the pass reached the page at all.
+        console.info('[agent] dropdown engine', {
+          runId: state.runId,
+          ...outcome.summary,
+          unreachableFrames: outcome.unreachableFrames.length,
+        });
+        return outcome.results;
       },
       /**
        * Drives every field whose answer another field produces.

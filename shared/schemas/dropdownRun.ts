@@ -251,6 +251,17 @@ export const dropdownRunResultSchema = z
     availableOptions: z.array(collectedOptionSchema).max(600).default([]),
     /** Set when this control's own answer may have populated others. */
     mayHaveEnabledDependents: z.boolean().default(false),
+    /**
+     * Whether the in-page executor actually ran on this control.
+     *
+     * Written by the frame, and only by the frame. The worker fills in a record
+     * for every directive it sent — including the ones whose frame never
+     * answered — and without this flag those placeholders are indistinguishable
+     * from controls the DOM executor genuinely reached and could not drive.
+     * "The engine returned a result" is not "the page was driven", and this is
+     * the field that separates them.
+     */
+    executorInvoked: z.boolean().default(false),
   })
   .strict();
 
