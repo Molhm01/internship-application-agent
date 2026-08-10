@@ -22,8 +22,11 @@ import {
   uploadControlsResponseSchema,
   runRepeaterAutofillMessageSchema,
   repeaterRunCompleteSchema,
+  runDependencyResolutionMessageSchema,
+  dependencyRunCompleteSchema,
 } from '@internship-agent/shared';
 import { runRepeaterAutofill } from '../repeaters/repeaterEngine.js';
+import { runDependencyResolution } from '../dependencies/dependencyEngine.js';
 import { attachInFrame, discoverInFrame } from '../uploads/frameUploads.js';
 import { BUILD_ID } from '../generated/buildInfo.js';
 import { activateNavigation } from './navigate.js';
@@ -369,6 +372,46 @@ function handleMessage(
           }),
         );
         console.warn('[agent] repeater pass failed in this frame', cause);
+      });
+    return true;
+  }
+
+  /**
+   * Drive this frame's dependent fields, parent before child.
+   *
+   * Each edge is fingerprinted, waited for, rescanned and then handed to the
+   * Dropdown Engine or the text executor. The frame never decides what depends
+   * on what — the worker holds the graph — and never decides an answer.
+   */
+  if (raw?.type === 'RUN_DEPENDENCY_RESOLUTION') {
+    const message = runDependencyResolutionMessageSchema.parse(raw);
+    void runDependencyResolution({ document, directives: message.directives })
+      .then((edges) => {
+        sendResponse(
+          dependencyRunCompleteSchema.parse({
+            type: 'DEPENDENCY_RUN_COMPLETE',
+            runId: message.runId,
+            edges,
+          }),
+        );
+      })
+      .catch((cause: unknown) => {
+        // A frame that threw still answers. Silence is indistinguishable from a
+        // frame that has gone away, and the two need different responses.
+        sendResponse(
+          dependencyRunCompleteSchema.parse({
+            type: 'DEPENDENCY_RUN_COMPLETE',
+            runId: message.runId,
+            edges: message.directives.map((directive) => ({
+              parent: directive.parent,
+              dependent: directive.dependent,
+              dependencyType: directive.dependencyType,
+              finalStatus: 'FAILED' as const,
+              errorCode: 'DEPENDENCY_TIMEOUT' as const,
+            })),
+          }),
+        );
+        console.warn('[agent] dependency pass failed in this frame', cause);
       });
     return true;
   }

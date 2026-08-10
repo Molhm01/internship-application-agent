@@ -21,6 +21,7 @@ import type {
   ProfileUpdate,
   SavedDocument,
   DocumentExtraction,
+  DependencyDirective,
   RepeaterDirective,
   ScanApplicationResponse,
   ScanMessage,
@@ -162,6 +163,16 @@ export type ExtensionMessage =
    * overwritten. Sent to every frame; a frame with no such section says so.
    */
   | { type: 'RUN_REPEATER_AUTOFILL'; runId: string; directives: readonly RepeaterDirective[] }
+  /**
+   * Drives this frame's dependent fields — Country → State, Education Country →
+   * State → School, a Yes/No question and the box it reveals — parent before
+   * child, in the order the worker's topological sort produced.
+   */
+  | {
+      type: 'RUN_DEPENDENCY_RESOLUTION';
+      runId: string;
+      directives: readonly DependencyDirective[];
+    }
   | { type: 'FOCUS_REVIEW_FIELD'; fieldId: string }
   | { type: 'CLEAR_REVIEW_HIGHLIGHTS' }
   | { type: 'PROFILE_GET' }

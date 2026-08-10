@@ -19,6 +19,7 @@ export * from './discoveredOptions.js';
 export * from './dropdownExecution.js';
 export * from './dropdownRun.js';
 export * from './repeaterRun.js';
+export * from './dependencyRun.js';
 export * from './application-session.js';
 export * from './autofill.js';
 export * from './applicationBundle.js';

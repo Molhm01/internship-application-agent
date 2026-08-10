@@ -186,6 +186,26 @@ export const ERROR_CODES = [
   'REPEATER_DUPLICATE_BLOCK',
   'REPEATER_BINDING_REQUIRES_REVIEW',
   'REPEATER_TIMEOUT',
+  /**
+   * Fields whose answer another field produces — Country → State, Education
+   * Country → State → School, a Yes/No question and the box it reveals.
+   *
+   * Nine codes rather than one, because "the field this depends on has not been
+   * answered", "the page never rebuilt this list", "the follow-up control never
+   * appeared" and "two fields each claim to produce the other's options" call
+   * for four completely different things from the user. Every one of them used
+   * to surface as `No option on the page matched "New Jersey"`, which blames
+   * the saved profile for the page's own ordering.
+   */
+  'DEPENDENCY_PARENT_UNRESOLVED',
+  'DEPENDENCY_NOT_READY',
+  'DEPENDENCY_TIMEOUT',
+  'DEPENDENCY_CONTROL_NOT_FOUND',
+  'DEPENDENCY_OPTIONS_NOT_UPDATED',
+  'DEPENDENCY_CHILD_NOT_CREATED',
+  'DEPENDENCY_CYCLE_DETECTED',
+  'DEPENDENCY_EXECUTION_FAILED',
+  'DEPENDENCY_VERIFICATION_FAILED',
   // Website → extension application-bundle handoff.
   'BUNDLE_MISSING',
   'BUNDLE_REJECTED',
@@ -405,6 +425,24 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'A block already contains something you typed that does not match the saved record for that position. It was left exactly as it is — check it yourself.',
   REPEATER_TIMEOUT:
     'The page did not finish adding a block in time. Add the remaining entries yourself, then run autofill again.',
+  DEPENDENCY_PARENT_UNRESOLVED:
+    'This field only fills once the question it depends on is answered, and that one is still open. Answer that question first, then run autofill again.',
+  DEPENDENCY_NOT_READY:
+    'The field this depends on was answered and the page has not offered this one its choices yet. Retry, or choose a value yourself.',
+  DEPENDENCY_TIMEOUT:
+    'The page did not finish producing this field in time. Choose it yourself, or retry once the page has settled.',
+  DEPENDENCY_CONTROL_NOT_FOUND:
+    'This field left the page while the field it depends on was being answered. Reload the application and run autofill again.',
+  DEPENDENCY_OPTIONS_NOT_UPDATED:
+    'The field this depends on was answered and verified, and this list was never rebuilt. Choose a value yourself before submitting.',
+  DEPENDENCY_CHILD_NOT_CREATED:
+    'Answering the question above this one was supposed to reveal a follow-up field, and none appeared. Check the form yourself before submitting.',
+  DEPENDENCY_CYCLE_DETECTED:
+    'Two fields on this page each appear to produce the other’s choices, so neither was driven. Fill them yourself; the rest of the form was completed.',
+  DEPENDENCY_EXECUTION_FAILED:
+    'This field received its choices and would not take the answer. Select it yourself and check it stays.',
+  DEPENDENCY_VERIFICATION_FAILED:
+    'The answer was written to this field and the page shows something else. Check it yourself before submitting.',
   BUNDLE_MISSING:
     'Open the job on Internship Pilot and click "Apply with Application Agent" to send the tailored documents to the extension.',
   BUNDLE_REJECTED:

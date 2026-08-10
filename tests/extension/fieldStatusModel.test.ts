@@ -34,6 +34,11 @@ describe('the final status vocabulary', () => {
     expect(FINAL_FIELD_STATUSES).toEqual([
       'FILLED_VERIFIED',
       'OPTIONAL_LEFT_BLANK',
+      // A question the form has switched off. Distinct from the line above it:
+      // an optional box the applicant may fill and a box they must not are not
+      // the same outcome, and reporting both as "optional" is what put an
+      // "Information needed" badge on a not-applicable field.
+      'NOT_APPLICABLE',
       'USER_CONFIRMATION_REQUIRED',
       'FAILED_EXECUTION',
       'BLOCKED',
@@ -44,6 +49,10 @@ describe('the final status vocabulary', () => {
       'PENDING_RESOLUTION',
       'PENDING_EXECUTION',
       'PENDING_VERIFICATION',
+      // Correctly untouched while the question that produces its choices is
+      // still open. A stage, never a verdict — the assertion below is what
+      // keeps it from becoming one.
+      'WAITING_FOR_DEPENDENCY',
     ]);
     // No status may be both a stage and a verdict. If this ever overlaps, the
     // completion check silently stops catching a whole class of pending field.

@@ -178,6 +178,15 @@ export const autofillFieldResultSchema = z.object({
     'unverified',
     'not_attempted',
     'optional_left_blank',
+    /**
+     * The form has switched this question off, so there was nothing to verify.
+     *
+     * Distinct from `optional_left_blank`, which the two used to share. "If
+     * other, enter School" beside a School dropdown reading "Rutgers
+     * University" is not an optional question the applicant declined — it is a
+     * question this form is not asking, and answering it would be wrong.
+     */
+    'not_applicable',
     'failed',
   ]),
   /** Set when the field is asking for attention; absent when it is settled. */

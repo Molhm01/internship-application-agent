@@ -32,6 +32,7 @@ import {
   type FillRunReport,
   type AgentError,
   type ApplicationBundle,
+  type DetectedField,
   type DeterministicFillPlan,
   type DocumentContentResponse,
   type ProfileImportRequest,
@@ -99,6 +100,7 @@ import {
 import { ensureContentScript } from './contentScript.js';
 import { askEveryFrame, discoverFrames, tellEveryFrame, type FrameTarget } from './frames.js';
 import { asRepeatedSectionOutcome, runRepeaterAutofill } from './repeatersAcrossFrames.js';
+import { runDependencyResolution } from './dependenciesAcrossFrames.js';
 import { mergeFrameScans, type FrameScan } from './mergeFrameScans.js';
 import { fillAcrossFrames } from './fillAcrossFrames.js';
 import { fillAccountForm } from './accountForm.js';
@@ -1866,6 +1868,50 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
           profile,
         });
         return outcome.sections.map(asRepeatedSectionOutcome);
+      },
+      /**
+       * Drives every field whose answer another field produces.
+       *
+       * Given the scan the orchestrator just used, so the graph is built over
+       * the same questions the plan was — including the blocks the Repeater
+       * Engine created a moment earlier, each with its own Country → State →
+       * School chain.
+       */
+      resolveDependencies: async (scan) => {
+        const [tab, profileResult, answersResult] = await Promise.all([
+          activeApplicationTab(targetUrl).catch(() => null),
+          getProfile(),
+          listAnswers(),
+        ]);
+        const bundle = tab?.url ? await bundleForUrl(tab.url).catch(() => null) : null;
+        const profile = bundle?.profile ?? profileResult.data?.profile;
+        if (!tab?.id || !profile) return [];
+
+        // Grouped by the frame each control actually lives in, because an edge
+        // is only drivable where both of its controls are — and a page that
+        // renders Education in an iframe has its whole chain in that frame.
+        const fieldsByFrame = new Map<number, DetectedField[]>();
+        for (const field of scan.fields) {
+          const frameId = field.frameId ?? 0;
+          fieldsByFrame.set(frameId, [...(fieldsByFrame.get(frameId) ?? []), field]);
+        }
+
+        const outcome = await runDependencyResolution({
+          tabId: tab.id,
+          frames: await discoverFrames(tab.id, tab.url),
+          runId: state.runId,
+          profile,
+          approvedAnswers: [
+            ...(bundle?.approvedAnswers ?? []),
+            ...(answersResult.data?.answers ?? []),
+          ],
+          companyName: bundle?.company ?? '',
+          ...(bundle?.companyRelationship === undefined
+            ? {}
+            : { companyRelationship: bundle.companyRelationship }),
+          fieldsByFrame,
+        });
+        return [...outcome.edges];
       },
       now: () => new Date().toISOString(),
     });

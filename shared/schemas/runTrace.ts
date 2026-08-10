@@ -3,6 +3,7 @@ import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatu
 import { requiredSourceSchema } from './fields.js';
 import { dropdownTraceSchema } from './dropdownExecution.js';
 import { repeaterSectionTraceSchema } from './repeaterRun.js';
+import { dependencyTraceSchema } from './dependencyRun.js';
 
 /**
  * One autofill run, described in counts and outcomes only.
@@ -224,6 +225,21 @@ export const runTraceSchema = z
      * error codes. No employer, no institution, no field value.
      */
     repeaters: z.array(repeaterSectionTraceSchema).max(12).default([]),
+
+    /**
+     * The Dependency Engine Trace: one entry per parent→child edge the run saw.
+     *
+     * Separate from `fields` because it answers a question no per-field record
+     * can. "State is empty" is the same sentence whether Country was never
+     * answered, whether the page never rebuilt the region list, or whether the
+     * list was rebuilt and New Jersey genuinely is not on it — three situations
+     * with three different remedies, which the field list reported identically
+     * as `No option on the page matched "New Jersey"`.
+     *
+     * Sanitized by construction: identities, fingerprint counts and hashes,
+     * booleans and error codes. No option texts, and no answers.
+     */
+    dependencies: z.array(dependencyTraceSchema).max(120).default([]),
 
     stages: z.array(stageTraceSchema).max(200),
     fields: z.array(fieldTraceSchema).max(500),

@@ -270,7 +270,15 @@ function isVisible(element: HTMLElement): boolean {
   );
 }
 
-function setNativeValue(
+/**
+ * Writes through the prototype setter, so a framework that patched the
+ * instance property still sees the change.
+ *
+ * Exported for the Dependency Engine, which fills conditional text children —
+ * "If other, enter School/Institution Name" — and must write them exactly the
+ * way every other text field on the page is written.
+ */
+export function setNativeValue(
   element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   value: string,
 ): void {
@@ -291,7 +299,14 @@ function setNativeChecked(element: HTMLInputElement, checked: boolean): void {
   descriptor.set.call(element, checked);
 }
 
-function dispatchValueEvents(element: HTMLElement): void {
+/**
+ * The three events a framework listens for after a value changes.
+ *
+ * Exported so the Dependency Engine writes a conditional child through exactly
+ * the same sequence the ordinary executor uses. A second implementation of this
+ * is how two code paths come to disagree about whether a page was notified.
+ */
+export function dispatchValueEvents(element: HTMLElement): void {
   element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
   element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
   element.dispatchEvent(new FocusEvent('blur', { bubbles: false, composed: true }));

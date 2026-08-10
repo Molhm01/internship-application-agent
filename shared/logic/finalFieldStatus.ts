@@ -13,7 +13,7 @@ import type { DetectedField } from '../schemas/fields.js';
  * "Information needed" mark, a stage marker rendered as a final popup card, and
  * a completion count that agreed with none of the fields it claimed to total.
  *
- * There are exactly six outcomes and no seventh, and no field may reach the end
+ * There are exactly seven outcomes and no eighth, and no field may reach the end
  * of a run without exactly one of them.
  */
 export const FINAL_FIELD_STATUSES = [
@@ -21,6 +21,18 @@ export const FINAL_FIELD_STATUSES = [
   'FILLED_VERIFIED',
   /** Optional, deliberately left empty, and correctly so. Not outstanding work. */
   'OPTIONAL_LEFT_BLANK',
+  /**
+   * The form itself has switched this question off, so there is nothing to
+   * answer.
+   *
+   * Distinct from `OPTIONAL_LEFT_BLANK`, which the two used to share. "If other,
+   * enter School/Institution Name" beside a School dropdown reading "Rutgers
+   * University" is not an optional question the applicant declined — it is a
+   * question this form is not currently asking, and it would be wrong to answer
+   * it. Reporting both as "optional" made a genuinely optional box the applicant
+   * might want to fill look identical to one they must not.
+   */
+  'NOT_APPLICABLE',
   /** A person must answer or confirm this one. */
   'USER_CONFIRMATION_REQUIRED',
   /** The agent tried to write it and the page did not take the value. */
@@ -61,6 +73,17 @@ export const RUNNING_FIELD_STATUSES = [
   'PENDING_EXECUTION',
   /** Written, and not yet checked against what the page actually holds. */
   'PENDING_VERIFICATION',
+  /**
+   * Correctly untouched, because the question that produces its choices — or
+   * that switches it on at all — has not been settled yet.
+   *
+   * A stage rather than an outcome, and deliberately so: a run may pass through
+   * it and may never end in it. Before this existed, a State control waiting on
+   * Country was reported as `No option on the page matched "New Jersey"`, which
+   * is a failure verdict on the saved profile for what is really the page's own
+   * ordering — and it wore a red mark while it was simply next in the queue.
+   */
+  'WAITING_FOR_DEPENDENCY',
 ] as const;
 
 export type RunningFieldStatus = (typeof RUNNING_FIELD_STATUSES)[number];
@@ -137,6 +160,10 @@ export const ANNOTATION_BY_FINAL_STATUS: Record<FinalFieldStatus, AnnotationKind
   // work, and a green tick on it says otherwise.
   SKIPPED_ALREADY_VALID: 'none',
   OPTIONAL_LEFT_BLANK: 'optional_blank',
+  // Unmarked rather than grey. A question the form is not asking is not a blank
+  // the applicant left — putting any mark beside it invites them to fill in a
+  // box that must stay empty.
+  NOT_APPLICABLE: 'none',
   USER_CONFIRMATION_REQUIRED: 'information_needed',
   FAILED_EXECUTION: 'execution_failed',
   BLOCKED: 'execution_failed',
@@ -182,6 +209,10 @@ export function isSettledStatus(status: FinalFieldStatus): boolean {
   return (
     status === 'FILLED_VERIFIED' ||
     status === 'OPTIONAL_LEFT_BLANK' ||
+    // A question the form is not asking is settled work: there is nothing for
+    // the applicant to do about it, and counting it as outstanding is what put
+    // an "Information needed" badge on a not-applicable box.
+    status === 'NOT_APPLICABLE' ||
     status === 'SKIPPED_ALREADY_VALID'
   );
 }
@@ -223,6 +254,12 @@ export function resolveFinalFieldStatus(input: FinalStatusInput): FinalFieldStat
   // open question: something was typed, and the user has to be told the page
   // did not keep it rather than being asked to answer it from scratch.
   if (result?.verification === 'unverified') return 'FAILED_EXECUTION';
+  // Checked before `optional_left_blank`, and before the required-field branch
+  // below: a conditional child routinely carries its section's `required` flag
+  // and is required only *when its parent says so*. Treating that flag as
+  // unconditional is what left a not-applicable box wearing an orange
+  // "Information needed" beside a School dropdown already filled correctly.
+  if (result?.verification === 'not_applicable') return 'NOT_APPLICABLE';
   if (result?.verification === 'optional_left_blank') return 'OPTIONAL_LEFT_BLANK';
   // A field with no result at all, and no obligation to have one, is blank on
   // purpose. Required fields never take this branch.

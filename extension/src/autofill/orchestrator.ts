@@ -38,6 +38,7 @@ import {
   type RecordMapping,
   type RepeatedSectionKind,
   type RepeaterSectionTrace,
+  type DependencyTrace,
   type FinalFieldOutcome,
   type FinalFieldStatus,
   type RequiredSource,
@@ -157,6 +158,16 @@ export interface AutofillDependencies {
    * nothing here carries a record's contents.
    */
   growRepeatedSections?(scan: ApplicationScanResult): Promise<RepeatedSectionOutcome[]>;
+  /**
+   * Drives every field whose answer another field produces — Country → State,
+   * Education Country → State → School, a Yes/No question and the box it
+   * reveals — parent first, each one waited for and verified.
+   *
+   * Optional: a host without it falls back to the pass loop, which is the
+   * behaviour that reported "No option on the page matched New Jersey" over a
+   * State control the page had not been asked to populate yet.
+   */
+  resolveDependencies?(scan: ApplicationScanResult): Promise<DependencyTrace[]>;
   now(): string;
 }
 
@@ -204,6 +215,45 @@ function agentError(code: AgentError['code'], message: string): AgentError {
     suggestedAction: DEFAULT_ERROR_GUIDANCE[code],
     debugContext: {},
   };
+}
+
+/**
+ * Keeps, per edge, the pass that actually drove it.
+ *
+ * The engine runs once per pass, and a later pass finds most edges already
+ * settled — so it reports them truthfully as resolved with no mutation observed
+ * and no rescan, because on *that* pass there was nothing to observe. Replacing
+ * the record each pass therefore threw away the only pass that could say "this
+ * control had one prompt before Country landed and eleven choices afterwards",
+ * which is the whole evidence that the ordering worked.
+ *
+ * The later record wins only when the earlier one did no work, so an edge that
+ * failed on pass one and succeeded on pass two still reports the success.
+ */
+function mergeDependencyEdges(
+  existing: readonly DependencyTrace[],
+  incoming: readonly DependencyTrace[],
+): DependencyTrace[] {
+  const keyOf = (edge: DependencyTrace): string =>
+    `${edge.parent.nodeId}→${edge.dependent.nodeId}:${edge.dependencyType}`;
+  const didWork = (edge: DependencyTrace): boolean =>
+    edge.dependentRescanned || edge.dependentExecuted || edge.mutationObserved;
+
+  const merged = new Map<string, DependencyTrace>();
+  for (const edge of existing) merged.set(keyOf(edge), edge);
+  for (const edge of incoming) {
+    const key = keyOf(edge);
+    const held = merged.get(key);
+    if (!held) {
+      merged.set(key, edge);
+      continue;
+    }
+    // A newly successful outcome always replaces an unsuccessful one. Between
+    // two records of equal standing, the one that observed the work is kept.
+    const improved = edge.finalStatus === 'RESOLVED' && held.finalStatus !== 'RESOLVED';
+    if (improved || (!didWork(held) && didWork(edge))) merged.set(key, edge);
+  }
+  return [...merged.values()];
 }
 
 /** A page state that must stop the run rather than be worked around. */
@@ -285,7 +335,7 @@ function wasExecuted(status: FillExecutionResult['status']): boolean {
  * unanswerable without attaching a debugger to the service worker.
  */
 export interface StageTiming {
-  stage: 'scan' | 'plan' | 'execute' | 'analyze' | 'execute_ai';
+  stage: 'scan' | 'plan' | 'execute' | 'analyze' | 'execute_ai' | 'dependencies';
   pass: number;
   durationMs: number;
   /** Fields scanned, actions planned, or actions executed, per stage. */
@@ -476,6 +526,8 @@ export async function runApplicationAutofill(
   /** True once a CAPTCHA, MFA, or verification step stopped the run. */
   /** What the repeater engine did, for the report and the trace. */
   let repeatOutcomes: RepeatedSectionOutcome[] = [];
+  /** What the Dependency Engine observed, for the trace and the statuses. */
+  let dependencyEdges: DependencyTrace[] = [];
   let pageBlocked = false;
   /**
    * False while the loop is still moving.
@@ -1201,6 +1253,33 @@ export async function runApplicationAutofill(
     }
     let attemptedCount = deterministic.attempted;
 
+    // ---- Dependencies: the fields whose answers other fields produce. ----
+    //
+    // Here, after the deterministic writes and before the analysis, because
+    // this is the first moment the parents are settled. Country has been
+    // written and verified; State's option list is whatever the page has built
+    // in response, and that list did not exist when the plan above was made.
+    //
+    // The plan is why this stage has to exist at all. It was built from one
+    // scan of the whole page, including controls holding nothing but "Select a
+    // country first" — so State's answer was matched against a prompt, failed,
+    // and was reported as `No option on the page matched "New Jersey"`, which
+    // blames the saved profile for the page's own ordering. This stage waits
+    // for each list to be rebuilt, reads the choices the page actually
+    // produced, and drives them parent-first.
+    if (dependencies.resolveDependencies) {
+      emit('rescanning_dependencies', 'Filling the fields that depend on others');
+      const resolved = await timed(
+        'dependencies',
+        pass,
+        timings,
+        () => dependencies.resolveDependencies!(scan),
+        (value) => value.length,
+      );
+      dependencyEdges = mergeDependencyEdges(dependencyEdges, resolved);
+      attemptedCount += resolved.filter((edge) => edge.dependentExecuted).length;
+    }
+
     // ---- Analysis: one batched request, for what is genuinely left. ----
     //
     // After the writes above, never before them. An analysis that fails, times
@@ -1325,6 +1404,104 @@ export async function runApplicationAutofill(
       }),
     );
     selectorsByField.set(field.id, field.selector);
+  }
+
+  // What the Dependency Engine did, written over what the plan concluded.
+  //
+  // The engine ran *after* the plan was made and after the executor had been
+  // over the page, so where the two disagree the engine is the later and better
+  // evidence: it read the option list the page built once the parent landed,
+  // which is a list the plan could not have seen. Three outcomes have to reach
+  // the report or the marks on the page stay wrong:
+  //
+  //  - a dependent control the engine verified must lose its "Autofill failed"
+  //    badge, which the plan gave it for failing to match a prompt;
+  //  - a conditional child the form has switched off must read NOT_APPLICABLE
+  //    and carry no mark at all, rather than an orange "Information needed";
+  //  - a child whose parent nobody answered must be the user's question, not a
+  //    failure — and must never have been written to.
+  for (const edge of dependencyEdges) {
+    const fieldId = edge.dependent.nodeId;
+    const existing = resultsByField.get(fieldId);
+    if (!existing) continue;
+
+    if (edge.finalStatus === 'RESOLVED') {
+      resultsByField.set(
+        fieldId,
+        autofillFieldResultSchema.parse({
+          ...existing,
+          action: existing.action === 'manual_review' ? 'set_value' : existing.action,
+          verification: 'verified',
+          reviewed: true,
+          reviewReason: undefined,
+          failureCode: undefined,
+          reason: `Filled after "${edge.parent.label || edge.parent.intent}" was answered, from the choices the page produced.`,
+        }),
+      );
+      continue;
+    }
+
+    if (edge.finalStatus === 'NOT_APPLICABLE') {
+      resultsByField.set(
+        fieldId,
+        autofillFieldResultSchema.parse({
+          ...existing,
+          action: 'skip',
+          verification: 'not_applicable',
+          reviewed: true,
+          reviewReason: undefined,
+          failureCode: undefined,
+          reason: `"${edge.parent.label || edge.parent.intent}" is not answered "${edge.parentRequiredState ?? ''}", so this form is not asking this question. It is correctly blank.`,
+        }),
+      );
+      continue;
+    }
+
+    if (
+      (edge.finalStatus === 'WAITING_FOR_DEPENDENCY' ||
+        edge.finalStatus === 'USER_CONFIRMATION_REQUIRED') &&
+      // Never over a field that is already filled and confirmed.
+      //
+      // These two statuses are this engine reporting on *its own* attempt:
+      // "I had no answer for this control" and "its parent was not settled when
+      // I looked". Neither is a claim that the field is empty — and the ordinary
+      // pipeline routinely fills a control this engine has no answer for, from
+      // a source this engine does not consult. Writing over that turned a
+      // verified "Anticipated Graduation Date" holding *May 2027* into an
+      // orange "Information needed", which is the exact class of dishonesty the
+      // final-status model exists to prevent: a mark that disagrees with the
+      // page it is drawn on.
+      existing.verification !== 'verified'
+    ) {
+      resultsByField.set(
+        fieldId,
+        autofillFieldResultSchema.parse({
+          ...existing,
+          action: 'manual_review',
+          verification: 'not_attempted',
+          reviewed: false,
+          reviewReason: 'missing_information' as const,
+          ...(edge.errorCode ? { failureCode: edge.errorCode } : {}),
+          reason:
+            edge.finalStatus === 'WAITING_FOR_DEPENDENCY'
+              ? `This applies only once "${edge.parent.label || edge.parent.intent}" is answered, and nothing answered it. Nothing was written here.`
+              : `Nothing saved answers this. Fill it yourself before submitting.`,
+        }),
+      );
+      continue;
+    }
+
+    if (edge.finalStatus === 'FAILED' && existing.verification !== 'verified') {
+      resultsByField.set(
+        fieldId,
+        autofillFieldResultSchema.parse({
+          ...existing,
+          ...(edge.errorCode ? { failureCode: edge.errorCode } : {}),
+          reviewReason: 'missing_information' as const,
+          reason: `"${edge.dependent.label || edge.dependent.intent}" depends on "${edge.parent.label || edge.parent.intent}", which was answered, and this control still could not be completed. Check it yourself before submitting.`,
+        }),
+      );
+    }
   }
 
   // A dependent control whose list never arrived says so.
@@ -1482,6 +1659,7 @@ export async function runApplicationAutofill(
         scanCompletedAt,
         pendingAtCompletion: stillPending.length,
         repeatOutcomes,
+        dependencyEdges,
       }),
     );
   }
@@ -1518,6 +1696,8 @@ function buildRunTrace(input: {
   pendingAtCompletion: number;
   /** What each repeating section did. Empty when the host cannot grow one. */
   repeatOutcomes: readonly RepeatedSectionOutcome[];
+  /** Every parent→child edge the Dependency Engine drove. */
+  dependencyEdges: readonly DependencyTrace[];
 }): RunTrace {
   // Copied from the orchestrator's own record, never re-derived. Re-deriving is
   // how a trace comes to disagree with the report it describes, and a trace that
@@ -1610,6 +1790,10 @@ function buildRunTrace(input: {
     repeaters: input.repeatOutcomes
       .map((outcome) => outcome.trace)
       .filter((trace): trace is RepeaterSectionTrace => trace !== undefined),
+    // Carried through from the engine, never re-derived. The engine watched
+    // each control change; re-deriving that here from a later scan would
+    // produce a second answer that can disagree with the one that acted.
+    dependencies: input.dependencyEdges,
     stages: input.timings.map((entry) => ({
       stage: entry.stage,
       pass: entry.pass,

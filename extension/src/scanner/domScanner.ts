@@ -1578,13 +1578,24 @@ function markRepeatedRecords(document: Document, fields: DetectedField[]): void 
 
     for (const [index, field] of fields.entries()) {
       if (field.dependsOn) continue;
-      if (!field.canonicalKey || sectionForQuestion(field.canonicalKey) !== section) continue;
+      if (field.recordIndex !== undefined) continue;
       const element = findBySelector(document, field.selector);
       if (!element) continue;
       const blockIndex = blocks.findIndex((block) => block.contains(element));
       // Index 0 is left implicit: nothing downstream has to special-case a page
       // whose sections each hold one block.
       if (blockIndex <= 0) continue;
+      // Numbered by *containment*, not by whether the question belongs to this
+      // section's vocabulary.
+      //
+      // It used to require `sectionForQuestion(field.canonicalKey) === section`,
+      // which is right for "School" and wrong for everything else in the block:
+      // an Education block's "Education Country" control is classified as plain
+      // `country`, so it took this branch's `continue` and kept no record index
+      // at all. Every education block's country then looked like the same
+      // question as the applicant's own home country — which is how a
+      // dependency graph pairs block 1's State with block 0's Country, and how
+      // a second education row gets the first one's answers.
       fields[index] = detectedFieldSchema.parse({ ...field, recordIndex: blockIndex });
     }
   }

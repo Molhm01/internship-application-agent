@@ -10,7 +10,11 @@ import type {
   ProfileFieldStatus,
   RunTrace,
 } from '@internship-agent/shared';
-import { describeRepeaterSection, describeRunTrace } from '@internship-agent/shared';
+import {
+  describeDependency,
+  describeRepeaterSection,
+  describeRunTrace,
+} from '@internship-agent/shared';
 import { sendMessage, type ExtensionResponse } from '../../messaging/messages.js';
 import { loadSettings } from '../../storage/settings.js';
 import { BUILD_ID, BUILD_INFO } from '../../generated/buildInfo.js';
@@ -435,6 +439,28 @@ export function DiagnosticsSection(): JSX.Element {
               and they carry indices and counts only — never an employer or a
               school.
             */}
+            {/*
+              The Dependency Engine Trace.
+
+              Its own list because it answers what the field list cannot:
+              "State is empty" is the same sentence whether Country was never
+              answered, whether the page never rebuilt the region list, or
+              whether the list was rebuilt and the saved state genuinely is not
+              on it. Identities, fingerprint counts and codes — never an option
+              text and never an answer.
+            */}
+            {exported.trace.dependencies.length > 0 ? (
+              <>
+                <strong>Dependency Engine</strong>
+                <ul className="diagnostics-dependencies">
+                  {exported.trace.dependencies.map((edge) => (
+                    <li key={`${edge.parent.nodeId}→${edge.dependent.nodeId}`}>
+                      {describeDependency(edge)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
             {exported.trace.repeaters.length > 0 ? (
               <>
                 <strong>Repeater Engine</strong>

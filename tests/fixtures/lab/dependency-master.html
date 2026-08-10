@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dependent fields — master fixture</title>
+  </head>
+  <body>
+    <!--
+      Every shape of dependency, on one page.
+
+      A. Personal Country → State/Province
+      B. Education Type → Country → State → School, per education block
+      C. School = a real school   → If Other School stays blank
+      D. School = Other           → If Other School applies
+      E. Area of Study = a real subject → If Other Area stays blank
+      F. Area of Study = Other          → If Other Area applies
+      G. Current Student = Yes → Anticipated Graduation Date appears
+      H. Relatives = No  → relative details not applicable
+      I. Relatives = Yes → relative details applies
+      J/K. Education block 0 and block 1 each run their own chain
+
+      Two things are deliberate and load-bearing:
+
+        - every dependent list is rebuilt *asynchronously*, on a short timer, so
+          a run that reads the list synchronously after selecting the parent
+          reads the old one and fails. That is the live failure being
+          reproduced, not an artificial delay.
+        - the relatives question starts unanswered. Nothing may be written into
+          the box below it until somebody answers it, and the applicant's own
+          name must never appear there.
+
+      Every name is fictional. The submit button exists to be *not* clicked.
+    -->
+    <h1>Application</h1>
+    <form id="application" onsubmit="return false;">
+      <section id="personalSection">
+        <h2>Personal Information</h2>
+
+        <label for="firstName">First Name *</label>
+        <input id="firstName" name="firstName" type="text" required />
+
+        <label for="lastName">Last Name *</label>
+        <input id="lastName" name="lastName" type="text" required />
+
+        <label for="email">Email Address *</label>
+        <input id="email" name="email" type="email" required />
+
+        <label for="country">Country *</label>
+        <select id="country" name="country" required></select>
+
+        <label for="state">State/Province *</label>
+        <select id="state" name="state" required>
+          <option value="">Select a country first</option>
+        </select>
+      </section>
+
+      <section id="educationSection">
+        <h2>Education</h2>
+        <div id="educationBlocks"></div>
+        <button type="button" id="addEducation">+ Add</button>
+      </section>
+
+      <section id="statusSection">
+        <h2>Student Status</h2>
+
+        <label for="currentStudent">Are you currently a university student? *</label>
+        <select id="currentStudent" name="currentStudent" required>
+          <option value="">Select one</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+
+        <!-- The graduation date field is created by the script, on Yes. -->
+        <div id="graduationHost"></div>
+      </section>
+
+      <section id="relativesSection">
+        <h2>Additional Information</h2>
+
+        <label for="hasRelatives">Do you have relatives employed by this company? *</label>
+        <select id="hasRelatives" name="hasRelatives" required>
+          <option value="">Select one</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+
+        <label for="relativeDetails">
+          If yes, provide their full name, location, and relationship
+        </label>
+        <input id="relativeDetails" name="relativeDetails" type="text" />
+      </section>
+
+      <button type="submit" id="submit">Submit Application</button>
+    </form>
+
+    <script>
+      (function () {
+        /** How long the page takes to rebuild a dependent list. */
+        var REBUILD_MS = 120;
+
+        function fill(select, entries, prompt) {
+          select.innerHTML = '';
+          var first = document.createElement('option');
+          first.value = '';
+          first.textContent = prompt;
+          select.appendChild(first);
+          for (var index = 0; index < entries.length; index += 1) {
+            var option = document.createElement('option');
+            option.value = entries[index];
+            option.textContent = entries[index];
+            select.appendChild(option);
+          }
+        }
+
+        /**
+         * Rebuilds a list after a beat, the way a form fetching its regions
+         * does. A run that reads the list synchronously reads the old one.
+         */
+        function rebuild(select, entries, prompt) {
+          select.disabled = true;
+          window.setTimeout(function () {
+            fill(select, entries, prompt);
+            select.disabled = false;
+          }, REBUILD_MS);
+        }
+
+        var COUNTRIES = ['United States', 'Canada', 'United Kingdom', 'Germany', 'India'];
+        var STATES = {
+          'United States': ['California', 'Michigan', 'New Jersey', 'New York', 'Texas'],
+          Canada: ['Alberta', 'British Columbia', 'Ontario', 'Quebec'],
+          'United Kingdom': ['England', 'Scotland', 'Wales'],
+          Germany: ['Bavaria', 'Berlin', 'Hesse'],
+          India: ['Karnataka', 'Maharashtra', 'Tamil Nadu'],
+        };
+        var SCHOOLS = {
+          'New Jersey': ['Princeton University', 'Rutgers University'],
+          California: ['Stanford University', 'University of California, Berkeley'],
+          Michigan: ['Michigan State University', 'University of Michigan'],
+          'New York': ['Columbia University', 'New York University'],
+          Texas: ['Rice University', 'University of Texas at Austin'],
+          Ontario: ['McMaster University', 'University of Toronto'],
+          Alberta: ['University of Alberta'],
+          'British Columbia': ['University of British Columbia'],
+          Quebec: ['McGill University'],
+          England: ['Imperial College London', 'University of Oxford'],
+          Scotland: ['University of Edinburgh'],
+          Wales: ['Cardiff University'],
+          Bavaria: ['Technical University of Munich'],
+          Berlin: ['Humboldt University of Berlin'],
+          Hesse: ['Goethe University Frankfurt'],
+          Karnataka: ['Indian Institute of Science'],
+          Maharashtra: ['University of Mumbai'],
+          'Tamil Nadu': ['Anna University'],
+        };
+        var EDUCATION_TYPES = [
+          'High School',
+          'College/University',
+          'Graduate School',
+          'Trade School',
+        ];
+        var AREAS = [
+          'Business Administration',
+          'Computer Science',
+          'Electrical Engineering',
+          'Mathematics',
+          'Mechanical Engineering',
+          'Other',
+        ];
+
+        // ---- A. Personal Country → State ------------------------------------
+        fill(document.getElementById('country'), COUNTRIES, 'No Selection');
+        document.getElementById('country').addEventListener('change', function () {
+          rebuild(
+            document.getElementById('state'),
+            STATES[this.value] || [],
+            'Select a country first',
+          );
+        });
+
+        // ---- B/J/K. Education blocks, each with its own chain ----------------
+        var educationCount = 0;
+
+        function labelled(parent, id, text) {
+          var label = document.createElement('label');
+          label.setAttribute('for', id);
+          label.textContent = text;
+          parent.appendChild(label);
+        }
+
+        function selectField(parent, id, name, text, entries, prompt) {
+          labelled(parent, id, text);
+          var select = document.createElement('select');
+          select.id = id;
+          select.name = name;
+          fill(select, entries, prompt || 'Select one');
+          parent.appendChild(select);
+          return select;
+        }
+
+        function textField(parent, id, name, text) {
+          labelled(parent, id, text);
+          var input = document.createElement('input');
+          input.id = id;
+          input.name = name;
+          input.type = 'text';
+          parent.appendChild(input);
+          return input;
+        }
+
+        function addEducationBlock() {
+          var index = educationCount;
+          educationCount += 1;
+
+          var block = document.createElement('fieldset');
+          block.className = 'education-block';
+          block.dataset.block = 'education-' + index;
+
+          selectField(
+            block,
+            'edu-type-' + index,
+            'education[' + index + '].type',
+            'Education Type',
+            EDUCATION_TYPES,
+          );
+          var country = selectField(
+            block,
+            'edu-country-' + index,
+            'education[' + index + '].country',
+            'Education Country',
+            COUNTRIES,
+            'No Selection',
+          );
+          var state = selectField(
+            block,
+            'edu-state-' + index,
+            'education[' + index + '].state',
+            'Education State/Province',
+            [],
+            'Select a country first',
+          );
+          var school = selectField(
+            block,
+            'edu-school-' + index,
+            'education[' + index + '].school',
+            'School/Institution',
+            [],
+            'Select a state first',
+          );
+          textField(
+            block,
+            'edu-other-school-' + index,
+            'education[' + index + '].otherSchool',
+            'If other, enter School/Institution Name',
+          );
+          selectField(
+            block,
+            'edu-area-' + index,
+            'education[' + index + '].area',
+            'Area of Study',
+            AREAS,
+          );
+          textField(
+            block,
+            'edu-other-area-' + index,
+            'education[' + index + '].otherArea',
+            'If other, enter Area of Study',
+          );
+          selectField(
+            block,
+            'edu-graduated-' + index,
+            'education[' + index + '].graduated',
+            'Graduated?',
+            ['Yes', 'No'],
+          );
+
+          // Wired to this block's own controls, and to nothing else. Block 0's
+          // country must never rebuild block 1's state list.
+          country.addEventListener('change', function () {
+            rebuild(state, STATES[country.value] || [], 'Select a country first');
+            rebuild(school, [], 'Select a state first');
+          });
+          state.addEventListener('change', function () {
+            var options = (SCHOOLS[state.value] || []).slice();
+            options.push('Other');
+            rebuild(school, options, 'Select a state first');
+          });
+
+          document.getElementById('educationBlocks').appendChild(block);
+        }
+
+        document.getElementById('addEducation').addEventListener('click', addEducationBlock);
+        addEducationBlock();
+
+        // ---- G. Current Student = Yes → Graduation Date appears --------------
+        document.getElementById('currentStudent').addEventListener('change', function () {
+          var host = document.getElementById('graduationHost');
+          if (this.value !== 'Yes') {
+            host.innerHTML = '';
+            return;
+          }
+          if (host.querySelector('#graduationDate')) return;
+          window.setTimeout(function () {
+            labelled(host, 'graduationDate', 'Anticipated Graduation Date');
+            var input = document.createElement('input');
+            input.id = 'graduationDate';
+            input.name = 'graduationDate';
+            input.type = 'month';
+            host.appendChild(input);
+          }, REBUILD_MS);
+        });
+      })();
+    </script>
+  </body>
+</html>

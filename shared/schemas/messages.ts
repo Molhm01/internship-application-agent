@@ -5,6 +5,7 @@ import { deterministicFillPlanSchema, fillProgressSchema, fillRunReportSchema } 
 import { fieldValueSchema } from './fields.js';
 import { documentContentResponseSchema } from './documents.js';
 import { repeaterDirectiveSchema, repeaterSectionTraceSchema } from './repeaterRun.js';
+import { dependencyDirectiveSchema, dependencyTraceSchema } from './dependencyRun.js';
 import {
   answerGenerationRecordSchema,
   answerGenerationStateSchema,
@@ -170,6 +171,30 @@ export const repeaterRunCompleteSchema = z.object({
 
 export type RunRepeaterAutofillMessage = z.infer<typeof runRepeaterAutofillMessageSchema>;
 export type RepeaterRunComplete = z.infer<typeof repeaterRunCompleteSchema>;
+
+/**
+ * Drive this frame's dependent fields, parent before child.
+ *
+ * The directives arrive already ordered by the worker's topological sort, and
+ * the frame must not reorder them: driving two links of one chain at once is
+ * exactly the race the ordering exists to remove. Each carries two selectors
+ * and an answer; the frame fingerprints, waits, rescans, drives and verifies,
+ * and decides none of it.
+ */
+export const runDependencyResolutionMessageSchema = z.object({
+  type: z.literal('RUN_DEPENDENCY_RESOLUTION'),
+  runId: z.string().min(1).max(120),
+  directives: z.array(dependencyDirectiveSchema).max(120),
+});
+
+export const dependencyRunCompleteSchema = z.object({
+  type: z.literal('DEPENDENCY_RUN_COMPLETE'),
+  runId: z.string().min(1).max(120),
+  edges: z.array(dependencyTraceSchema).max(120),
+});
+
+export type RunDependencyResolutionMessage = z.infer<typeof runDependencyResolutionMessageSchema>;
+export type DependencyRunComplete = z.infer<typeof dependencyRunCompleteSchema>;
 
 export const fillProgressMessageSchema = z.object({
   type: z.literal('FILL_PROGRESS'),
