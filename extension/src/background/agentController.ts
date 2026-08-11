@@ -1,6 +1,8 @@
 import {
   describeProfileAvailability,
   matchCanonicalQuestion,
+  agentProfileContextSchema,
+  type AgentProfileContext,
   type AgentProgress,
   type AgentRunTrace,
   type ApprovedAnswer,
@@ -39,6 +41,8 @@ export interface AgentRunInput {
   profile: Profile;
   approvedAnswers: readonly ApprovedAnswer[];
   companyName: string;
+  /** Which tailored documents this run has available to attach. */
+  documents?: { resume: boolean; coverLetter: boolean };
   onProgress?: (progress: AgentProgress) => void;
   isCancelled?: () => boolean;
   /** Supplied when a model is configured; the deterministic policy runs otherwise. */
@@ -153,6 +157,40 @@ export function trustedValuesFor(
  * were still being driven — and Agent Mode has one execution path precisely so
  * that cannot recur.
  */
+/**
+ * What the profile could offer this run, as booleans.
+ *
+ * Recorded because "the agent did nothing" and "the agent had nothing to do"
+ * are the same observation from outside, and the live zero-action run could not
+ * be told apart from a genuinely empty profile without it. Booleans and counts
+ * only — never a value.
+ */
+export function profileContextOf(
+  profile: Profile,
+  documents: { resume: boolean; coverLetter: boolean },
+): AgentProfileContext {
+  const personal = profile.personal;
+  const address = personal.address;
+  const filled = (value: string | undefined): boolean =>
+    typeof value === 'string' && value.trim().length > 0;
+  return agentProfileContextSchema.parse({
+    profileLoaded: true,
+    hasFirstName: filled(personal.legalFirstName),
+    hasLastName: filled(personal.legalLastName),
+    hasEmail: filled(personal.email),
+    hasPhone: filled(personal.phone),
+    hasAddress: filled(address?.line1),
+    hasCity: filled(address?.city),
+    hasPostalCode: filled(address?.postalCode),
+    hasCountry: filled(address?.country),
+    hasState: filled(address?.state),
+    workRecordCount: profile.experience.length,
+    educationRecordCount: profile.education.length,
+    resumeAvailable: documents.resume,
+    coverLetterAvailable: documents.coverLetter,
+  });
+}
+
 export async function runAgentApplication(input: AgentRunInput): Promise<AgentRunResult> {
   const availability = describeProfileAvailability(input.profile);
   const recordCounts = {
@@ -163,9 +201,20 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
   // Resolved once per observation inside the host below, and threaded into the
   // frames so the observer can classify each control's answer policy.
   let latestTrusted = new Map<string, string>();
+  // A file control that is required, empty, and has a document available for it.
+  let documentsOutstandingNow = false;
+  const documentsOutstanding = (): boolean => documentsOutstandingNow;
 
   const host: AgentLoopHost = {
     runId: input.runId,
+    profileContext: profileContextOf(
+      input.profile,
+      input.documents ?? { resume: false, coverLetter: false },
+    ),
+    // A document that exists and is not on the form yet blocks readiness. The
+    // attachment subsystem is unchanged; this only refuses to call an
+    // application finished while one is outstanding.
+    documentsPending: () => documentsOutstanding(),
     buildId: input.buildId,
     ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     ...(input.isCancelled ? { isCancelled: input.isCancelled } : {}),
@@ -183,6 +232,18 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
         },
       );
       latestTrusted = trustedValuesFor(observation, input.profile);
+      // Recomputed each observation, from what the page currently shows.
+      const haveDocument =
+        (input.documents?.resume ?? false) || (input.documents?.coverLetter ?? false);
+      documentsOutstandingNow =
+        haveDocument &&
+        observation.elements.some(
+          (element) =>
+            element.kind === 'file_upload' &&
+            element.required &&
+            element.visible &&
+            element.currentValue.trim().length === 0,
+        );
       // The observer classified each control's policy without knowing what the
       // worker could answer, so the classification is refined here, where the
       // trusted values are.

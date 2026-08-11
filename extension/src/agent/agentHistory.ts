@@ -70,6 +70,24 @@ export class AgentHistory {
     return (this.failures.get(this.key(tool, label)) ?? 0) >= AGENT_MAX_REPEATED_FAILURES;
   }
 
+  /**
+   * The controls this run tried and could not settle.
+   *
+   * Distinct from work still to do. A field the agent attempted three times and
+   * could not apply is *finished* as far as the agent is concerned — it is now
+   * the applicant's — and counting it as pending work would deadlock readiness
+   * forever on any control the page will not accept.
+   */
+  exhaustedLabels(): string[] {
+    const labels = new Set<string>();
+    for (const [key, count] of this.failures) {
+      if (count < AGENT_MAX_REPEATED_FAILURES) continue;
+      const label = key.split('::')[1];
+      if (label) labels.add(label);
+    }
+    return [...labels];
+  }
+
   /** True when this control has already been answered successfully this run. */
   settled(tool: string, label: string): boolean {
     return this.successes.has(this.key(tool, label));

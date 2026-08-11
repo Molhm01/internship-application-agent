@@ -121,6 +121,19 @@ export const ERROR_CODES = [
   // An agent tool threw while driving a control. Its own code because the
   // remedy is to read the Agent Trace's step, not to change a profile value.
   'AGENT_TOOL_FAILED',
+  // Agent Mode's decision layer. Four codes rather than one, because the whole
+  // reason they exist is that all four used to be silently converted into
+  // "the application is ready" — which told the applicant their form was done
+  // when the agent had in fact never made a decision at all.
+  'AGENT_DECISION_FAILED',
+  'AGENT_MODEL_UNAVAILABLE',
+  'AGENT_INVALID_DECISION',
+  'AGENT_DECISION_TIMEOUT',
+  // The decider said READY while the page still had actionable work on it.
+  // Overridden rather than believed.
+  'AGENT_DECISION_INVALID_READY_STATE',
+  // A required document is available and not yet attached.
+  'DOCUMENT_ACTION_PENDING',
   'EXECUTION_CANCELLED',
   'INVALID_FILL_PLAN',
   'FILL_TIMEOUT',
@@ -367,6 +380,18 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'This only applies when the question above it is answered a particular way. Answer that one first, or leave this blank.',
   THIRD_PARTY_DETAILS_REQUIRED:
     'This asks about someone other than you, so nothing saved about you can answer it. Fill it in yourself if it applies, or leave it blank.',
+  AGENT_DECISION_FAILED:
+    'The agent could not decide what to do next. Export the Agent Trace; the run did not finish the application.',
+  AGENT_MODEL_UNAVAILABLE:
+    'The local model is not reachable, so the agent could not choose an action. Start Ollama and run it again.',
+  AGENT_INVALID_DECISION:
+    'The model returned something that is not a valid decision. Export the Agent Trace and try again.',
+  AGENT_DECISION_TIMEOUT:
+    'The model did not answer in time, so the agent stopped rather than guessing.',
+  AGENT_DECISION_INVALID_READY_STATE:
+    'The agent tried to finish while fields it can fill were still blank. That decision was refused.',
+  DOCUMENT_ACTION_PENDING:
+    'A document is ready to attach and has not been attached yet, so the application is not finished.',
   AGENT_TOOL_FAILED:
     'The agent could not drive this control. Export the Agent Trace and check the step that names it.',
   LOCATION_NOT_FOUND:

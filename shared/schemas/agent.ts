@@ -358,6 +358,102 @@ export type AgentVerification = z.infer<typeof agentVerificationSchema>;
 // Run state and trace
 // ---------------------------------------------------------------------------
 
+/**
+ * The nine-condition readiness verdict, recorded per cycle.
+ *
+ * In the trace because the live failure was invisible without it: a run that
+ * says READY_FOR_REVIEW and a run that says READY_FOR_REVIEW look identical,
+ * and only one of them had actually finished. These counts are the difference.
+ */
+export const agentReadyEvaluationSchema = z
+  .object({
+    unresolvedRequired: z.number().int().nonnegative(),
+    /** Fields with a saved answer that has not been applied. Blocks readiness. */
+    knownActionableRemaining: z.number().int().nonnegative(),
+    /** Required questions not yet put to the applicant. Blocks readiness. */
+    askUserRemaining: z.number().int().nonnegative(),
+    documentsPending: z.boolean().default(false),
+    finalSubmitReached: z.boolean().default(false),
+    /** Fields the agent tried and could not settle. The applicant finishes these. */
+    blockedRemaining: z.number().int().nonnegative().default(0),
+    ready: z.boolean(),
+  })
+  .strict();
+
+export type AgentReadyEvaluation = z.infer<typeof agentReadyEvaluationSchema>;
+
+/**
+ * What the saved profile could offer this run, as booleans.
+ *
+ * Recorded because "the agent did nothing" and "the agent had nothing" are the
+ * same observation from outside, and the live run could not distinguish them.
+ * Booleans and counts only — never a value.
+ */
+export const agentProfileContextSchema = z
+  .object({
+    profileLoaded: z.boolean(),
+    hasFirstName: z.boolean(),
+    hasLastName: z.boolean(),
+    hasEmail: z.boolean(),
+    hasPhone: z.boolean(),
+    hasAddress: z.boolean(),
+    hasCity: z.boolean(),
+    hasPostalCode: z.boolean(),
+    hasCountry: z.boolean(),
+    hasState: z.boolean(),
+    workRecordCount: z.number().int().nonnegative().max(50),
+    educationRecordCount: z.number().int().nonnegative().max(50),
+    resumeAvailable: z.boolean(),
+    coverLetterAvailable: z.boolean(),
+  })
+  .strict();
+
+export type AgentProfileContext = z.infer<typeof agentProfileContextSchema>;
+
+/**
+ * The markers a run emits, so a real console tells us what happened.
+ *
+ * The live failure was diagnosable only by reading source, because the run
+ * logged one summary line and nothing about the cycle that produced it. Each of
+ * these carries counts and a duration and no values.
+ */
+export const AGENT_MARKERS = [
+  'AGENT_RUN_STARTED',
+  'AGENT_OBSERVATION_CREATED',
+  'AGENT_DECISION_REQUEST_STARTED',
+  'AGENT_DECISION_REQUEST_FINISHED',
+  'AGENT_DECISION_REQUEST_FAILED',
+  'AGENT_DECISION_PARSED',
+  'AGENT_ACTION_SELECTED',
+  'AGENT_ACTION_EXECUTION_STARTED',
+  'AGENT_ACTION_EXECUTION_FINISHED',
+  'AGENT_VERIFICATION_FINISHED',
+  'AGENT_READY_EVALUATION',
+  'AGENT_RUN_FINISHED',
+] as const;
+
+export const agentMarkerSchema = z.enum(AGENT_MARKERS);
+export type AgentMarker = z.infer<typeof agentMarkerSchema>;
+
+export const agentMarkerRecordSchema = z
+  .object({
+    marker: agentMarkerSchema,
+    step: z.number().int().nonnegative(),
+    fieldCount: z.number().int().nonnegative().default(0),
+    actionableFieldCount: z.number().int().nonnegative().default(0),
+    knownAnswerFieldCount: z.number().int().nonnegative().default(0),
+    askUserFieldCount: z.number().int().nonnegative().default(0),
+    decisionType: agentDecisionKindSchema.optional(),
+    tool: agentToolSchema.optional(),
+    /** Which side chose the action, so a trace says whether the model ran. */
+    decisionProvider: z.enum(['deterministic', 'model', 'none']).default('none'),
+    durationMs: z.number().nonnegative().max(600_000).default(0),
+    errorCode: errorCodeSchema.optional(),
+  })
+  .strict();
+
+export type AgentMarkerRecord = z.infer<typeof agentMarkerRecordSchema>;
+
 export const agentRunStatusSchema = z.enum([
   'RUNNING',
   'READY_FOR_REVIEW',
@@ -400,6 +496,10 @@ export const agentStepTraceSchema = z
     verification: agentVerificationSchema.default('NOT_APPLICABLE'),
     errorCode: errorCodeSchema.optional(),
     durationMs: z.number().nonnegative().max(600_000).default(0),
+    /** Which side chose this action. 'none' for a terminal decision. */
+    decisionProvider: z.enum(['deterministic', 'model', 'none']).default('none'),
+    /** The nine-condition verdict for the observation this step ended on. */
+    readyEvaluation: agentReadyEvaluationSchema.optional(),
   })
   .strict();
 
@@ -426,6 +526,27 @@ export const agentRunTraceSchema = z
     submitActionCount: z.number().int().nonnegative().default(0),
     /** Which decider produced the decisions, so a trace is interpretable. */
     decider: z.enum(['deterministic', 'model']).default('deterministic'),
+    /** True when a decision provider was actually invoked at least once. */
+    decisionProviderCalled: z.boolean().default(false),
+    /** What the profile could offer. Booleans and counts, never values. */
+    profileContext: agentProfileContextSchema.optional(),
+    /** Counted from the first observation, so a no-op run says why. */
+    actionableFieldsInitial: z.number().int().nonnegative().default(0),
+    knownAnswerFieldsInitial: z.number().int().nonnegative().default(0),
+    askUserFieldsInitial: z.number().int().nonnegative().default(0),
+    observedFieldsInitial: z.number().int().nonnegative().default(0),
+    /** The readiness verdict the run finished on. */
+    finalReadyEvaluation: agentReadyEvaluationSchema.optional(),
+    /** Every marker the run emitted, in order. */
+    markers: z.array(agentMarkerRecordSchema).max(1200).default([]),
+    /**
+     * Why the run stopped, when it stopped badly.
+     *
+     * Never absent on a FAILED or BLOCKED run: the failure this whole repair
+     * exists for was one that reported success, so a run that did not finish
+     * has to say so in a field a test can read.
+     */
+    failureCode: errorCodeSchema.optional(),
     steps: z.array(agentStepTraceSchema).max(400).default([]),
     /** Questions still waiting on the applicant, as the employer worded them. */
     openQuestions: z.array(z.string().max(300)).max(60).default([]),

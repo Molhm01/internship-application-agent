@@ -252,6 +252,28 @@ interface AgentTrace {
   questionsAsked: number;
   submitActionCount: number;
   decider: string;
+  decisionProviderCalled: boolean;
+  observedFieldsInitial: number;
+  actionableFieldsInitial: number;
+  knownAnswerFieldsInitial: number;
+  askUserFieldsInitial: number;
+  failureCode?: string;
+  finalReadyEvaluation?: {
+    unresolvedRequired: number;
+    knownActionableRemaining: number;
+    askUserRemaining: number;
+    documentsPending: boolean;
+    finalSubmitReached: boolean;
+    ready: boolean;
+  };
+  profileContext?: {
+    profileLoaded: boolean;
+    hasAddress: boolean;
+    hasCity: boolean;
+    hasPostalCode: boolean;
+    hasPhone: boolean;
+  };
+  markers: Array<{ marker: string }>;
   steps: AgentStep[];
   openQuestions: string[];
 }
@@ -356,6 +378,14 @@ test.beforeAll(async () => {
         questionsAsked: evidence.trace.questionsAsked,
         submitActionCount: evidence.trace.submitActionCount,
         openQuestions: evidence.trace.openQuestions,
+        observedFieldsInitial: evidence.trace.observedFieldsInitial,
+        actionableFieldsInitial: evidence.trace.actionableFieldsInitial,
+        knownAnswerFieldsInitial: evidence.trace.knownAnswerFieldsInitial,
+        askUserFieldsInitial: evidence.trace.askUserFieldsInitial,
+        decisionProviderCalled: evidence.trace.decisionProviderCalled,
+        finalReadyEvaluation: evidence.trace.finalReadyEvaluation,
+        profileContext: evidence.trace.profileContext,
+        failureCode: evidence.trace.failureCode,
         values,
         steps: evidence.trace.steps,
       },
@@ -366,7 +396,77 @@ test.beforeAll(async () => {
   );
 });
 
+test.describe('the zero-action exit cannot come back', () => {
+  test('does not finish after one observation with no actions', () => {
+    // The exact live signature: observations 1, actions 0, verified 0,
+    // READY_FOR_REVIEW, over a blank application. Asserted as a shape so it
+    // fails loudly rather than being read off a summary line.
+    const zeroAction =
+      evidence.trace.observationCount <= 1 &&
+      evidence.trace.actionCount === 0 &&
+      evidence.trace.verifiedCount === 0;
+    expect(zeroAction, 'the agent exited without doing anything').toBe(false);
+  });
+
+  test('saw the page despite its vendor chrome', () => {
+    // The fixture carries thirty header buttons. Before the repair the
+    // observation threw on a twenty-item cap, the frame answered nothing, and
+    // every one of the form's controls was invisible to the agent.
+    expect(evidence.trace.observedFieldsInitial).toBeGreaterThan(0);
+  });
+
+  test('had something it could act on from the very first observation', () => {
+    expect(evidence.trace.actionableFieldsInitial).toBeGreaterThan(0);
+  });
+
+  test('called a decision provider', () => {
+    expect(evidence.trace.decisionProviderCalled).toBe(true);
+  });
+
+  test('finished on a readiness evaluation with nothing left to apply', () => {
+    const readiness = evidence.trace.finalReadyEvaluation;
+    expect(readiness, 'no readiness evaluation was recorded').toBeTruthy();
+    if (evidence.trace.status === 'READY_FOR_REVIEW') {
+      expect(readiness!.knownActionableRemaining).toBe(0);
+      expect(readiness!.askUserRemaining).toBe(0);
+      expect(readiness!.documentsPending).toBe(false);
+    }
+  });
+
+  test('emitted the markers a live console needs', () => {
+    const emitted = new Set(evidence.trace.markers.map((entry) => entry.marker));
+    for (const marker of [
+      'AGENT_RUN_STARTED',
+      'AGENT_OBSERVATION_CREATED',
+      'AGENT_DECISION_REQUEST_STARTED',
+      'AGENT_DECISION_REQUEST_FINISHED',
+      'AGENT_ACTION_SELECTED',
+      'AGENT_ACTION_EXECUTION_FINISHED',
+      'AGENT_VERIFICATION_FINISHED',
+      'AGENT_READY_EVALUATION',
+    ]) {
+      expect(emitted, `marker ${marker} was never emitted`).toContain(marker);
+    }
+  });
+
+  test('reports what the profile could offer', () => {
+    const context = evidence.trace.profileContext;
+    expect(context, 'no profile context was recorded').toBeTruthy();
+    expect(context!.profileLoaded).toBe(true);
+    expect(context!.hasAddress).toBe(true);
+    expect(context!.hasCity).toBe(true);
+    expect(context!.hasPostalCode).toBe(true);
+    expect(context!.hasPhone).toBe(true);
+  });
+});
+
 test.describe('the run is genuinely a loop', () => {
+  test('meets the iterative floor', () => {
+    expect(evidence.trace.observationCount).toBeGreaterThanOrEqual(10);
+    expect(evidence.trace.actionCount).toBeGreaterThanOrEqual(8);
+    expect(evidence.trace.verifiedCount).toBeGreaterThanOrEqual(6);
+  });
+
   test('observed, decided, acted and observed again — many times', () => {
     // The core claim. A batched pass produces one observation and one burst of
     // writes; a loop produces an observation per action.

@@ -1742,6 +1742,13 @@ async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Pr
       profile,
       approvedAnswers: [...(bundle?.approvedAnswers ?? []), ...(answersResult.data?.answers ?? [])],
       companyName: bundle?.company ?? '',
+      // Whether a tailored document exists for this application at all. The
+      // attachment path is unchanged; this only stops the run calling an
+      // application finished while a required upload is still empty.
+      documents: {
+        resume: Boolean(bundle?.resume),
+        coverLetter: Boolean(bundle?.coverLetter),
+      },
       isCancelled: () => state.cancelled,
       onProgress: (progress: AgentProgress) => {
         void chrome.runtime
@@ -1761,6 +1768,17 @@ async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Pr
       verified: outcome.trace.verifiedCount,
       questions: outcome.trace.questionsAsked,
       submitActions: outcome.trace.submitActionCount,
+      // The counts that make a zero-action run diagnosable from the console
+      // alone. A run reporting 29 fields and 0 actionable is a different
+      // problem from one reporting 0 fields, and the previous single summary
+      // line could not tell them apart.
+      observedFields: outcome.trace.observedFieldsInitial,
+      actionableFields: outcome.trace.actionableFieldsInitial,
+      knownAnswerFields: outcome.trace.knownAnswerFieldsInitial,
+      askUserFields: outcome.trace.askUserFieldsInitial,
+      decisionProviderCalled: outcome.trace.decisionProviderCalled,
+      ready: outcome.trace.finalReadyEvaluation,
+      failureCode: outcome.trace.failureCode,
     });
     return { trace: outcome.trace, status: outcome.status };
   } finally {

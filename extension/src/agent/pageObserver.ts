@@ -4,6 +4,7 @@ import {
   isNeverGuessedQuestion,
   isPlaceholderSelection,
   observedControlKindSchema,
+  observedElementSchema,
   pageObservationSchema,
   type AnswerPolicy,
   type DetectedField,
@@ -219,8 +220,37 @@ function navigationControls(
       frameId: 0,
     });
   }
-  return navigation;
+
+  // Bounded here, not at the schema.
+  //
+  // This is the line the live failure turned on. `pageObservationSchema.navigation`
+  // is a `z.array(...).max(20)`, and a `max` does not truncate — it *throws*. A
+  // real SuccessFactors page carries a nav bar, a language picker, a help
+  // launcher, per-section edit controls and a footer, so it sailed past twenty
+  // buttons; `observePage` threw after building all 29 elements, the frame
+  // answered nothing, and the worker skipped it. Zero elements, zero actionable
+  // fields, and an application declared ready with a dozen blank required
+  // controls on it.
+  //
+  // Step controls are kept first, so truncating can never discard the "Next"
+  // button in favour of twenty pieces of vendor chrome.
+  return [...navigation]
+    .sort((left, right) => Number(left.finalSubmit) - Number(right.finalSubmit))
+    .slice(0, MAX_NAVIGATION);
 }
+
+/**
+ * The schema's own ceilings, applied *before* it sees the data.
+ *
+ * Every one of these is a `max` in `pageObservationSchema`, and every one of
+ * them throws rather than truncating. An observation is a description of a page
+ * the agent did not choose; it must never be possible for a page to be shaped
+ * in a way that stops the agent seeing it at all.
+ */
+const MAX_NAVIGATION = 20;
+const MAX_ELEMENTS = 400;
+const MAX_REPEATERS = 20;
+const MAX_SECTIONS = 40;
 
 /** The repeating sections, with how many blocks exist and how many are wanted. */
 function repeaters(recordCounts: {
@@ -333,7 +363,7 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
     (element) => element.required && element.currentValue.trim().length === 0,
   ).length;
 
-  return pageObservationSchema.parse({
+  const draft = {
     observationId,
     origin: (() => {
       try {
@@ -343,13 +373,41 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
       }
     })(),
     title: document.title.slice(0, 300),
-    sections,
-    elements,
-    repeaters: repeaters(input.recordCounts ?? { experience: 0, education: 0 }),
+    sections: sections.slice(0, MAX_SECTIONS),
+    elements: elements.slice(0, MAX_ELEMENTS),
+    repeaters: repeaters(input.recordCounts ?? { experience: 0, education: 0 }).slice(
+      0,
+      MAX_REPEATERS,
+    ),
     navigation: navigationControls(ats),
     requiredOutstanding,
     takenAt: new Date().toISOString(),
-  });
+  };
+
+  try {
+    return pageObservationSchema.parse(draft);
+  } catch {
+    // An observation that cannot be described is still an observation that
+    // happened, and the elements are the part that matters. Rather than throw —
+    // which the frame reports as silence, and the worker reads as "this frame
+    // holds nothing" — the parts that failed validation are dropped and the
+    // controls are kept.
+    //
+    // This exists because the alternative was catastrophic *and quiet*: one
+    // over-long array of buttons cost an entire live run, and it looked from
+    // outside exactly like a finished application.
+    return pageObservationSchema.parse({
+      ...draft,
+      sections: [],
+      repeaters: [],
+      navigation: [],
+      elements: draft.elements
+        .map((element) => observedElementSchema.safeParse(element))
+        .filter((parsed) => parsed.success)
+        .map((parsed) => parsed.data)
+        .slice(0, MAX_ELEMENTS),
+    });
+  }
 }
 
 /** For tests and for the executor: which fields the last observation issued. */

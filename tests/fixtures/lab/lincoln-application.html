@@ -6,6 +6,24 @@
   </head>
   <body>
     <!--
+      Vendor chrome: a nav bar, a language picker, a help launcher. Thirty of
+      them, because a real SuccessFactors page has that many and the lab pages
+      had three — which is why a schema cap of twenty navigation controls went
+      unnoticed until it cost a live run.
+    -->
+    <header id="vendorChrome"></header>
+    <script>
+      (function () {
+        var header = document.getElementById('vendorChrome');
+        for (var i = 0; i < 30; i += 1) {
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'Vendor control ' + i;
+          header.appendChild(button);
+        }
+      })();
+    </script>
+    <!--
       The shape of the live application that regressed, reproduced control by
       control. The employer name is fictional ("Northwind Industrial"): what is
       being reproduced is the *layout* — a dependent state select, three repeated
