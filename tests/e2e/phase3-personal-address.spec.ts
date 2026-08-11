@@ -157,6 +157,14 @@ test.beforeAll(async () => {
           authToken,
           selectedModel: 'mock-grounded:latest',
           selectedDocumentId: null,
+          // This suite is an acceptance test for the *whole-page* pipeline,
+          // which Agent Mode replaced as the production path. That pipeline is
+          // retained behind this flag rather than deleted, and these are the
+          // tests that keep it honest — so they opt into it explicitly instead
+          // of the suite quietly measuring whichever path happens to be wired
+          // to the button.
+          developerMode: true,
+          autofill: { legacyWholePageAutofill: true },
           // Off, because every field in this phase is deterministic. A model
           // that happened to answer one would hide the failure this suite
           // exists to prove is fixed.

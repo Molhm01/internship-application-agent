@@ -118,6 +118,9 @@ export const ERROR_CODES = [
   'ACTION_NOT_APPROVED',
   'SENSITIVE_REVIEW_REQUIRED',
   'UNSUPPORTED_CONTROL',
+  // An agent tool threw while driving a control. Its own code because the
+  // remedy is to read the Agent Trace's step, not to change a profile value.
+  'AGENT_TOOL_FAILED',
   'EXECUTION_CANCELLED',
   'INVALID_FILL_PLAN',
   'FILL_TIMEOUT',
@@ -364,6 +367,8 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'This only applies when the question above it is answered a particular way. Answer that one first, or leave this blank.',
   THIRD_PARTY_DETAILS_REQUIRED:
     'This asks about someone other than you, so nothing saved about you can answer it. Fill it in yourself if it applies, or leave it blank.',
+  AGENT_TOOL_FAILED:
+    'The agent could not drive this control. Export the Agent Trace and check the step that names it.',
   LOCATION_NOT_FOUND:
     'This list offers no location matching your saved city, state, and country. Choose one yourself.',
   LOCATION_AMBIGUOUS:

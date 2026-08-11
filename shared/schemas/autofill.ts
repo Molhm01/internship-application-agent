@@ -65,6 +65,16 @@ export const autofillSettingsSchema = z.object({
    * in the UI as a fact, and the schema refuses any other value.
    */
   neverSubmit: z.literal(true).default(true),
+  /**
+   * Run the retired whole-page pipeline instead of Agent Mode.
+   *
+   * Developer-only, off by default, and only consulted when `developerMode` is
+   * also on. It exists so the old path stays exercisable rather than being
+   * deleted for tidiness — not so a user can end up with two systems writing to
+   * one page. The worker resolves which of the two runs *once*, before either
+   * starts, so they can never be concurrent.
+   */
+  legacyWholePageAutofill: z.boolean().default(false),
 });
 
 export type AutofillSettings = z.infer<typeof autofillSettingsSchema>;

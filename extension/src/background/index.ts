@@ -1,5 +1,7 @@
 import {
   describeProfileAvailability,
+  type AgentRunTrace,
+  type AgentProgress,
   BUILD_MISMATCH_MESSAGE,
   DEFAULT_ERROR_GUIDANCE,
   RECONNECT_MESSAGE,
@@ -103,6 +105,7 @@ import { askEveryFrame, discoverFrames, tellEveryFrame, type FrameTarget } from 
 import { asRepeatedSectionOutcome, runRepeaterAutofill } from './repeatersAcrossFrames.js';
 import { runDependencyResolution } from './dependenciesAcrossFrames.js';
 import { dropdownSeedsByFrame, runDropdownAutofill } from './dropdownAcrossFrames.js';
+import { runAgentApplication } from './agentController.js';
 import { mergeFrameScans, type FrameScan } from './mergeFrameScans.js';
 import { fillAcrossFrames } from './fillAcrossFrames.js';
 import { fillAccountForm } from './accountForm.js';
@@ -1621,10 +1624,20 @@ async function acceptAutofillRun(targetUrl?: string): Promise<unknown> {
   }
   await startRun(runId, url);
 
+  // ---- One authoritative production path. ---------------------------------
+  //
+  // Agent Mode unless the user has explicitly turned on developer mode and
+  // chosen the legacy pipeline. Resolved *here*, once, before anything starts,
+  // so the two can never both be running over one page — which would have them
+  // writing to the same controls, with the later write silently undoing the
+  // earlier one.
+  const settings = await loadSettings().catch(() => null);
+  const useLegacy = settings?.developerMode === true && settings.autofill.legacyWholePageAutofill;
+
   // Deliberately not awaited. The floating promise is the point: the response
   // below must not wait for it, and every failure inside it is recorded in the
   // run state rather than thrown at a caller who has already gone.
-  void runAutofill(targetUrl, runId)
+  void (useLegacy ? runAutofill(targetUrl, runId) : runAgentAutofill(targetUrl, runId))
     .then(async (result) => {
       const outcome = result as { report?: ApplicationAutofillReport; error?: AgentError };
       // The document path runs after the fields, on the settled page — but only
@@ -1673,6 +1686,95 @@ async function acceptAutofillRun(targetUrl?: string): Promise<unknown> {
   return { ok: true as const, accepted: true as const, runId };
 }
 
+/**
+ * The last agent run's trace, for the Export Agent Trace diagnostic.
+ *
+ * One run's worth. A rolling history belongs to the run-trace store; this is
+ * the thing somebody exports immediately after watching a run go wrong.
+ */
+let lastAgentTrace: AgentRunTrace | null = null;
+
+export function readLastAgentTrace(): AgentRunTrace | null {
+  return lastAgentTrace;
+}
+
+/**
+ * Autofill Application: one agent run over the page in front of the user.
+ *
+ * This is the production path now. The whole-page pipeline — scan, plan every
+ * field, execute the lot, reconcile — is behind `developerMode` and is
+ * unreachable from the button, because the two must never run over one page at
+ * once: they would fight over the same controls, and the second one to write
+ * would undo the first.
+ *
+ * The pivot is not a rewrite of what touches the DOM. The text executor, the
+ * dropdown engine, the repeater creator and the document path are all still
+ * here and still do the work — they are tools the loop calls one at a time,
+ * rather than engines each trying to solve the page from a plan made before
+ * any of it happened.
+ */
+async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Promise<unknown> {
+  const runId = requestedRunId ?? `agent-${crypto.randomUUID()}`;
+  const state = { runId, cancelled: false, controller: new AbortController() };
+  activeAutofill = state;
+  try {
+    const [tab, profileResult, answersResult] = await Promise.all([
+      activeApplicationTab(targetUrl).catch(() => null),
+      getProfile(),
+      listAnswers(),
+    ]);
+    const bundle = tab?.url ? await bundleForUrl(tab.url).catch(() => null) : null;
+    const profile = bundle?.profile ?? profileResult.data?.profile;
+    if (!tab?.id || !profile) {
+      return {
+        error: answerFailure(
+          'PROFILE_MISSING',
+          'No saved profile is available, so the agent has nothing to fill this application from.',
+        ),
+      };
+    }
+
+    const outcome = await runAgentApplication({
+      tabId: tab.id,
+      frames: await discoverFrames(tab.id, tab.url),
+      runId,
+      buildId: BUILD_ID,
+      profile,
+      approvedAnswers: [...(bundle?.approvedAnswers ?? []), ...(answersResult.data?.answers ?? [])],
+      companyName: bundle?.company ?? '',
+      isCancelled: () => state.cancelled,
+      onProgress: (progress: AgentProgress) => {
+        void chrome.runtime
+          .sendMessage({ type: 'AGENT_PROGRESS', progress })
+          .catch(() => undefined);
+      },
+    });
+
+    lastAgentTrace = outcome.trace;
+    // Counts and outcomes only — never an answer. `submitActions` is the line
+    // that matters: it must be zero, and it is measured rather than asserted.
+    console.info('[agent] agent run', {
+      runId,
+      status: outcome.status,
+      observations: outcome.trace.observationCount,
+      actions: outcome.trace.actionCount,
+      verified: outcome.trace.verifiedCount,
+      questions: outcome.trace.questionsAsked,
+      submitActions: outcome.trace.submitActionCount,
+    });
+    return { trace: outcome.trace, status: outcome.status };
+  } finally {
+    if (activeAutofill === state) activeAutofill = null;
+  }
+}
+
+/**
+ * The whole-page pipeline. Developer-only, and never concurrent with the agent.
+ *
+ * Kept because it is the only thing that still exercises several years of
+ * accumulated repairs, and deleting it would throw those away for aesthetics.
+ * It is not reachable from the button.
+ */
 async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise<unknown> {
   const state = {
     runId: requestedRunId ?? `autofill-${crypto.randomUUID()}`,
@@ -2128,6 +2230,27 @@ function handle(message: ExtensionMessage): Promise<unknown> | null {
         }
         return { ok: true as const };
       });
+    /**
+     * The last agent run, sanitized, for Export Agent Trace.
+     *
+     * Counts, stage names and error codes only. `agentRunTraceSchema` is strict
+     * and has no member able to hold a typed value, a document byte or a
+     * demographic selection, so this is safe to attach to a bug report without
+     * reading it first.
+     */
+    case 'EXPORT_AGENT_TRACE': {
+      const trace = readLastAgentTrace();
+      return Promise.resolve(
+        trace
+          ? { trace }
+          : {
+              error: answerFailure(
+                'NO_RUN_RECORDED',
+                'No agent run has finished yet, so there is nothing to export.',
+              ),
+            },
+      );
+    }
     case 'GET_AUTOFILL_REPORT':
       return loadAutofillReport().then((report) => ({ report }));
     case 'AUTOFILL_PROGRESS':

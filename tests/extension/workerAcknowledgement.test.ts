@@ -37,7 +37,15 @@ describe('the message deadline can no longer be shorter than the work', () => {
     expect(background).toMatch(/case 'RUN_APPLICATION_AUTOFILL':\s*\n\s*return acceptAutofillRun/);
     expect(background).toMatch(/accepted: true/);
     // And the run itself is started without being awaited.
-    expect(background).toMatch(/void runAutofill\(targetUrl, runId\)/);
+    //
+    // Which run that is became a choice when Agent Mode replaced the whole-page
+    // pipeline as the production path: the worker resolves one or the other
+    // *before* starting either, so the two can never run over one page at once.
+    // The property this test is about is unchanged — the message handler does
+    // not wait for whichever one it started.
+    expect(background).toMatch(
+      /void \(useLegacy \? runAutofill\(targetUrl, runId\) : runAgentAutofill\(targetUrl, runId\)\)/,
+    );
   });
 
   it('registers the message listener at the top level, before any async setup', () => {

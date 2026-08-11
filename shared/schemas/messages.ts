@@ -7,6 +7,7 @@ import { documentContentResponseSchema } from './documents.js';
 import { repeaterDirectiveSchema, repeaterSectionTraceSchema } from './repeaterRun.js';
 import { dependencyDirectiveSchema, dependencyTraceSchema } from './dependencyRun.js';
 import { dropdownDirectiveSchema, dropdownSeedSchema } from './dropdownRun.js';
+import { agentToolCallSchema } from './agent.js';
 import {
   answerGenerationRecordSchema,
   answerGenerationStateSchema,
@@ -211,6 +212,38 @@ export type DependencyRunComplete = z.infer<typeof dependencyRunCompleteSchema>;
  * message type joined them, so the pass was unreachable from the button and the
  * frame had nothing to answer even if it had been called.
  */
+/**
+ * Agent Mode's two frame messages.
+ *
+ * Deliberately only two. The agent's whole conversation with a page is "show me
+ * what you are" and "do this one thing", and a protocol with more verbs than
+ * that would be a plan being pushed down in instalments.
+ */
+export const agentObserveMessageSchema = z.object({
+  type: z.literal('AGENT_OBSERVE'),
+  runId: z.string().min(1).max(120),
+  /** Values the worker trusts for each scanned field, by field id. */
+  proposedValues: z.record(z.string().max(200), z.string().max(2000)).default({}),
+  /** Saved records per repeating section, so Add is pressed only when needed. */
+  recordCounts: z
+    .object({
+      experience: z.number().int().nonnegative().max(50),
+      education: z.number().int().nonnegative().max(50),
+    })
+    .default({ experience: 0, education: 0 }),
+  /** Which conditional children their parents currently activate, by field id. */
+  dependencyActive: z.record(z.string().max(200), z.boolean()).default({}),
+});
+
+export const agentExecuteToolMessageSchema = z.object({
+  type: z.literal('AGENT_EXECUTE_TOOL'),
+  runId: z.string().min(1).max(120),
+  call: agentToolCallSchema,
+});
+
+export type AgentObserveMessage = z.infer<typeof agentObserveMessageSchema>;
+export type AgentExecuteToolMessage = z.infer<typeof agentExecuteToolMessageSchema>;
+
 export const discoverDropdownsMessageSchema = z.object({
   type: z.literal('DISCOVER_DROPDOWNS'),
   runId: z.string().min(1).max(120),

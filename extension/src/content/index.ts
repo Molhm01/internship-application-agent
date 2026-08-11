@@ -24,6 +24,9 @@ import {
   repeaterRunCompleteSchema,
   runDependencyResolutionMessageSchema,
   dependencyRunCompleteSchema,
+  agentObserveMessageSchema,
+  agentExecuteToolMessageSchema,
+  toolExecutionResultSchema,
   discoverDropdownsMessageSchema,
   runDropdownDirectivesMessageSchema,
   dropdownsDiscoveredSchema,
@@ -34,6 +37,8 @@ import { runRepeaterAutofill } from '../repeaters/repeaterEngine.js';
 import { runDependencyResolution } from '../dependencies/dependencyEngine.js';
 import { runDropdownDirectives } from '../dropdown/dropdownEngine.js';
 import { resetDropdownRegistry, scanDropdowns } from '../dropdown/dropdownScanner.js';
+import { observePage } from '../agent/pageObserver.js';
+import { executeAgentTool } from '../agent/agentToolExecutor.js';
 import { attachInFrame, discoverInFrame } from '../uploads/frameUploads.js';
 import { BUILD_ID } from '../generated/buildInfo.js';
 import { activateNavigation } from './navigate.js';
@@ -431,6 +436,59 @@ function handleMessage(
    * this frame's own; the worker stamps the frame id, because a frame cannot
    * learn its own and a control discovered here must never be driven elsewhere.
    */
+  /**
+   * Agent Mode: describe this frame as it stands right now.
+   *
+   * Read-only, and rebuilt from scratch every time it is asked. The handles it
+   * issues are valid only for this observation — that is what makes a decision
+   * taken against an older one unable to execute, which is the mechanism behind
+   * "no stale DOM references" rather than a convention about them.
+   */
+  if (raw?.type === 'AGENT_OBSERVE') {
+    const message = agentObserveMessageSchema.parse(raw);
+    void observePage({
+      proposedValues: message.proposedValues,
+      recordCounts: message.recordCounts,
+      dependencyActive: message.dependencyActive,
+    })
+      .then((observation) => {
+        sendResponse(observation);
+      })
+      .catch((cause: unknown) => {
+        console.warn('[agent] observation failed in this frame', cause);
+        sendResponse(undefined);
+      });
+    return true;
+  }
+
+  /**
+   * Agent Mode: do exactly one thing to this frame.
+   *
+   * One tool, one control, then return. The frame does not go on to anything
+   * else and does not retry a different strategy — the worker observes again
+   * and decides again, which is the whole loop.
+   */
+  if (raw?.type === 'AGENT_EXECUTE_TOOL') {
+    const message = agentExecuteToolMessageSchema.parse(raw);
+    void executeAgentTool(message.call)
+      .then((result) => {
+        sendResponse(result);
+      })
+      .catch((cause: unknown) => {
+        // A frame that threw still answers. Silence is indistinguishable from a
+        // frame that has gone away, and the two need different responses.
+        sendResponse(
+          toolExecutionResultSchema.parse({
+            tool: message.call.tool,
+            executed: false,
+            errorCode: 'AGENT_TOOL_FAILED',
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+        );
+      });
+    return true;
+  }
+
   if (raw?.type === 'DISCOVER_DROPDOWNS') {
     const message = discoverDropdownsMessageSchema.parse(raw);
     resetDropdownRegistry();

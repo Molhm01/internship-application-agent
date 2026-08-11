@@ -59,6 +59,7 @@ describe('settings persistence', () => {
       autoAttachApprovedDocuments: false,
       scrollToFirstReviewField: false,
       neverSubmit: true as const,
+      legacyWholePageAutofill: false,
     };
     await saveSettings({ autofill: custom });
     expect((await loadSettings()).autofill).toEqual(custom);

@@ -24,6 +24,8 @@ import type {
   DependencyDirective,
   DropdownDirective,
   DropdownSeed,
+  AgentToolCall,
+  AgentProgress,
   RepeaterDirective,
   ScanApplicationResponse,
   ScanMessage,
@@ -180,6 +182,21 @@ export type ExtensionMessage =
    * describes every menu it can see and opens none of them, so a page that has
    * only been discovered looks to the applicant exactly as it did before.
    */
+  /**
+   * Agent Mode. Two verbs, and deliberately only two: "show me what you are"
+   * and "do this one thing". A protocol with more would be a plan pushed down
+   * in instalments.
+   */
+  | {
+      type: 'AGENT_OBSERVE';
+      runId: string;
+      proposedValues: Record<string, string>;
+      recordCounts: { experience: number; education: number };
+      dependencyActive: Record<string, boolean>;
+    }
+  | { type: 'AGENT_EXECUTE_TOOL'; runId: string; call: AgentToolCall }
+  | { type: 'AGENT_PROGRESS'; progress: AgentProgress }
+  | { type: 'EXPORT_AGENT_TRACE' }
   | { type: 'DISCOVER_DROPDOWNS'; runId: string; seeds?: readonly DropdownSeed[] }
   /**
    * Drives the option controls this frame described, one after another, in the
