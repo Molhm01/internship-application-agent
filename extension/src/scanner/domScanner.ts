@@ -1,4 +1,5 @@
 import {
+  ACTIVATED_BY_ANY_ANSWER,
   EXTENSION_OWNED_SELECTOR,
   FILLABLE_FIELD_TYPES,
   OPTION_FIELD_TYPES,
@@ -1627,6 +1628,31 @@ function markRepeatedRecords(document: Document, fields: DetectedField[]): void 
 const CONDITIONAL_CHILD = /^if\s+(yes|no|other|another|none)\b/i;
 
 /**
+ * The same statement, made in a sentence rather than in a keyword.
+ *
+ * Lincoln Electric does not write "If yes". It writes:
+ *
+ *     If you have any relatives currently employed, provide their full name,
+ *     location and your relationship to them.
+ *
+ * which is the identical claim — this applies only when the question above was
+ * answered affirmatively — and `CONDITIONAL_CHILD` did not match a word of it.
+ * No link was made, the executor's conditional gate had nothing to enforce, and
+ * the box was filled with the applicant's own name beside an unanswered parent.
+ *
+ * So any label that *opens with a condition* is a conditional child. The
+ * activating value is not named in the sentence, so it is not guessed at:
+ * `ACTIVATED_BY_ANY_ANSWER` records that the parent must be answered
+ * affirmatively without claiming to know which option that is, and the gate
+ * treats an unanswered parent exactly as it does for "If yes".
+ *
+ * Deliberately anchored to the start and to a comma. "If you have any relatives
+ * currently employed," is a condition; "Notify us if you have any relatives"
+ * is an instruction, and it is not matched.
+ */
+const CONDITIONAL_CHILD_CLAUSE = /^if\s+[^,]{3,120},/i;
+
+/**
  * Links a conditional control to the question that switches it on.
  *
  * The parent is the nearest *preceding* control that offers choices, because
@@ -1648,8 +1674,16 @@ function markConditionalChildren(fields: DetectedField[]): void {
     field.fieldType === 'checkbox';
 
   for (const [index, field] of fields.entries()) {
-    const match = CONDITIONAL_CHILD.exec(field.label.trim());
-    if (!match?.[1]) continue;
+    const label = field.label.trim();
+    const match = CONDITIONAL_CHILD.exec(label);
+    // The keyword form names its own activating value; the sentence form states
+    // a condition and leaves the value unsaid, so nothing is invented for it.
+    const activation = match?.[1]
+      ? match[1].toLowerCase()
+      : CONDITIONAL_CHILD_CLAUSE.test(label)
+        ? ACTIVATED_BY_ANY_ANSWER
+        : null;
+    if (!activation) continue;
     let parent: DetectedField | undefined;
     for (let back = index - 1; back >= 0; back -= 1) {
       const candidate = fields[back];
@@ -1664,7 +1698,7 @@ function markConditionalChildren(fields: DetectedField[]): void {
     if (!parent) continue;
     fields[index] = detectedFieldSchema.parse({
       ...field,
-      dependsOn: { fieldId: parent.id, value: match[1].toLowerCase() },
+      dependsOn: { fieldId: parent.id, value: activation },
       // The parent's selector as well as its id, because the executor checks
       // this against the *live* page rather than against the scan: a field id
       // identifies a question, and only a selector finds the control.

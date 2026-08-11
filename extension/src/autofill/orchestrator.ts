@@ -48,6 +48,7 @@ import {
   type DropdownRunResult,
   type LiveDropdownTrace,
   type PlannedOptionAnswer,
+  type ProfileAvailability,
   type EngineInvocation,
   type EngineMarker,
   engineInvocationSchema,
@@ -194,6 +195,13 @@ export interface AutofillDependencies {
    * this stage exists to replace — so `verify-engine-wiring` fails a production
    * worker that does not supply it.
    */
+  /**
+   * What the saved profile can answer, as booleans, read once per run.
+   *
+   * Optional so every existing caller is unchanged. A host that cannot supply
+   * it produces a trace without the section rather than no trace.
+   */
+  profileAvailability?(): Promise<ProfileAvailability | null>;
   runDropdownStage?(
     scan: ApplicationScanResult,
     /**
@@ -631,6 +639,15 @@ export async function runApplicationAutofill(
    * engine instead of executing themselves.
    */
   let optionActionsDeferred = 0;
+  /**
+   * What the profile can answer, read once and carried into the trace.
+   *
+   * Read at the top of the run rather than at the end, so a run that stops
+   * early still reports it — a run that failed is exactly when somebody needs
+   * to know whether there was an answer to fill in.
+   */
+  const profileAvailability =
+    (await dependencies.profileAvailability?.().catch(() => null)) ?? null;
   /**
    * Option controls the *old* executor path drove anyway.
    *
@@ -2293,6 +2310,7 @@ export async function runApplicationAutofill(
         engineInvocations,
         dropdownTraces,
         optionActionsDeferred,
+        profileAvailability,
         legacyOptionExecutions,
       }),
     );
@@ -2338,6 +2356,8 @@ function buildRunTrace(input: {
   dropdownTraces: readonly LiveDropdownTrace[];
   /** Option actions handed to the dropdown engine rather than executed here. */
   optionActionsDeferred: number;
+  /** What the profile could answer. Absent when the host cannot supply it. */
+  profileAvailability: ProfileAvailability | null;
   /** Option controls the old executor path drove anyway. Must be zero. */
   legacyOptionExecutions: number;
 }): RunTrace {
@@ -2443,6 +2463,7 @@ function buildRunTrace(input: {
     // answer reaches here even if a future caller forgets.
     dropdownEngineTraces: input.dropdownTraces,
     optionActionsDeferred: input.optionActionsDeferred,
+    ...(input.profileAvailability ? { profileAvailability: input.profileAvailability } : {}),
     legacyOptionExecutions: input.legacyOptionExecutions,
     // Carried through as recorded. These are the run's own account of which
     // engines it entered and how long each took, and re-deriving them from the

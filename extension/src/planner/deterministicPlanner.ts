@@ -1,4 +1,7 @@
 import {
+  ACTIVATED_BY_ANY_ANSWER,
+  describesThirdPartyDetails,
+  THIRD_PARTY_DETAILS_REASON,
   resolveStructuralField,
   allowsRegionSuffix,
   chooseDiscoverySource,
@@ -184,17 +187,34 @@ export function conditionalGateFor(
     const chosenLabels = (parent.options ?? [])
       .filter((option) => answers.includes(normalizeOptionText(option.value)))
       .map((option) => normalizeOptionText(option.label));
-    const active = [...answers, ...chosenLabels].some(
-      (value) => value === dependency.value || value.startsWith(`${dependency.value} `),
-    );
+    // A child whose label states a condition without naming the option that
+    // satisfies it — "If you have any relatives currently employed, …". The
+    // parent must hold an affirmative answer, and a decline is not one.
+    //
+    // Never active on an unanswered parent, which is the property that matters:
+    // that is the state Lincoln's form was left in when the box beneath it was
+    // filled with the applicant's own name.
+    const affirmative =
+      dependency.value === ACTIVATED_BY_ANY_ANSWER &&
+      parentAnswered &&
+      ![...answers, ...chosenLabels].some((value) =>
+        /^(no|none|n a|not applicable|false|decline)/.test(value),
+      );
+    const active =
+      affirmative ||
+      [...answers, ...chosenLabels].some(
+        (value) => value === dependency.value || value.startsWith(`${dependency.value} `),
+      );
+    const named =
+      dependency.value === ACTIVATED_BY_ANY_ANSWER ? 'affirmatively' : `"${dependency.value}"`;
     return {
       active,
       parentAnswered,
       reason: active
-        ? `"${parent.question}" is answered "${dependency.value}", so this applies.`
+        ? `"${parent.question}" is answered ${named}, so this applies.`
         : parentAnswered
-          ? `"${parent.question}" is not answered "${dependency.value}", so this does not apply and stays blank.`
-          : `"${parent.question}" has to be answered first; this fills only if that answer is "${dependency.value}".`,
+          ? `"${parent.question}" is not answered ${named}, so this does not apply and stays blank.`
+          : `"${parent.question}" has to be answered first; this fills only if that answer is ${named}.`,
     };
   };
 }
@@ -443,6 +463,38 @@ function planAction(
     warnings: [...match.warnings],
     originalMatch: match,
   };
+
+  // ---- Somebody else's details. Refused before anything can find a value. ---
+  //
+  // The second of three protections against the worst thing this project has
+  // done to a live application. Lincoln Electric's relatives question was left
+  // unanswered and the box beneath it — "If you have any relatives currently
+  // employed, provide their full name, location and your relationship to
+  // them." — was filled with the applicant's own legal name. The form told an
+  // employer that the applicant has a relative working there, and named them.
+  //
+  // The intent matcher now refuses to call that question `full_name`, which is
+  // what produced the value. This is the layer that does not care where a value
+  // came from: a match found by wording, by an approved answer saved against a
+  // similar label, or by the analysis, is refused the same way. The question is
+  // about a person who is not the applicant, and nothing saved about the
+  // applicant is an answer to it.
+  //
+  // `manual_review` rather than `skip`: the question may well apply, and the
+  // applicant is the only one who can say. It reaches them as "Information
+  // needed" with the reason attached, never as a failure.
+  if (describesThirdPartyDetails(field.label) || describesThirdPartyDetails(field.question)) {
+    return {
+      ...base,
+      action: 'manual_review',
+      sensitive: base.sensitive,
+      requiresReview: true,
+      confidence: 0,
+      reason: THIRD_PARTY_DETAILS_REASON,
+      warnings: base.warnings,
+    };
+  }
+
   // Before every other test, including the ones that would find a value.
   //
   // A conditional child is not a question about the applicant until its parent

@@ -76,8 +76,17 @@
           <option value="no">No</option>
         </select>
 
+        <!--
+          The live wording, verbatim. It used to read "Do you have any relatives
+          or household members employed by our Company?" with a child labelled
+          "If yes, please provide…", and that pair was already handled — which
+          is precisely why the fixture proved nothing. Lincoln does not write
+          "If yes". It writes a sentence, the conditional-child matcher did not
+          recognise a word of it, and the box below was filled with the
+          applicant's own legal name beside an unanswered parent.
+        -->
         <label for="relativesEmployed"
-          >Do you have any relatives or household members employed by our Company? *</label
+          >Do you have any relatives, including those by marriage, employed by our Company? *</label
         >
         <select id="relativesEmployed" name="relativesEmployed" required>
           <option value="">No Selection</option>
@@ -86,12 +95,14 @@
         </select>
 
         <!--
-          The conditional child. It was filled with the applicant's own name on
-          the live run while its parent above sat unanswered — the failure this
-          fixture exists to make impossible.
+          The conditional child, in the live form's own words. Note what it does
+          *not* say: "if yes", and nothing naming the option that activates it.
+          It also contains the words "full name", which is what made the intent
+          matcher call it the applicant's own name question at confidence 1.0.
         -->
         <label for="relativeDetails"
-          >If yes, please provide the name, location, and relationship of each relative</label
+          >If you have any relatives currently employed, provide their full name, location and your
+          relationship to them.</label
         >
         <textarea
           id="relativeDetails"

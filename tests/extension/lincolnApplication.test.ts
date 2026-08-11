@@ -255,7 +255,7 @@ describe('company-specific questions nobody can answer', () => {
   const unanswerable: ReadonlyArray<[string, RegExp]> = [
     ['priorEmployment', /ever worked for/i],
     ['employmentRestriction', /employment restriction/i],
-    ['relativesEmployed', /relatives or household members/i],
+    ['relativesEmployed', /relatives, including those by marriage/i],
   ];
 
   for (const [id, label] of unanswerable) {
@@ -285,7 +285,7 @@ describe('conditional children', () => {
   });
 
   it('does not report an inactive conditional child as a failure', () => {
-    expect(statusOf(base, /provide the name, location/i)).not.toBe('FAILED_EXECUTION');
+    expect(statusOf(base, /provide their full name, location/i)).not.toBe('FAILED_EXECUTION');
   });
 
   it('refuses the write at the executor even when handed an approved action', async () => {
@@ -293,7 +293,7 @@ describe('conditional children', () => {
     // be the only thing standing between an unanswered parent and a filled
     // child.
     const { fields } = await scanDom(document, 'page-icims', new AbortController().signal);
-    const child = fields.find((field) => /provide the name, location/i.test(field.label));
+    const child = fields.find((field) => /provide their full name, location/i.test(field.label));
     expect(child?.dependsOn).toBeDefined();
 
     const outcome = await executeDomAction(

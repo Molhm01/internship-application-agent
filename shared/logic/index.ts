@@ -7,6 +7,8 @@ export * from './optionMatcher.js';
 export * from './dropdownOptionMatch.js';
 export * from './dropdownAliases.js';
 export * from './selectionDisplay.js';
+export * from './thirdPartyDetails.js';
+export * from './profileAvailability.js';
 export * from './dropdownIntendedAnswer.js';
 export * from './repeatedSections.js';
 export * from './locationMatcher.js';

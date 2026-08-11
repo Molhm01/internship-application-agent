@@ -1,4 +1,5 @@
 import {
+  describeProfileAvailability,
   BUILD_MISMATCH_MESSAGE,
   DEFAULT_ERROR_GUIDANCE,
   RECONNECT_MESSAGE,
@@ -1851,6 +1852,22 @@ async function runAutofill(targetUrl?: string, requestedRunId?: string): Promise
        * with. The only caller that ever supplied it was a test — which passed,
        * the entire time.
        */
+      /**
+       * What the saved profile can answer, as booleans, for the trace.
+       *
+       * The bundle's profile when this page came from "Apply with Agent", the
+       * stored one otherwise — the same precedence every other stage uses, so
+       * the availability reported is the availability the run actually had.
+       */
+      profileAvailability: async () => {
+        const [tab, profileResult] = await Promise.all([
+          activeApplicationTab(targetUrl).catch(() => null),
+          getProfile(),
+        ]);
+        const bundle = tab?.url ? await bundleForUrl(tab.url).catch(() => null) : null;
+        const profile = bundle?.profile ?? profileResult.data?.profile;
+        return profile ? describeProfileAvailability(profile) : null;
+      },
       growRepeatedSections: async () => {
         const [tab, profileResult] = await Promise.all([
           activeApplicationTab(targetUrl).catch(() => null),

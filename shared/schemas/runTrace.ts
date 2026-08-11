@@ -3,6 +3,52 @@ import { ANNOTATION_KINDS, FINAL_FIELD_STATUSES } from '../logic/finalFieldStatu
 import { requiredSourceSchema } from './fields.js';
 import { dropdownTraceSchema } from './dropdownExecution.js';
 import { liveDropdownTraceSchema } from './dropdownRun.js';
+
+/**
+ * The saved profile's answering power, as a validated shape.
+ *
+ * Mirrors `describeProfileAvailability` in `shared/logic/profileAvailability`,
+ * which is where the reasoning lives. Written as a schema here so the trace
+ * cannot carry anything else: every member is a boolean, a count, or a
+ * vocabulary string, and `.strict()` drops anything a future caller adds.
+ */
+const workRecordAvailabilitySchema = z
+  .object({
+    recordIndex: z.number().int().nonnegative().max(50),
+    hasEmployer: z.boolean(),
+    hasTitle: z.boolean(),
+    hasLocation: z.boolean(),
+    hasStartDate: z.boolean(),
+    hasEndDate: z.boolean(),
+    statesCurrent: z.boolean(),
+    hasEmploymentType: z.boolean(),
+    hasReasonForLeaving: z.boolean(),
+  })
+  .strict();
+
+const educationRecordAvailabilitySchema = z
+  .object({
+    recordIndex: z.number().int().nonnegative().max(50),
+    hasInstitution: z.boolean(),
+    hasEducationType: z.boolean(),
+    hasMajor: z.boolean(),
+    hasCountry: z.boolean(),
+    hasState: z.boolean(),
+    hasGraduationDate: z.boolean(),
+    statesCompletion: z.boolean(),
+  })
+  .strict();
+
+export const profileAvailabilitySchema = z
+  .object({
+    workRecordCount: z.number().int().nonnegative().max(50),
+    educationRecordCount: z.number().int().nonnegative().max(50),
+    work: z.array(workRecordAvailabilitySchema).max(50).default([]),
+    education: z.array(educationRecordAvailabilitySchema).max(50).default([]),
+    /** Questions the profile schema has nowhere to store. Names, not values. */
+    unstorableQuestions: z.array(z.string().max(200)).max(20).default([]),
+  })
+  .strict();
 import { repeaterSectionTraceSchema } from './repeaterRun.js';
 import { dependencyTraceSchema } from './dependencyRun.js';
 
@@ -321,6 +367,22 @@ export const runTraceSchema = z
      * member able to hold an option label, a displayed value, or an answer.
      */
     dropdownEngineTraces: z.array(liveDropdownTraceSchema).max(400).default([]),
+
+    /**
+     * What the saved profile could and could not answer, as booleans.
+     *
+     * The first thing to read when a run comes back with unfilled controls, and
+     * it exists because two completely different failures looked identical from
+     * outside. Lincoln Electric returned nine option controls reading "No
+     * Selection"; some of those controls could not be driven, and others had
+     * nothing to be filled *from* — including two, Education Country and
+     * Education State, that no profile this schema can store is able to answer
+     * at all. Repairing a dropdown would never have fixed those.
+     *
+     * Counts and booleans only. `profileAvailabilitySchema` has no member able
+     * to hold a value.
+     */
+    profileAvailability: profileAvailabilitySchema.optional(),
 
     /**
      * Option actions the deterministic and AI stages handed to the dedicated

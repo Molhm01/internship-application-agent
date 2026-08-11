@@ -11,6 +11,7 @@ import type {
   RunTrace,
 } from '@internship-agent/shared';
 import {
+  describeAvailabilityGaps,
   describeDependency,
   describeLiveDropdown,
   describeRepeaterSection,
@@ -519,6 +520,28 @@ export function DiagnosticsSection(): JSX.Element {
               value, or an answer, so this list cannot leak one even if a future
               caller tries.
             */}
+            {/*
+              What the profile could answer, before anything about controls.
+
+              The first thing to read when a run comes back with unfilled
+              dropdowns, because two different failures look identical from
+              outside: a control that could not be driven, and a control with
+              nothing to be filled from. Two of Lincoln Electric's — Education
+              Country and Education State — are the second kind, and no repair
+              to a dropdown would ever have fixed them.
+
+              Booleans and counts. Nothing here can hold a saved value.
+            */}
+            {exported.trace.profileAvailability ? (
+              <>
+                <strong>Profile data available to this run</strong>
+                <ul className="diagnostics-availability">
+                  {describeAvailabilityGaps(exported.trace.profileAvailability).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
             {exported.trace.dropdownEngineTraces.length > 0 ? (
               <>
                 <strong>Dropdown Engine — live trace</strong>

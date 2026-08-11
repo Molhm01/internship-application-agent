@@ -1,6 +1,8 @@
 import {
   DEFAULT_ERROR_GUIDANCE,
   contractViolation,
+  describesThirdPartyDetails,
+  THIRD_PARTY_DETAILS_REASON,
   isDropdownEngineAction,
   fillExecutionResultSchema,
   normalizeOptionText,
@@ -530,6 +532,41 @@ export async function executeDomAction(
         fieldId: field.id,
         recoverable: true,
         suggestedAction: DEFAULT_ERROR_GUIDANCE.PARENT_ANSWER_REQUIRED,
+        debugContext: {},
+      },
+    });
+  }
+  // The last of the three protections, and the only one that runs with the
+  // control in hand.
+  //
+  // A question about somebody else is never answered from the applicant's own
+  // facts, whatever the plan says. The intent matcher refuses to recognise such
+  // a label as an identity question and the planner refuses to produce a value
+  // for it; this refuses to *write* one. Three independent layers, because the
+  // failure they prevent is not a field left blank — it is telling an employer
+  // that the applicant has a relative working there, and naming them.
+  //
+  // After the conditional gate on purpose. When the child does have a parent,
+  // "answer the question above first" is the more useful thing to tell the
+  // applicant, and both checks refuse the write either way. This one is what
+  // holds when the page states no relationship the scanner can see, which is
+  // exactly how the live failure got through.
+  if (describesThirdPartyDetails(field.label) || describesThirdPartyDetails(field.question)) {
+    return fillExecutionResultSchema.parse({
+      actionId: action.id,
+      fieldId: field.id,
+      // `needs_review`: the question may genuinely apply, and only the
+      // applicant can say. Nothing was attempted and nothing went wrong.
+      status: 'needs_review',
+      expectedValue: action.proposedValue,
+      attempts: 0,
+      durationMs: Math.round(performance.now() - started),
+      error: {
+        code: 'THIRD_PARTY_DETAILS_REQUIRED',
+        message: THIRD_PARTY_DETAILS_REASON,
+        fieldId: field.id,
+        recoverable: true,
+        suggestedAction: DEFAULT_ERROR_GUIDANCE.THIRD_PARTY_DETAILS_REQUIRED,
         debugContext: {},
       },
     });

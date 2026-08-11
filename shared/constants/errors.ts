@@ -104,6 +104,12 @@ export const ERROR_CODES = [
   // Not a failure: the question does not apply yet, and stating an answer to it
   // anyway is what put the applicant's own name in a relatives-detail box.
   'PARENT_ANSWER_REQUIRED',
+  // A question about somebody who is not the applicant: a relative, an
+  // emergency contact, a reference, the employee who referred them. Its own
+  // code because the remedy is different in kind from every other unanswered
+  // question — there is no profile field to add, and there never will be. The
+  // applicant knows the answer and the agent cannot.
+  'THIRD_PARTY_DETAILS_REQUIRED',
   'LOCATION_NOT_FOUND',
   'LOCATION_AMBIGUOUS',
   'PHONE_COUNTRY_CODE_NOT_FOUND',
@@ -356,6 +362,8 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'Nothing saved answers this question, so nothing was selected. Answer it yourself, or save the fact in your profile and retry.',
   PARENT_ANSWER_REQUIRED:
     'This only applies when the question above it is answered a particular way. Answer that one first, or leave this blank.',
+  THIRD_PARTY_DETAILS_REQUIRED:
+    'This asks about someone other than you, so nothing saved about you can answer it. Fill it in yourself if it applies, or leave it blank.',
   LOCATION_NOT_FOUND:
     'This list offers no location matching your saved city, state, and country. Choose one yourself.',
   LOCATION_AMBIGUOUS:

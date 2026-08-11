@@ -255,7 +255,11 @@ export const detectedFieldSchema = z.object({
   dependsOn: z
     .object({
       fieldId: idSchema,
-      /** The parent answer that activates this control, normalized. */
+      /**
+       * The parent answer that activates this control, normalized — or
+       * `ACTIVATED_BY_ANY_ANSWER` when the label states a condition without
+       * naming the option that satisfies it.
+       */
       value: z.string().max(200),
     })
     .optional(),

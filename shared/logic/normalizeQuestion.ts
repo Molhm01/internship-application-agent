@@ -3,6 +3,7 @@ import {
   type CanonicalQuestion,
   type FieldSection,
 } from '../constants/questions.js';
+import { describesThirdPartyDetails } from './thirdPartyDetails.js';
 
 /**
  * Reduces a label to a comparable form: lowercase, no punctuation, no required
@@ -973,6 +974,20 @@ export function scoreQuestionIntent(rawLabel: string): QuestionMatch {
 export function matchCanonicalQuestion(rawLabel: string): QuestionMatch {
   const normalized = normalizeLabel(rawLabel);
   if (normalized.length === 0) return { question: 'unknown', confidence: 0 };
+
+  // Before the rule table, and that order is the whole point.
+  //
+  // "If you have any relatives currently employed, provide their full name,
+  // location and your relationship to them." matched the `full_name` rule at
+  // confidence 1.0 — the label does contain "full name" — and a live
+  // application was submitted naming the applicant as their own relative. The
+  // rules below cannot tell whose name is being asked for; this can, and it
+  // runs first so no rule can answer a question about somebody else.
+  //
+  // `unknown` rather than a new intent: an unrecognised question is one the
+  // planner leaves to the applicant, which is exactly the required outcome and
+  // needs no new plumbing to obtain it.
+  if (describesThirdPartyDetails(normalized)) return { question: 'unknown', confidence: 0 };
 
   for (const rule of RULES) {
     for (const pattern of rule.patterns) {
