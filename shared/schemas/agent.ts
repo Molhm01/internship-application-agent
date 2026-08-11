@@ -63,6 +63,58 @@ export const observedControlKindSchema = z.enum([
 export type ObservedControlKind = z.infer<typeof observedControlKindSchema>;
 
 /**
+ * How a control must be *operated*, decided by the extension from the live
+ * element — never by the model, and never inherited from a field type.
+ *
+ * This exists because the agent typed an answer into a dropdown on a live
+ * application. `kind` was too coarse to prevent it and, worse, it was derived
+ * from the scanner's field type: a vendor control the scanner reads as a text
+ * box is one the agent will try to type into, whatever it actually is.
+ *
+ * So interaction type is computed from what the element *does*: does it open a
+ * list, does it carry its own options, can a person put characters into it. It
+ * is the authority the tool validator enforces against, and a control that
+ * answers from a list can never be typed into however it is marked up.
+ */
+export const interactionTypeSchema = z.enum([
+  'TEXT_INPUT',
+  'TEXTAREA',
+  /** A real <select>. Its options are in the DOM already. */
+  'NATIVE_SELECT',
+  /** Opens a menu. Never typed into. */
+  'CUSTOM_SELECT',
+  /** Opens a menu that contains its own search box. See the rules below. */
+  'SEARCHABLE_COMBOBOX',
+  'CHECKBOX',
+  'RADIO',
+  'DATE_INPUT',
+  'FILE_UPLOAD',
+  'BUTTON',
+  'LINK',
+  'UNKNOWN',
+]);
+
+export type InteractionType = z.infer<typeof interactionTypeSchema>;
+
+/**
+ * The control families that answer from a list of choices.
+ *
+ * `type` is refused for every one of them. A searchable combobox is included
+ * deliberately: its *search box* accepts characters, and the control itself
+ * still does not — typing a query is not choosing an answer, and a run that
+ * treated it as one would leave the field unanswered while reporting success.
+ */
+export const OPTION_INTERACTION_TYPES: readonly InteractionType[] = [
+  'NATIVE_SELECT',
+  'CUSTOM_SELECT',
+  'SEARCHABLE_COMBOBOX',
+];
+
+/** Where a dropdown currently is, so the tools available to it are decidable. */
+export const dropdownStateSchema = z.enum(['CLOSED', 'OPEN', 'SEARCHING', 'SELECTED']);
+export type DropdownState = z.infer<typeof dropdownStateSchema>;
+
+/**
  * How this question may be answered, decided by the extension and not the model.
  *
  * The model is told the classification; it does not get to choose it. That is
@@ -88,6 +140,12 @@ export type AnswerPolicy = z.infer<typeof answerPolicySchema>;
 /** One option a control is currently offering. Never a stale scan snapshot. */
 export const observedOptionSchema = z
   .object({
+    /**
+     * A runtime handle for one offered choice, minted by the observation that
+     * read it, of the form `e12::option::3`. The model selects by this and
+     * never by text, so it cannot name a choice the control is not offering.
+     */
+    optionId: z.string().max(80).default(''),
     label: z.string().max(300),
     disabled: z.boolean().default(false),
     selected: z.boolean().default(false),
@@ -109,6 +167,10 @@ export const observedElementSchema = z
     section: z.string().max(120).default(''),
     label: z.string().max(300),
     kind: observedControlKindSchema,
+    /** How this control must be operated. The tool validator's authority. */
+    interactionType: interactionTypeSchema.default('UNKNOWN'),
+    /** Where this dropdown is, when it is one. */
+    dropdownState: dropdownStateSchema.default('CLOSED'),
     /** What the control displays now. Empty for a control holding nothing. */
     currentValue: z.string().max(300).default(''),
     required: z.boolean().default(false),
@@ -259,6 +321,14 @@ export const agentToolCallSchema = z
      * agent may restate saved facts and may not make them up.
      */
     value: z.string().max(2000).optional(),
+    /**
+     * Which offered choice to select, by the handle the observation issued.
+     *
+     * The model may not invent one: a handle no current observation minted
+     * resolves to nothing, which is what stops "select the option I imagine
+     * exists" from being expressible.
+     */
+    optionId: z.string().max(80).optional(),
     /** Which stored document to attach, by kind. Never a path. */
     documentKind: z.enum(['resume', 'cover_letter']).optional(),
     /** The question to put to the applicant, for `ask_user`. */
@@ -340,6 +410,16 @@ export const toolExecutionResultSchema = z
     observedValue: z.string().max(600).default(''),
     /** Options a `get_options` / `open_dropdown` call actually read. */
     options: z.array(observedOptionSchema).max(400).default([]),
+    /**
+     * How many choices the tool read while working, as a count.
+     *
+     * Separate from `options` because a successful selection deliberately does
+     * not carry its option list home — a verified control has no need of one,
+     * and shipping several thousand strings per run would be waste. The count
+     * survives, so a trace can still prove a selection was made from a list the
+     * engine had actually read.
+     */
+    optionsSeen: z.number().int().nonnegative().max(5000).default(0),
     /** True when the page changed in a way the tool was waiting for. */
     pageChanged: z.boolean().default(false),
     reason: z.string().max(600).default(''),

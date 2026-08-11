@@ -132,6 +132,16 @@ export const ERROR_CODES = [
   // The decider said READY while the page still had actionable work on it.
   // Overridden rather than believed.
   'AGENT_DECISION_INVALID_READY_STATE',
+  // The agent asked to operate a control in a way its type does not permit —
+  // in practice, to type an answer into a dropdown. Refused in code rather
+  // than discouraged in a prompt, because on a live application the agent did
+  // exactly this and left the control unanswered while believing otherwise.
+  'WRONG_TOOL_FOR_CONTROL_TYPE',
+  // A dropdown was opened, its options were read, and the saved answer is not
+  // among them. Never resolved by typing the answer in instead.
+  'DROPDOWN_TARGET_NOT_FOUND',
+  // A choice was named that the control is not currently offering.
+  'OPTION_HANDLE_UNKNOWN',
   // A required document is available and not yet attached.
   'DOCUMENT_ACTION_PENDING',
   'EXECUTION_CANCELLED',
@@ -388,6 +398,12 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'The model returned something that is not a valid decision. Export the Agent Trace and try again.',
   AGENT_DECISION_TIMEOUT:
     'The model did not answer in time, so the agent stopped rather than guessing.',
+  WRONG_TOOL_FOR_CONTROL_TYPE:
+    'This control answers from a list, so it cannot be typed into. The agent will open it and choose instead.',
+  DROPDOWN_TARGET_NOT_FOUND:
+    'This list was opened and read, and your saved answer is not one of the choices it offers. Choose one yourself.',
+  OPTION_HANDLE_UNKNOWN:
+    'That choice is not one this control is currently offering. The list is read again before anything is selected.',
   AGENT_DECISION_INVALID_READY_STATE:
     'The agent tried to finish while fields it can fill were still blank. That decision was refused.',
   DOCUMENT_ACTION_PENDING:

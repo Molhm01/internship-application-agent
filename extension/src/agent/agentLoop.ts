@@ -150,6 +150,9 @@ export interface AgentRunOutcome {
  * of "the agent could not decide" was converted into READY_FOR_REVIEW, which
  * told the applicant their form was complete when nothing had been attempted.
  */
+/** How many refused actions a run tolerates before it stops and says why. */
+const MAX_REJECTED_ACTIONS = 12;
+
 function decisionErrorFor(cause: unknown): AgentRunTrace['steps'][number]['errorCode'] {
   const detail = cause instanceof Error ? cause.message.toLowerCase() : String(cause).toLowerCase();
   if (/timeout|timed out|abort/.test(detail)) return 'AGENT_DECISION_TIMEOUT';
@@ -193,6 +196,10 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
   const markers: AgentMarkerRecord[] = [];
   let decisionProviderCalled = false;
   let invalidReadyStates = 0;
+  // Refused actions, bounded. A decider that keeps asking for a tool the
+  // control does not accept is not making progress, and the run says so
+  // rather than spending its budget being corrected.
+  let rejectedActions = 0;
   let failure: AgentRunTrace['steps'][number]['errorCode'] | undefined;
   let lastReadiness: AgentReadyEvaluation | undefined;
 
@@ -352,6 +359,62 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     // later one. A decision is a claim about a specific page state, and it is
     // checked against that state or refused.
     const verdict = checkDecision(decided, observation, trustedValues);
+
+    // ---- A refused action is a correction, not the end of the run. ----------
+    //
+    // The case this exists for: the decider asks to type an answer into a
+    // dropdown. Ending the run there would leave the rest of the application
+    // unfilled over one bad decision, and letting it through would leave the
+    // control on its placeholder while the run believed it answered. So the
+    // action is rejected, the rejection is recorded against that control, and
+    // the loop re-observes and decides again — now knowing this tool does not
+    // work here. The history's own ceiling bounds how often that can repeat.
+    if (!verdict.allowed && !verdict.replacement && decided.kind === 'ACTION') {
+      const refusedTarget = decided.action?.elementId
+        ? observation.elements.find((entry) => entry.elementId === decided.action?.elementId)
+        : undefined;
+      rejectedActions += 1;
+      history.record(
+        agentStepTraceSchema.parse({
+          step,
+          observationId: observation.observationId,
+          observedElements: observation.elements.length,
+          requiredOutstanding: observation.requiredOutstanding,
+          decisionType: 'BLOCKED',
+          reason: verdict.reason.slice(0, 300),
+          tool: decided.action?.tool,
+          ...(refusedTarget ? { targetKind: refusedTarget.kind } : {}),
+          targetLabel: (refusedTarget?.label ?? '').slice(0, 200),
+          targetSection: refusedTarget?.section ?? '',
+          // Never executed, so never counted as a browser action.
+          executed: false,
+          verification: 'NOT_VERIFIED',
+          ...(verdict.code ? { errorCode: verdict.code } : {}),
+          decisionProvider: provider,
+          readyEvaluation: readiness,
+        }),
+        // Recorded as an *action* decision so the history counts the failure
+        // against this tool and this control, which is what makes the next
+        // cycle choose differently rather than repeating itself.
+        decided,
+      );
+      mark('AGENT_ACTION_SELECTED', step, observation, {
+        decisionType: 'BLOCKED',
+        ...(decided.action?.tool ? { tool: decided.action.tool } : {}),
+        decisionProvider: provider,
+        ...(verdict.code ? { errorCode: verdict.code } : {}),
+      });
+      if (rejectedActions >= MAX_REJECTED_ACTIONS) {
+        failure = verdict.code ?? 'AGENT_DECISION_FAILED';
+        status = 'BLOCKED';
+        break;
+      }
+      observation = await host.observe();
+      observationCount += 1;
+      mark('AGENT_OBSERVATION_CREATED', step, observation);
+      continue;
+    }
+
     const decision: AgentDecision = verdict.allowed
       ? decided
       : (verdict.replacement ?? {
@@ -466,7 +529,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         targetSection: target?.section ?? '',
         executed: execution.executed,
         wroteValue: (call.value ?? '').length > 0,
-        optionsSeen: execution.options.length,
+        optionsSeen: Math.max(execution.optionsSeen, execution.options.length),
         pageChanged: execution.pageChanged,
         verification,
         ...(execution.errorCode ? { errorCode: execution.errorCode } : {}),

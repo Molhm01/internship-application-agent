@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentDecisionSchema,
+  observedElementSchema,
   type ObservedElement,
   type PageObservation,
   type ToolExecutionResult,
@@ -23,7 +24,10 @@ import { evaluateReady, isActionable, needsUser } from '../../extension/src/agen
 let handle = 0;
 function element(patch: Partial<ObservedElement> = {}): ObservedElement {
   handle += 1;
-  return {
+  // Parsed rather than cast: the factory then produces exactly what the
+  // observer produces, defaults included, so a test cannot accidentally
+  // describe a control the real observation could never emit.
+  return observedElementSchema.parse({
     elementId: `e${handle}`,
     section: '',
     label: `Field ${handle}`,
@@ -37,7 +41,7 @@ function element(patch: Partial<ObservedElement> = {}): ObservedElement {
     policy: 'UNKNOWN_FACT',
     frameId: 0,
     ...patch,
-  };
+  });
 }
 
 function observation(elements: ObservedElement[]): PageObservation {
@@ -108,18 +112,27 @@ function lincolnObservation(): ObservedElement[] {
       policy: 'KNOWN_FACT',
       proposedValue: '+1 201 555 0134',
     }),
-    // "No Selection" has already been reduced to '' by the observer.
+    // "No Selection" has already been reduced to '' by the observer, and a
+    // native select carries its choices in the DOM — so the agent can read
+    // them and choose in one cycle rather than opening first.
     element({
       label: 'State/Province *',
       kind: 'dropdown',
+      interactionType: 'NATIVE_SELECT',
       required: true,
       policy: 'KNOWN_FACT',
       proposedValue: 'New Jersey',
+      optionsKnown: true,
+      options: [
+        { optionId: 'state::option::0', label: 'No Selection', disabled: false, selected: true },
+        { optionId: 'state::option::1', label: 'New Jersey', disabled: false, selected: false },
+      ],
     }),
     // Nothing saved answers this one.
     element({
       label: 'Do you have any relatives employed by our Company? *',
       kind: 'dropdown',
+      interactionType: 'NATIVE_SELECT',
       required: true,
     }),
   ];
@@ -255,6 +268,7 @@ describe('the loop, against the live Lincoln shape', () => {
           executed: true,
           observedValue: call.value ?? '',
           options: [],
+          optionsSeen: 0,
           pageChanged: true,
           reason: '',
           durationMs: 1,

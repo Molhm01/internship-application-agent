@@ -92,8 +92,17 @@ export function evaluateReady(input: ReadyInput): AgentReadyEvaluation {
   // A control the agent has already tried and failed on is not pending work.
   // It is a blocked item the applicant has to finish, and counting it as
   // actionable would make readiness unreachable on any page holding one.
+  //
+  // A control the agent has *asked the applicant about* is finished in the same
+  // sense, even though a saved answer exists for it. That is the Education Type
+  // case: the list was opened, read, and offers nothing matching the saved
+  // degree — so the applicant was asked, and there is nothing further the agent
+  // can do. Counting it as pending would block readiness on a question already
+  // surfaced.
   const givenUp = new Set(
-    (input.unresolvedByAgent ?? []).map((label) => label.toLowerCase().trim()),
+    [...(input.unresolvedByAgent ?? []), ...input.askedQuestions].map((label) =>
+      label.toLowerCase().trim(),
+    ),
   );
   const stillActionable = live.filter(
     (element) => isActionable(element) && !givenUp.has(element.label.toLowerCase().trim()),

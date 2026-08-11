@@ -1,9 +1,12 @@
 import {
   AGENT_TOOLS,
   MUTATING_TOOLS,
+  OPTION_INTERACTION_TYPES,
   agentDecisionSchema,
   type AgentDecision,
+  type AgentTool,
   type AgentToolCall,
+  type ErrorCode,
   type ObservedElement,
   type PageObservation,
 } from '@internship-agent/shared';
@@ -25,6 +28,16 @@ import {
 
 export interface SafetyVerdict {
   allowed: boolean;
+  /**
+   * Why it was refused, as a code the history and the trace can both key on.
+   *
+   * Named rather than free text so a rejected action is a *fact about the run*
+   * — countable, testable, and reportable — rather than a sentence somebody has
+   * to read.
+   */
+  code?: ErrorCode;
+  /** What to do instead, told to the next decision cycle. */
+  suggestedTool?: AgentTool;
   /** Why it was refused, in words the trace and the popup can both use. */
   reason: string;
   /** The decision to run instead, when refusing implies one. */
@@ -111,6 +124,64 @@ export function checkDecision(
   }
   if (action.tool === 'click_next' && !navigation) {
     return { allowed: false, reason: 'That is not a navigation control this page offered.' };
+  }
+
+  // ---- 4a. A control is operated the way its type permits. ------------------
+  //
+  // The rule this whole layer exists for now. On a live application the agent
+  // called `type` on a dropdown: the control kept its placeholder, nothing was
+  // selected, and the run believed the field was answered. No prompt wording
+  // prevents that — the decision was reasonable given what the decider had been
+  // told the control was — so it is refused here, in code, against a type the
+  // *observer* computed from the live element.
+  //
+  // A searchable combobox is refused too. Its search box takes characters and
+  // the control does not, and a run that treated typing a query as choosing an
+  // answer would leave the field unanswered while reporting success.
+  if (element && action.tool === 'type') {
+    if ((OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType)) {
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        suggestedTool: element.dropdownState === 'OPEN' ? 'select_option' : 'open_dropdown',
+        reason: `"${element.label}" answers from a list, so it cannot be typed into. Open it and choose one of the choices it offers.`,
+      };
+    }
+  }
+
+  // Choosing requires the list to have been read. A control whose options this
+  // observation has never seen cannot be selected from, because the choice
+  // would be one the agent imagined rather than one the page offered.
+  if (element && action.tool === 'select_option') {
+    if (element.options.length === 0) {
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        suggestedTool: 'open_dropdown',
+        reason: `"${element.label}" has not been opened yet, so its choices are not known.`,
+      };
+    }
+    // Named by a handle this observation minted, when one was given. A handle
+    // from an earlier observation, or an invented one, names nothing.
+    if (action.optionId && !element.options.some((option) => option.optionId === action.optionId)) {
+      return {
+        allowed: false,
+        code: 'OPTION_HANDLE_UNKNOWN',
+        reason: `That choice is not one "${element.label}" is currently offering.`,
+      };
+    }
+  }
+
+  // Opening is only meaningful for something that opens.
+  if (element && action.tool === 'open_dropdown') {
+    if (!(OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType)) {
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        suggestedTool: 'type',
+        reason: `"${element.label}" is not a list control, so there is nothing to open.`,
+      };
+    }
   }
 
   // ---- 5. Sensitive questions are never answered by the agent. --------------

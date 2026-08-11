@@ -10,12 +10,20 @@ import {
   type DetectedField,
   type ObservedControlKind,
   type ObservedElement,
+  type InteractionType,
   type RepeaterKind,
   type PageObservation,
 } from '@internship-agent/shared';
 import { scanDom } from '../scanner/domScanner.js';
 import { detectAtsByHostname, isFinalSubmitControl } from '../scanner/adapters.js';
-import { readSelectedText, resolveTrigger, isVisible } from '../scanner/optionDiscovery.js';
+import {
+  findListbox,
+  isVisible,
+  readOptions,
+  readSelectedText,
+  resolveTrigger,
+} from '../scanner/optionDiscovery.js';
+import { answersFromList, isCustomCombobox, opensOptionList } from '../scanner/domScanner.js';
 import { findControl } from '../dependencies/dependencyDetector.js';
 import { countBlocks, findAddControl, findSection } from '../repeaters/repeaterScanner.js';
 
@@ -110,6 +118,73 @@ function kindOf(field: DetectedField): ObservedControlKind {
 }
 
 /**
+ * How this control must be *operated*, read from the live element.
+ *
+ * Deliberately not derived from the scanner's field type. That was the shape of
+ * the live failure: a vendor control the scanner reads as a text box is one the
+ * agent will try to type an answer into, and no amount of prompt wording stops
+ * that — the decision looked correct given what it had been told the control
+ * was.
+ *
+ * So the question asked here is what the element *does*, in this order:
+ *
+ *  1. Is it a `<select>`? Then its options are already in the DOM.
+ *  2. Does it open a list — by role, by `aria-haspopup`, by naming a popup, or
+ *     by being one of the React-select shapes? Then it is a menu, whatever tag
+ *     it happens to use, and it is never typed into.
+ *  3. Can a person put characters into it *and* it answers from no list? Only
+ *     then is it a text box.
+ *
+ * A control that opens a list and also carries an editable input is a
+ * `SEARCHABLE_COMBOBOX`: the search box takes characters, the control does not,
+ * and typing a query is not the same as choosing an answer.
+ */
+export function interactionTypeOf(element: HTMLElement | null): InteractionType {
+  if (!element) return 'UNKNOWN';
+  if (element instanceof HTMLSelectElement) return 'NATIVE_SELECT';
+  if (element instanceof HTMLTextAreaElement) return 'TEXTAREA';
+
+  if (element instanceof HTMLInputElement) {
+    const type = element.type.toLowerCase();
+    if (type === 'checkbox') return 'CHECKBOX';
+    if (type === 'radio') return 'RADIO';
+    if (type === 'file') return 'FILE_UPLOAD';
+    if (type === 'date' || type === 'month' || type === 'week' || type === 'datetime-local') {
+      return 'DATE_INPUT';
+    }
+    if (type === 'button' || type === 'submit') return 'BUTTON';
+    // An input that answers from a list is a dropdown that happens to be an
+    // input. `readonly` is the other tell: a box a person cannot type into is
+    // not a box the agent may type into either.
+    if (answersFromList(element)) {
+      return element.readOnly ? 'CUSTOM_SELECT' : 'SEARCHABLE_COMBOBOX';
+    }
+    if (element.readOnly && opensOptionList(element)) return 'CUSTOM_SELECT';
+    return 'TEXT_INPUT';
+  }
+
+  if (element instanceof HTMLAnchorElement) return 'LINK';
+  if (element instanceof HTMLButtonElement) {
+    return opensOptionList(element) ? 'CUSTOM_SELECT' : 'BUTTON';
+  }
+  if (element.isContentEditable) return 'TEXT_INPUT';
+
+  const role = element.getAttribute('role');
+  if (role === 'radiogroup') return 'RADIO';
+  if (role === 'checkbox' || role === 'switch') return 'CHECKBOX';
+  if (isCustomCombobox(element) || opensOptionList(element)) {
+    // A menu whose trigger is an editable input is searchable; one whose
+    // trigger is a div or a button is not.
+    const trigger = resolveTrigger(element);
+    const editable =
+      trigger instanceof HTMLInputElement && !trigger.readOnly && trigger.type !== 'hidden';
+    return editable ? 'SEARCHABLE_COMBOBOX' : 'CUSTOM_SELECT';
+  }
+  if (role === 'textbox') return 'TEXT_INPUT';
+  return 'UNKNOWN';
+}
+
+/**
  * How this question may be answered.
  *
  * Decided here, in the extension, and handed to the model as a fact it cannot
@@ -140,14 +215,17 @@ export function policyFor(field: DetectedField, proposed: string | undefined): A
  * indistinguishable from the agent flailing. `optionsKnown` reports which case
  * this is, so the model can tell "no options" from "not looked yet".
  */
-function optionsOf(field: DetectedField): {
-  options: ObservedElement['options'];
-  known: boolean;
-} {
+function optionsOf(
+  field: DetectedField,
+  handle: string,
+): { options: ObservedElement['options']; known: boolean } {
   const element = findControl(document, field.selector);
   if (element instanceof HTMLSelectElement) {
     return {
-      options: Array.from(element.options).map((option) => ({
+      options: Array.from(element.options).map((option, index) => ({
+        // Minted from the handle that read them, so a choice can only ever be
+        // named by an observation that actually saw it offered.
+        optionId: optionHandle(handle, index),
         label: (option.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300),
         disabled: option.disabled,
         selected: option.selected,
@@ -155,7 +233,43 @@ function optionsOf(field: DetectedField): {
       known: true,
     };
   }
+
+  // A custom control that is *currently open*.
+  //
+  // Nothing is opened here — that is an action the agent decides to take. But
+  // once it has, the next observation has to be able to see what the menu
+  // contains, or the contract "open, look, choose" has no middle step and the
+  // agent would be back to deciding an answer before seeing the choices.
+  if (element) {
+    const menu = findListbox(resolveTrigger(element));
+    if (menu) {
+      const live = readOptions(menu);
+      if (live.length > 0) {
+        return {
+          options: live.map((option, index) => ({
+            optionId: optionHandle(handle, index),
+            label: option.label.slice(0, 300),
+            disabled: option.disabled,
+            selected: option.selected,
+          })),
+          known: true,
+        };
+      }
+    }
+  }
   return { options: [], known: false };
+}
+
+/** `e12::option::3` — one offered choice, named by the observation that read it. */
+export function optionHandle(elementHandle: string, index: number): string {
+  return `${elementHandle}::option::${index}`;
+}
+
+/** The element and index a choice handle refers to, or null if it is not one. */
+export function parseOptionHandle(optionId: string): { elementId: string; index: number } | null {
+  const match = /^(.+)::option::(\d+)$/.exec(optionId);
+  if (!match?.[1] || match[2] === undefined) return null;
+  return { elementId: match[1], index: Number(match[2]) };
 }
 
 /**
@@ -318,13 +432,17 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
     handleByFieldId.set(field.id, handle);
 
     const proposed = input.proposedValues?.[field.id];
-    const { options, known } = optionsOf(field);
+    const { options, known } = optionsOf(field, handle);
     const element = findControl(document, field.selector);
     elements.push({
       elementId: handle,
       section: field.section ?? '',
       label: field.label.slice(0, 300) || field.question.slice(0, 300),
       kind: kindOf(field),
+      interactionType: interactionTypeOf(element),
+      // A dropdown whose options this observation can already see is open (or
+      // is a native select, which is always readable); anything else is shut.
+      dropdownState: known ? 'OPEN' : 'CLOSED',
       currentValue: currentValueOf(field),
       required: field.required,
       // Read from the live control rather than from the scan, because "is this

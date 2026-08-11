@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AGENT_ACTION_BUDGET,
+  observedElementSchema,
   agentDecisionSchema,
   agentToolCallSchema,
   type AgentDecision,
@@ -29,7 +30,10 @@ import { AgentHistory } from '../../extension/src/agent/agentHistory.js';
 let handle = 0;
 function element(patch: Partial<PageObservation['elements'][number]> = {}) {
   handle += 1;
-  return {
+  // Parsed rather than cast: the factory then produces exactly what the
+  // observer produces, defaults included, so a test cannot describe a control
+  // the real observation could never emit.
+  return observedElementSchema.parse({
     elementId: `e${handle}`,
     section: '',
     label: `Field ${handle}`,
@@ -43,7 +47,7 @@ function element(patch: Partial<PageObservation['elements'][number]> = {}) {
     policy: 'UNKNOWN_FACT' as const,
     frameId: 0,
     ...patch,
-  };
+  });
 }
 
 function observation(patch: Partial<PageObservation> = {}): PageObservation {
@@ -333,16 +337,25 @@ describe('the deterministic policy chooses one thing at a time', () => {
     expect(decision.action?.elementId).toBe(text.elementId);
   });
 
-  it('answers one dropdown, not all of them', () => {
+  it('works one dropdown at a time, and opens it before choosing', () => {
     const country = element({
       policy: 'KNOWN_FACT',
       proposedValue: 'United States',
       kind: 'dropdown',
+      interactionType: 'NATIVE_SELECT',
     });
-    const state = element({ policy: 'KNOWN_FACT', proposedValue: 'New Jersey', kind: 'dropdown' });
+    const state = element({
+      policy: 'KNOWN_FACT',
+      proposedValue: 'New Jersey',
+      kind: 'dropdown',
+      interactionType: 'NATIVE_SELECT',
+    });
     const decision = decide(observation({ elements: [country, state] }));
     expect(decision.kind).toBe('ACTION');
     expect(decision.action?.elementId).toBe(country.elementId);
+    // The first thing done to a dropdown is to read its choices — never to
+    // select an answer decided before the list was seen.
+    expect(decision.action?.tool).toBe('open_dropdown');
   });
 
   it('skips a control that is disabled, and returns to it once it is not', () => {
@@ -352,12 +365,14 @@ describe('the deterministic policy chooses one thing at a time', () => {
       policy: 'KNOWN_FACT',
       proposedValue: 'New Jersey',
       kind: 'dropdown',
+      interactionType: 'NATIVE_SELECT',
       label: 'State',
       disabled: true,
     });
     expect(decide(observation({ elements: [state] })).kind).toBe('READY_FOR_REVIEW');
+    // Enabled now, so it is worked on — starting by reading its choices.
     expect(decide(observation({ elements: [{ ...state, disabled: false }] })).action?.tool).toBe(
-      'select_option',
+      'open_dropdown',
     );
   });
 
@@ -447,6 +462,7 @@ describe('the loop', () => {
           executed: true,
           observedValue: 'Robin',
           options: [],
+          optionsSeen: 0,
           pageChanged: true,
           reason: '',
           durationMs: 1,
@@ -516,6 +532,7 @@ describe('the loop', () => {
           executed: false,
           observedValue: '',
           options: [],
+          optionsSeen: 0,
           pageChanged: false,
           reason: 'refused',
           errorCode: 'VALUE_NOT_VERIFIED',

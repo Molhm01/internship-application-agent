@@ -579,3 +579,76 @@ test.describe('the exported trace', () => {
     expect(['deterministic', 'model']).toContain(evidence.trace.decider);
   });
 });
+
+test.describe('a dropdown is opened and chosen from, never typed into', () => {
+  /** Every step the run took against a control whose label matches. */
+  const stepsFor = (question: RegExp): AgentStep[] =>
+    evidence.trace.steps.filter((step) => question.test(step.targetLabel));
+
+  test('no step ever typed into a control that answers from a list', () => {
+    // The whole contract, stated as a fact about the finished run. A `type`
+    // against a dropdown is the live failure; if one had happened, the step
+    // would be here.
+    const typedIntoDropdown = evidence.trace.steps.filter(
+      (step) => step.tool === 'type' && step.targetKind === 'dropdown' && step.executed,
+    );
+    expect(
+      typedIntoDropdown.map((step) => step.targetLabel),
+      'the agent typed an answer into a dropdown',
+    ).toEqual([]);
+  });
+
+  for (const [name, question] of [
+    ['State/Province', /state\/province/i],
+    ['Employment Type', /employment type/i],
+    ['Education Type', /education type/i],
+    ['Area of Study', /area of study/i],
+    ['Graduated?', /graduated/i],
+  ] as const) {
+    test(`${name} was opened, read, and chosen from`, () => {
+      const steps = stepsFor(question);
+      if (steps.length === 0) {
+        // The control was never reached — a different failure, and one the
+        // other gates cover. Nothing to assert about the contract here.
+        expect(steps.length, `${name} was never reached by the run`).toBeGreaterThan(0);
+        return;
+      }
+      const tools = steps.filter((step) => step.executed).map((step) => step.tool);
+      expect(tools, `${name} was typed into`).not.toContain('type');
+
+      const selected = steps.find((step) => step.tool === 'select_option' && step.executed);
+      if (selected) {
+        // A selection only ever follows a read of the actual list.
+        expect(
+          selected.optionsSeen,
+          `${name} was selected without reading its options`,
+        ).toBeGreaterThan(0);
+      }
+    });
+  }
+
+  test('every executed selection saw the options it chose from', () => {
+    for (const step of evidence.trace.steps) {
+      if (step.tool !== 'select_option' || !step.executed) continue;
+      expect(
+        step.optionsSeen,
+        `"${step.targetLabel}" was selected without any option list being read`,
+      ).toBeGreaterThan(0);
+    }
+  });
+});
+
+test.describe('text controls still take text', () => {
+  for (const [id, expected] of [
+    ['addressLine1', '48 Maple Avenue'],
+    ['city', 'Clifton'],
+    ['postalCode', '07011'],
+    ['phone', '+1 201 555 0134'],
+  ] as const) {
+    test(`${id} still fills`, () => {
+      // The regression that matters most: these only started working recently,
+      // and the new refusal must apply to list controls and nothing else.
+      expect(evidence.values[id]).toBe(expected);
+    });
+  }
+});

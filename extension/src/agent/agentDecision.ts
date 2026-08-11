@@ -1,5 +1,8 @@
 import {
+  OPTION_INTERACTION_TYPES,
   agentDecisionSchema,
+  displaysSelection,
+  isPlaceholderSelection,
   type AgentDecision,
   type ObservedElement,
   type PageObservation,
@@ -46,6 +49,37 @@ function outstanding(element: ObservedElement): boolean {
   return element.currentValue.trim().length === 0;
 }
 
+/** A control that answers from a list, by the observer's authoritative reading. */
+function isOptionControl(element: ObservedElement): boolean {
+  return (OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType);
+}
+
+/**
+ * The offered choice that matches the saved answer, or nothing.
+ *
+ * Matched against the options the control is *currently* offering, never
+ * against a remembered list — and the result is one of those options, by its
+ * handle. The agent cannot invent a choice, because there is nowhere in this
+ * return type to put one.
+ *
+ * The equivalences are the ones already trusted elsewhere in the extension:
+ * exact text, an explicit alias group ("New Jersey"/"NJ"), and the decorated
+ * forms a control renders ("United States of America (US)"). Nothing here is a
+ * similarity score — a near miss on a dropdown silently submits a wrong answer.
+ */
+function chooseOffered(element: ObservedElement): { optionId: string; label: string } | undefined {
+  const wanted = element.proposedValue ?? '';
+  if (!wanted.trim()) return undefined;
+  const choices = element.options.filter(
+    (option) => !option.disabled && !isPlaceholderSelection(option.label),
+  );
+  const match =
+    choices.find((option) => displaysSelection(option.label, wanted)) ??
+    choices.find((option) => displaysSelection(wanted, option.label));
+  if (!match?.optionId) return undefined;
+  return { optionId: match.optionId, label: match.label };
+}
+
 /** A control the agent may write to without asking anybody. */
 function answerable(element: ObservedElement): boolean {
   return element.policy === 'KNOWN_FACT' && (element.proposedValue ?? '').trim().length > 0;
@@ -89,6 +123,10 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
 
   // ---- 1. Text and dates the profile answers. ------------------------------
   for (const element of live) {
+    // Guarded by the authoritative type, not by `kind`: a vendor control the
+    // scanner reads as a text box is exactly the one the agent used to type an
+    // answer into on the live application.
+    if (isOptionControl(element)) continue;
     if (element.kind !== 'text' && element.kind !== 'textarea' && element.kind !== 'date') continue;
     if (!outstanding(element) || !answerable(element)) continue;
     if (history.exhausted('type', element.label)) continue;
@@ -106,16 +144,48 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
   // takes a single selection and re-observes rather than deciding all of them
   // against a page that is about to change.
   for (const element of live) {
-    if (element.kind !== 'dropdown' && element.kind !== 'radio_group') continue;
+    if (!isOptionControl(element) && element.kind !== 'radio_group') continue;
     if (!outstanding(element) || !answerable(element)) continue;
     if (history.exhausted('select_option', element.label)) continue;
+
+    // Open before choosing, always.
+    //
+    // A control whose choices this observation has not seen cannot be selected
+    // from: the answer would be one the agent decided in advance rather than
+    // one the page is offering. So the first decision on a closed dropdown is
+    // to open it, the loop re-observes, and the *next* decision picks from what
+    // the menu actually contained. That is the whole interaction contract, and
+    // it is why an answer can never be typed in instead.
+    if (element.options.length === 0) {
+      if (history.exhausted('open_dropdown', element.label)) continue;
+      return agentDecisionSchema.parse({
+        kind: 'ACTION',
+        reason: `"${element.label}" is unanswered; its choices have to be read before one can be chosen.`,
+        action: { tool: 'open_dropdown', elementId: element.elementId },
+      });
+    }
+
+    // The list is in hand. Choose one of *these* choices, by its handle.
+    const match = chooseOffered(element);
+    if (!match) {
+      // Known answer, and the page does not offer it. Never resolved by typing
+      // it in: the applicant is asked instead.
+      if (history.openQuestions().includes(element.label)) continue;
+      return agentDecisionSchema.parse({
+        kind: 'ASK_USER',
+        reason: `"${element.label}" was opened and offers no choice matching the saved answer.`,
+        question: element.label,
+        elementId: element.elementId,
+      });
+    }
     return agentDecisionSchema.parse({
       kind: 'ACTION',
-      reason: `"${element.label}" is unanswered and the profile answers it.`,
+      reason: `"${element.label}" offers a choice matching the saved answer.`,
       action: {
         tool: 'select_option',
         elementId: element.elementId,
-        value: element.proposedValue,
+        optionId: match.optionId,
+        value: match.label,
       },
     });
   }
@@ -193,6 +263,8 @@ export function buildDecisionPrompt(input: DecisionInput): string {
     .slice(0, 120)
     .map((element) => ({
       elementId: element.elementId,
+      interactionType: element.interactionType,
+      dropdownState: element.dropdownState,
       section: element.section,
       label: element.label,
       kind: element.kind,
@@ -202,6 +274,8 @@ export function buildDecisionPrompt(input: DecisionInput): string {
       hasSavedAnswer: (element.proposedValue ?? '').length > 0,
       optionsKnown: element.optionsKnown,
       optionCount: element.options.length,
+      // The handles a select_option may name. Nothing else is selectable.
+      optionIds: element.options.slice(0, 60).map((option) => option.optionId),
       dependsOn: element.dependsOnElementId,
       dependencyActive: element.dependencyActive,
     }));
@@ -219,6 +293,17 @@ export function buildDecisionPrompt(input: DecisionInput): string {
     '- The page is re-observed after every action, so do not plan ahead.',
     '- A control whose dependency is not active must be left alone.',
     '- Ask the user when a required fact is not available.',
+    '',
+    'DROPDOWNS — these are enforced in code, not merely requested:',
+    '- For interactionType NATIVE_SELECT or CUSTOM_SELECT: NEVER call type.',
+    '  Call open_dropdown first, look at the options the next observation',
+    '  reports, then call select_option with one of their optionIds.',
+    '- For SEARCHABLE_COMBOBOX: open first, then type only into the search box',
+    '  inside the opened menu, then select a real result. Typing a query is not',
+    '  choosing an answer, and a field is not done until an option is selected.',
+    '- Never invent an option. select_option takes an optionId from the current',
+    '  observation; anything else names nothing and will be refused.',
+    '- If the opened list offers no match, ask the user. Do not type the answer.',
     '',
     'TOOLS: observe_page, click, type, clear, focus, open_dropdown, get_options,',
     'select_option, scroll_page, scroll_element, wait_for_change, click_add,',

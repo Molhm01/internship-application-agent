@@ -19,7 +19,12 @@ import { setNativeValue, dispatchValueEvents } from '../executor/domExecutor.js'
 import { findControl } from '../dependencies/dependencyDetector.js';
 import { countBlocks, findSection } from '../repeaters/repeaterScanner.js';
 import { createBlock } from '../repeaters/repeaterCreator.js';
-import { elementForHandle, fieldForHandle, repeaterKindForHandle } from './pageObserver.js';
+import {
+  elementForHandle,
+  fieldForHandle,
+  optionHandle,
+  repeaterKindForHandle,
+} from './pageObserver.js';
 
 /**
  * One tool, executed against the live page.
@@ -183,12 +188,16 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
           call,
           {
             executed: collected.opened,
-            options: collected.choices.map((option) => ({
+            options: collected.choices.map((option, index) => ({
+              // Named by the handle of the control that offered them, so the
+              // next decision selects a choice this read actually saw.
+              optionId: optionHandle(call.elementId ?? '', index),
               label: option.displayedText,
               disabled: option.disabled,
               selected: option.selected,
             })),
             observedValue: readSelectedText(element).slice(0, 600),
+            optionsSeen: collected.choices.length,
             pageChanged: collected.opened,
             ...(collected.opened ? {} : { errorCode: 'DROPDOWN_OPEN_FAILED' as const }),
             reason: collected.opened
@@ -290,7 +299,12 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
           {
             executed: outcome.selected || outcome.finalStatus === 'SKIPPED_ALREADY_VALID',
             observedValue: readSelectedText(element).slice(0, 600),
-            options: outcome.availableOptions.map((option) => ({
+            // The count the engine actually read while choosing. The list
+            // itself is dropped on success; this is what proves the selection
+            // came from options that were there.
+            optionsSeen: outcome.optionsFound,
+            options: outcome.availableOptions.map((option, index) => ({
+              optionId: optionHandle(call.elementId ?? '', index),
               label: option.displayedText,
               disabled: option.disabled,
               selected: option.selected,
