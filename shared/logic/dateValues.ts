@@ -1,4 +1,5 @@
 import type { DetectedField } from '../schemas/fields.js';
+import type { DateShape } from '../schemas/dates.js';
 
 /**
  * The one place a stored date becomes a value on a form.
@@ -64,14 +65,15 @@ export function parseStoredDate(raw: string | undefined): DateParts | null {
   };
 }
 
-/** The shapes a control can ask a date to take. */
-export type DateShape =
-  | 'iso_full' // 2027-05-15
-  | 'iso_month' // 2027-05
-  | 'us_full' // 05/15/2027
-  | 'us_month' // 05/2027
-  | 'month_name_year' // May 2027
-  | 'year_only'; // 2027
+/**
+ * The shapes a control can ask a date to take.
+ *
+ * Declared once, in `schemas/dates.ts`, and re-exported here so the two date
+ * modules cannot drift apart. Agent Mode's `set_date` and this module's
+ * `formatDateForField` both render against this vocabulary, which is what stops
+ * "MM/DD/YYYY" meaning one thing on the legacy path and another on the agent's.
+ */
+export type { DateShape };
 
 /** Whether a shape needs a day the profile may not hold. */
 export function shapeNeedsDay(shape: DateShape): boolean {

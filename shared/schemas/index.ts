@@ -5,6 +5,7 @@ export * from './profile.js';
 export * from './documents.js';
 export * from './latestDocuments.js';
 export * from './answers.js';
+export * from './dates.js';
 export * from './fields.js';
 export * from './scan.js';
 export * from './navigation.js';

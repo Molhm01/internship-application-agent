@@ -1,9 +1,15 @@
 import {
   OPTION_INTERACTION_TYPES,
   agentDecisionSchema,
+  applyDayConvention,
+  dateQuestionFor,
+  describeShape,
   displaysSelection,
+  formatNormalizedDate,
   isPlaceholderSelection,
+  normalizeStoredDate,
   type AgentDecision,
+  type DayConvention,
   type ObservedElement,
   type PageObservation,
 } from '@internship-agent/shared';
@@ -41,6 +47,16 @@ export interface DecisionInput {
   history: AgentHistory;
   /** The values the extension trusts, by element handle. */
   trustedValues: ReadonlyMap<string, string>;
+  /**
+   * What the applicant approved doing when a form wants a day their record does
+   * not hold.
+   *
+   * Optional, and absent means `ask`. That default is deliberate rather than
+   * merely tidy: a caller that forgets to pass the preference gets the
+   * behaviour that stops and asks, never the behaviour that quietly writes the
+   * first of the month into somebody's employment history.
+   */
+  dayConvention?: DayConvention;
 }
 
 /** Whether this control still needs attention at all. */
@@ -85,6 +101,89 @@ function answerable(element: ObservedElement): boolean {
   return element.policy === 'KNOWN_FACT' && (element.proposedValue ?? '').trim().length > 0;
 }
 
+/** A saved value that positively states "yes". Silence is never one. */
+function isAffirmative(value: string): boolean {
+  return /^(yes|true|y|1|checked|current|currently)$/i.test(value.trim());
+}
+
+/**
+ * What to do about one date control the profile has an answer for.
+ *
+ * Three outcomes, and which one happens turns entirely on whether the record
+ * holds every part the control asked for:
+ *
+ *  - The record is precise enough → `set_date`, carrying the date as *parts*.
+ *    The string is composed later, by the executor, against this control. That
+ *    is the difference between the agent knowing a date and the agent knowing a
+ *    date in the right format, and the live failure was the second one missing.
+ *
+ *  - The record is a month and a year, the control wants a day, and the
+ *    applicant has stored a convention → `set_date` with that convention's day
+ *    applied and marked as such. The day is theirs, given once, rather than
+ *    chosen here.
+ *
+ *  - The record is a month and a year, the control wants a day, and no
+ *    convention is stored → the applicant is asked. Not the first of the month.
+ *    `07/01/2021` on an employment record is a claim about a start date, and it
+ *    is not one anybody made.
+ *
+ * A current role is its own case: it has no end date to format, so the question
+ * is left for the applicant while the loop goes on to tick whatever "I
+ * currently work here" control the form offers.
+ */
+function decideDate(
+  element: ObservedElement,
+  convention: DayConvention,
+  history: AgentHistory,
+): AgentDecision | null {
+  const shape = element.dateRequirement?.shape;
+  const stored = normalizeStoredDate(element.proposedValue);
+  if (shape === undefined || stored.precision === 'unknown') {
+    // The control is a date box and nothing usable is saved for it. Handled by
+    // the ask-the-applicant pass below rather than guessed at here.
+    return null;
+  }
+
+  const formatted = formatNormalizedDate(stored, shape, convention);
+  if (formatted.kind === 'value') {
+    return agentDecisionSchema.parse({
+      kind: 'ACTION',
+      reason:
+        `"${element.label}" is empty, the profile records this date, and the control asks for ` +
+        `${describeShape(shape)}.`,
+      action: {
+        tool: 'set_date',
+        elementId: element.elementId,
+        // Parts, never the rendered string. The executor renders it against
+        // the live control, so a page that re-rendered the box into a different
+        // format between this decision and its execution still receives a value
+        // that control will accept.
+        normalizedDate: formatted.usedConvention
+          ? applyDayConvention(stored, formatted.usedConvention)
+          : stored,
+      },
+    });
+  }
+
+  if (history.askedAbout(element)) return null;
+  return agentDecisionSchema.parse({
+    kind: 'ASK_USER',
+    reason: formatted.reason.slice(0, 600),
+    // The full question, not just the label: the applicant is told which
+    // record, which date, what is already known, and what the employer asked
+    // for — the four things somebody needs to answer without going and reading
+    // the page themselves.
+    question: dateQuestionFor({
+      label: element.label,
+      section: element.section,
+      date: stored,
+      shape,
+    }),
+    elementId: element.elementId,
+    errorCode: formatted.code,
+  });
+}
+
 /**
  * A conditional child whose parent has not switched it on.
  *
@@ -102,13 +201,18 @@ function dormant(element: ObservedElement): boolean {
  * The ordering is the whole behaviour, and it is deliberately the order a
  * person would work in rather than the order the fields appear in:
  *
- *  1. text the profile answers — cheap, certain, and it makes the page settle;
- *  2. dropdowns the profile answers — each one may rebuild something below it,
+ *  1. dates the profile answers — first, because a date is the one saved value
+ *     whose representation has to be decided against the control, and letting
+ *     one fall through to the text pass is what put `2021-07` into an
+ *     `MM/DD/YYYY` box on a live application;
+ *  2. text the profile answers — cheap, certain, and it makes the page settle;
+ *  3. a checkbox the record positively states, such as "I currently work here";
+ *  4. dropdowns the profile answers — each one may rebuild something below it,
  *     which is why they come after the text and one at a time;
- *  3. a repeating section that is short a block;
- *  4. a question nobody can answer — asked, not guessed;
- *  5. a step control, when the current step is done;
- *  6. otherwise the run is finished and the applicant reviews it.
+ *  5. a repeating section that is short a block;
+ *  6. a question nobody can answer — asked, not guessed;
+ *  7. a step control, when the current step is done;
+ *  8. otherwise the run is finished and the applicant reviews it.
  *
  * Nothing here looks ahead. Each call sees only what the page currently shows,
  * which is what makes Country → State work without a dependency graph: State is
@@ -117,16 +221,47 @@ function dormant(element: ObservedElement): boolean {
  */
 export function decideDeterministically(input: DecisionInput): AgentDecision {
   const { observation, history } = input;
+  const dayConvention: DayConvention = input.dayConvention ?? 'ask';
   const live = observation.elements.filter(
     (element) => element.visible && !element.disabled && !dormant(element),
   );
 
-  // ---- 1. Text and dates the profile answers. ------------------------------
+  // ---- 1. Dates the profile answers, in the shape the control asked for. ----
+  //
+  // Before the text pass, and separate from it, because a date is the one saved
+  // value whose *representation* has to be decided against the control. The
+  // live failure was this branch not existing: a From Date box fell through to
+  // the text pass, which wrote the profile's `2021-07` verbatim into a control
+  // whose placeholder read `MM/DD/YYYY`, and the employer answered "Invalid
+  // date."
+  for (const element of live) {
+    if (element.interactionType !== 'DATE_INPUT') continue;
+    if (!outstanding(element) || !answerable(element)) continue;
+    if (history.exhausted('set_date', element.label)) continue;
+    // A control already put to the applicant is *finished* as far as this
+    // decider is concerned, and this guard is load-bearing rather than a
+    // shortcut.
+    //
+    // Some refusals do not come from here at all. Two saved dates that
+    // contradict each other look perfectly fillable from this side — each is a
+    // real date, precise enough for its control — and it is the safety layer,
+    // which can see both, that turns the write into a question. Without this
+    // line the decider proposed the same write on the next cycle, the safety
+    // layer turned it into the same question again, and the run never ended.
+    if (history.askedAbout(element)) continue;
+    const decision = decideDate(element, dayConvention, history);
+    if (decision) return decision;
+  }
+
+  // ---- 2. Text the profile answers. ----------------------------------------
   for (const element of live) {
     // Guarded by the authoritative type, not by `kind`: a vendor control the
     // scanner reads as a text box is exactly the one the agent used to type an
-    // answer into on the live application.
+    // answer into on the live application. A date control is excluded for the
+    // same reason — it is not a box that takes any string, it is a box that
+    // takes one shape of string, and only `set_date` knows which.
     if (isOptionControl(element)) continue;
+    if (element.interactionType === 'DATE_INPUT') continue;
     if (element.kind !== 'text' && element.kind !== 'textarea' && element.kind !== 'date') continue;
     if (!outstanding(element) || !answerable(element)) continue;
     if (history.exhausted('type', element.label)) continue;
@@ -137,7 +272,30 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     });
   }
 
-  // ---- 2. One dropdown, and then look again. -------------------------------
+  // ---- 2b. A "currently employed" box the record positively states. --------
+  //
+  // Placed here rather than left to the applicant because it is the *correct
+  // answer to the End Date problem*. A role the record marks current has no end
+  // date, and the honest way to say so on a form that offers "I currently work
+  // here" is to tick it — not to write today's date, which is a claim the role
+  // ended today.
+  //
+  // Only ever ticked on a positively saved affirmative. An absent value is the
+  // applicant not having said, and an unticked box is already the right
+  // rendering of that.
+  for (const element of live) {
+    if (element.kind !== 'checkbox') continue;
+    if (!outstanding(element) || !answerable(element)) continue;
+    if (!isAffirmative(element.proposedValue ?? '')) continue;
+    if (history.exhausted('click', element.label)) continue;
+    return agentDecisionSchema.parse({
+      kind: 'ACTION',
+      reason: `"${element.label}" is stated by the saved record.`,
+      action: { tool: 'click', elementId: element.elementId },
+    });
+  }
+
+  // ---- 4. One dropdown, and then look again. -------------------------------
   //
   // One, not all of them. Answering Country can rebuild State, and answering
   // Education Country can rebuild Education State and School — so the agent
@@ -195,7 +353,7 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
       // Known answer, and the page does not offer it — including after the list
       // was searched. Never resolved by typing it into the control: the
       // applicant is asked instead.
-      if (history.openQuestions().includes(element.label)) continue;
+      if (history.askedAbout(element)) continue;
       return agentDecisionSchema.parse({
         kind: 'ASK_USER',
         reason: `"${element.label}" was opened and offers no choice matching the saved answer.`,
@@ -216,7 +374,7 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     });
   }
 
-  // ---- 3. A section that is short a block. ---------------------------------
+  // ---- 5. A section that is short a block. ---------------------------------
   for (const repeater of observation.repeaters) {
     if (repeater.blockCount >= repeater.recordCount) continue;
     if (history.exhausted('click_add', repeater.label)) continue;
@@ -227,7 +385,7 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     });
   }
 
-  // ---- 4. A required question nobody can answer. ---------------------------
+  // ---- 6. A required question nobody can answer. ---------------------------
   //
   // Asked rather than guessed, and only when it is *required*: an optional
   // question the profile cannot answer is correctly left blank, and putting it
@@ -237,7 +395,7 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     if (!element.required || !outstanding(element)) continue;
     if (element.policy === 'KNOWN_FACT') continue;
     if (history.settled('ask_user', element.label)) continue;
-    if (history.openQuestions().includes(element.label)) continue;
+    if (history.askedAbout(element)) continue;
     return agentDecisionSchema.parse({
       kind: 'ASK_USER',
       reason:
@@ -249,7 +407,7 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     });
   }
 
-  // ---- 5. The next step, when this one is done. ----------------------------
+  // ---- 7. The next step, when this one is done. ----------------------------
   const step = observation.navigation.find((entry) => !entry.finalSubmit);
   if (
     step &&
@@ -263,7 +421,7 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     });
   }
 
-  // ---- 6. Finished. --------------------------------------------------------
+  // ---- 8. Finished. --------------------------------------------------------
   return agentDecisionSchema.parse({
     kind: 'READY_FOR_REVIEW',
     reason:
@@ -298,6 +456,13 @@ export function buildDecisionPrompt(input: DecisionInput): string {
       required: element.required,
       policy: element.policy,
       hasSavedAnswer: (element.proposedValue ?? '').length > 0,
+      // The control's stated format, and how precisely the record knows this
+      // date. Both are needed for the model to tell "write it" from "ask", and
+      // neither reveals the date itself.
+      ...(element.dateRequirement ? { dateRequirement: element.dateRequirement } : {}),
+      ...(element.interactionType === 'DATE_INPUT'
+        ? { savedDatePrecision: normalizeStoredDate(element.proposedValue).precision }
+        : {}),
       optionsKnown: element.optionsKnown,
       optionCount: element.options.length,
       // The handles a select_option may name. Nothing else is selectable.
@@ -338,9 +503,21 @@ export function buildDecisionPrompt(input: DecisionInput): string {
     '  observation; anything else names nothing and will be refused.',
     '- If the opened list offers no match, ask the user. Do not type the answer.',
     '',
-    'TOOLS: observe_page, click, type, clear, focus, open_dropdown, get_options,',
-    'select_option, scroll_page, scroll_element, wait_for_change, click_add,',
-    'upload_document, click_next, ask_user, finish_for_review',
+    'DATES — also enforced in code, not merely requested:',
+    '- For interactionType DATE_INPUT: NEVER call type. Call set_date.',
+    '  A date control states a format (dateRequirement.shape) and rejects',
+    '  anything else — typing a saved value verbatim is how "2021-07" reached an',
+    '  MM/DD/YYYY box and came back as "Invalid date."',
+    '- set_date takes normalizedDate: {year, month, day, precision}. The',
+    '  extension renders the string against the control; you never format it.',
+    '- Never supply a day the profile does not hold. If precision is "month" and',
+    '  the control needs a day, use ask_user. Do not pick the 1st or the 15th.',
+    '- Never write today’s date. A current role has no end date: tick the',
+    '  form’s own "I currently work here" control instead.',
+    '',
+    'TOOLS: observe_page, click, type, set_date, clear, focus, open_dropdown,',
+    'get_options, select_option, scroll_page, scroll_element, wait_for_change,',
+    'click_add, upload_document, click_next, ask_user, finish_for_review',
     '',
     'Answer with one JSON object: {"kind","reason","action":{"tool","elementId","value"}}',
     'kind is one of ACTION, ASK_USER, READY_FOR_REVIEW, BLOCKED.',

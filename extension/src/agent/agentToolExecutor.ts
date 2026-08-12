@@ -1,11 +1,14 @@
 import {
+  DATE_INTERACTION_TYPES,
   dropdownDirectiveSchema,
+  formatNormalizedDate,
   OPTION_INTERACTION_TYPES,
   toolExecutionResultSchema,
   type AgentToolCall,
   type DetectedField,
   type ToolExecutionResult,
 } from '@internship-agent/shared';
+import { dateAccepted, dateRequirementOf, readDateValidation } from './dateControl.js';
 import {
   closeControl,
   isVisible,
@@ -349,6 +352,27 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
             begun,
           );
         }
+        // The same second lock, for dates. `checkDecision` refused this against
+        // the observation; this refuses it against the element in front of us,
+        // and the two can genuinely disagree — a control the page re-rendered
+        // into a masked date box after it was observed gets past the first and
+        // not past this.
+        //
+        // Nothing is written before the refusal. That is the point of putting
+        // it here rather than checking the value afterwards: the live failure
+        // is `2021-07` reaching the employer's DOM at all, and a check that
+        // fires after `setNativeValue` would only be able to report it.
+        if (!searchBox && (DATE_INTERACTION_TYPES as readonly string[]).includes(behaviour)) {
+          return result(
+            call,
+            {
+              errorCode: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+              reason:
+                'That control is a date control, so a saved date is never typed into it verbatim. It is written with set_date, in the format the control asks for.',
+            },
+            begun,
+          );
+        }
         if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement)) {
           return result(
             call,
@@ -375,6 +399,127 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
               observed === value
                 ? 'The control holds what was written.'
                 : 'The control holds something else.',
+          },
+          begun,
+        );
+      }
+
+      // ---- One date, in the shape this control asked for. ------------------
+      //
+      // The whole repair, in one tool. The date arrives as parts — year, month,
+      // day, precision — and the *string* is composed here, against the control
+      // that is about to receive it. That ordering is what makes the same saved
+      // fact land as `07/12/2021` on Lincoln Electric and `2021-07-12` in a
+      // native picker, instead of arriving as `2021-07` on both because that is
+      // how the profile happens to store it.
+      //
+      // Nothing is written unless a value could be produced. A month-precision
+      // date against a control demanding a day leaves the box exactly as it
+      // was and reports `DATE_PRECISION_INSUFFICIENT`, because a half-right
+      // date in an employer's form is worse than an empty one: the applicant
+      // can see an empty box.
+      case 'set_date': {
+        const { element, field } = resolve(call);
+        if (!element) {
+          return result(
+            call,
+            {
+              errorCode: 'DATE_CONTROL_NOT_FOUND',
+              reason: 'That date control is no longer on the page.',
+            },
+            begun,
+          );
+        }
+        // Read from the element, not from the observation that produced the
+        // decision. A page that re-rendered the control since then may have
+        // changed what it asks for, and the element in front of us is the thing
+        // that will accept or reject the value.
+        const behaviour = interactionTypeOf(element);
+        if (!(DATE_INTERACTION_TYPES as readonly string[]).includes(behaviour)) {
+          return result(
+            call,
+            {
+              errorCode: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+              reason: 'That control is not a date control, so set_date does not apply to it.',
+            },
+            begun,
+          );
+        }
+        const requirement = dateRequirementOf(element, field);
+        if (!requirement) {
+          return result(
+            call,
+            {
+              errorCode: 'DATE_FORMAT_UNSUPPORTED',
+              reason: 'That control did not state a date format this build can write.',
+            },
+            begun,
+          );
+        }
+        const date = call.normalizedDate;
+        if (!date) {
+          return result(
+            call,
+            { errorCode: 'DATE_USER_INPUT_REQUIRED', reason: 'No date was supplied to write.' },
+            begun,
+          );
+        }
+        // `ask` deliberately, and not the applicant's stored convention: by the
+        // time a call reaches here, any approved convention has *already* been
+        // applied by the decider and checked by the safety layer, and the date
+        // carries `dayFromConvention` to say so. Re-applying it here would be a
+        // second, unchecked place a day could be invented.
+        const formatted = formatNormalizedDate(date, requirement.shape, 'ask');
+        if (formatted.kind === 'refused') {
+          return result(call, { errorCode: formatted.code, reason: formatted.reason }, begun);
+        }
+
+        const before = readDateValidation(element);
+        if (!(element instanceof HTMLInputElement)) {
+          return result(
+            call,
+            { errorCode: 'DATE_EXECUTION_FAILED', reason: 'That date control is not writable.' },
+            begun,
+          );
+        }
+        element.focus();
+        setNativeValue(element, formatted.value);
+        dispatchValueEvents(element);
+        // Blurred on purpose, and it is not cosmetic: an ATS that validates a
+        // masked date box overwhelmingly does it on blur, so a run that never
+        // blurs never learns that its value was rejected. This is what turns
+        // "the box contains the date" into "the employer accepted the date".
+        element.blur();
+        element.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+        // Give the page a moment to paint its complaint before reading it.
+        await waitFor(() => (readDateValidation(element).message ? true : null), 300);
+
+        const outcome = dateAccepted(element, formatted.value);
+        return result(
+          call,
+          {
+            executed: outcome.accepted,
+            observedValue: outcome.held.slice(0, 600),
+            pageChanged: outcome.held.trim().length > 0,
+            ...(outcome.accepted
+              ? {}
+              : outcome.held.trim() === formatted.value.trim()
+                ? { errorCode: 'DATE_VALIDATION_FAILED' as const }
+                : { errorCode: 'DATE_EXECUTION_FAILED' as const }),
+            reason: outcome.accepted
+              ? `The control holds the date in ${requirement.shape} form and the form raised nothing.`
+              : outcome.held.trim() === formatted.value.trim()
+                ? `The control holds the date and the form rejected it${
+                    outcome.validation.message ? `: "${outcome.validation.message}"` : '.'
+                  }`
+                : 'The control did not keep the date that was written.',
+            // Carried home so the trace can show the page's verdict on either
+            // side of the write. Without the "before" reading a control that
+            // was *already* complaining is indistinguishable from one this
+            // action broke, and those call for opposite responses.
+            dateShapeWritten: formatted.shape,
+            dateValidationBefore: before,
+            dateValidationAfter: outcome.validation,
           },
           begun,
         );

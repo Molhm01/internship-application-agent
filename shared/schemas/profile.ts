@@ -7,6 +7,7 @@ import {
   urlSchema,
 } from './common.js';
 import { SENSITIVE_CATEGORIES, SENSITIVE_POLICIES } from '../constants/ats.js';
+import { dayConventionSchema } from './dates.js';
 import { portalStrategySchema } from './employerAccounts.js';
 
 /**
@@ -210,6 +211,22 @@ export const preferencesSchema = z.object({
    * employer page themselves is not asked again.
    */
   employerPortalStrategy: portalStrategySchema.optional(),
+  /**
+   * What to do when a form demands an exact day and the record holds only a
+   * month and a year.
+   *
+   * Defaults to `ask`, and that default is load-bearing rather than cautious.
+   * A start date of `07/01/2021` on an employment record is a statement of
+   * fact, and the difference between "the applicant told us July 2021" and
+   * "something chose the first of July for them" is the difference between an
+   * accurate application and a misstatement — one an employer can act on.
+   *
+   * The other two values are consent, given once, to a specific substitution.
+   * They exist so an applicant who genuinely does not remember exact start days
+   * is not stopped on every form; they are never inferred from anything, and a
+   * date filled under one records which convention supplied its day.
+   */
+  monthYearDayConvention: dayConventionSchema.default('ask'),
   remotePreference: z.enum(['remote', 'hybrid', 'onsite', 'no_preference']).optional(),
   salaryPreference: z.string().max(200).optional(),
   salaryStrategy: z.enum(['negotiable', 'specific', 'decline']).optional(),

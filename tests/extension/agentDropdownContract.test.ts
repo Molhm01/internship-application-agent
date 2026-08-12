@@ -118,10 +118,14 @@ describe('the observer classifies from the live element', () => {
   });
 
   it('a date control is DATE_INPUT and a file control is FILE_UPLOAD', () => {
-    // Not fixed in this task; classified so the follow-up has something to
-    // stand on. DATE_FORMAT_FOLLOWUP_REQUIRED.
     expect(classify('<input id="a" type="month" />', 'a')).toBe('DATE_INPUT');
     expect(classify('<input id="a" type="file" />', 'a')).toBe('FILE_UPLOAD');
+    // The Lincoln Electric From Date box: an ordinary text input whose only
+    // statement about itself is its placeholder. This is the control the agent
+    // typed `2021-07` into on a live application.
+    expect(classify('<input id="a" type="text" placeholder="MM/DD/YYYY" />', 'a')).toBe(
+      'DATE_INPUT',
+    );
   });
 });
 
@@ -159,15 +163,28 @@ describe('the tool validator refuses typing into a list control', () => {
     expect(typeInto(target).suggestedTool).toBe('select_option');
   });
 
-  it.each(['TEXT_INPUT', 'TEXTAREA', 'DATE_INPUT'] as const)(
-    'still permits type() on %s',
-    (interactionType) => {
-      // The regression that matters: Address, City, Postal Code and Phone all
-      // started working, and this must not take that away.
-      const verdict = typeInto(element({ interactionType, kind: 'text' }));
-      expect(verdict.allowed).toBe(true);
-    },
-  );
+  it.each(['TEXT_INPUT', 'TEXTAREA'] as const)('still permits type() on %s', (interactionType) => {
+    // The regression that matters: Address, City, Postal Code and Phone all
+    // started working, and this must not take that away.
+    const verdict = typeInto(element({ interactionType, kind: 'text' }));
+    expect(verdict.allowed).toBe(true);
+  });
+
+  it('rejects type() on DATE_INPUT and names set_date instead', () => {
+    // This assertion used to say the opposite, with a comment noting the date
+    // format was not yet fixed. It is now, and the reason it had to change is
+    // that permitting `type` on a date control is precisely what let the
+    // profile's `2021-07` reach an `MM/DD/YYYY` box on a live Lincoln Electric
+    // application, where the employer answered "Invalid date."
+    //
+    // `type` cannot be made safe for a date control by choosing a better value,
+    // because the value is chosen before anything has looked at the control.
+    // The tool is the thing that is wrong.
+    const verdict = typeInto(element({ interactionType: 'DATE_INPUT', kind: 'date' }));
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.code).toBe('WRONG_TOOL_FOR_CONTROL_TYPE');
+    expect(verdict.suggestedTool).toBe('set_date');
+  });
 });
 
 // ---------------------------------------------------------------------------

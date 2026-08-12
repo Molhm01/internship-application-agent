@@ -1,12 +1,19 @@
 import {
   AGENT_TOOLS,
+  DATE_INTERACTION_TYPES,
   MUTATING_TOOLS,
   OPTION_INTERACTION_TYPES,
   agentDecisionSchema,
+  describeShape,
+  isChronologyInvalid,
+  lastDayOfMonth,
+  normalizeStoredDate,
   type AgentDecision,
   type AgentTool,
   type AgentToolCall,
+  type DayConvention,
   type ErrorCode,
+  type NormalizedDate,
   type ObservedElement,
   type PageObservation,
 } from '@internship-agent/shared';
@@ -56,6 +63,14 @@ export function checkDecision(
   decision: AgentDecision,
   observation: PageObservation,
   trustedValues: ReadonlyMap<string, string>,
+  /**
+   * The day convention the applicant has stored, if any.
+   *
+   * Defaults to `ask`, and the default is the safe one: a caller that forgets
+   * to thread the preference through gets the behaviour that refuses to invent
+   * a day, never the behaviour that quietly picks the first of the month.
+   */
+  dayConvention: DayConvention = 'ask',
 ): SafetyVerdict {
   if (decision.kind !== 'ACTION') return { allowed: true, reason: '' };
   const action = decision.action;
@@ -147,6 +162,43 @@ export function checkDecision(
         reason: `"${element.label}" answers from a list, so it cannot be typed into. Open it and choose one of the choices it offers.`,
       };
     }
+    // ---- The Lincoln date refusal. ---------------------------------------
+    //
+    // The same shape of rule as the one above it, for the same reason. On a
+    // live application the agent typed `2021-07` — the profile's own storage
+    // format — into a From Date box whose placeholder read `MM/DD/YYYY`, and
+    // the employer answered "Invalid date."
+    //
+    // No prompt wording prevents that, because the decision was reasonable
+    // given what the decider had been told the control was: a text box, and
+    // `2021-07` is a perfectly good string. What is wrong is the *tool*. `type`
+    // carries a string chosen before anything looked at the control, so it
+    // structurally cannot convert; `set_date` carries the date as parts and
+    // renders it against this control at the moment of writing.
+    //
+    // So `type` is refused for every DATE_INPUT, whatever value it carries and
+    // however correct that value might happen to be. A rule that only rejected
+    // *wrong-looking* strings would be a rule that lets the next one through.
+    if ((DATE_INTERACTION_TYPES as readonly string[]).includes(element.interactionType)) {
+      const wants = element.dateRequirement?.shape;
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        suggestedTool: 'set_date',
+        reason:
+          `"${element.label}" is a date control` +
+          (wants ? ` expecting ${describeShape(wants)}` : '') +
+          ', so a saved date is never typed into it. Use set_date, which writes the date in the shape this control asks for.',
+      };
+    }
+  }
+
+  // ---- 4c. set_date goes to date controls, and carries a date nobody made up.
+  //
+  // Three separate guarantees, and they fail differently on purpose.
+  if (element && action.tool === 'set_date') {
+    const verdict = checkSetDate(element, action, observation, trustedValues, dayConvention);
+    if (verdict) return verdict;
   }
 
   // ---- 4b. The search box inside an open menu. ------------------------------
@@ -310,6 +362,200 @@ export function checkDecision(
   }
 
   return { allowed: true, reason: '' };
+}
+
+/**
+ * Whether this `set_date` may reach the page, and why not when it may not.
+ *
+ * Returns `undefined` for a call that is allowed. Four checks, in order of how
+ * badly each one would misstate the applicant's record:
+ *
+ *  1. The control is a date control. `set_date` is not a general write, and
+ *     pointing it at a `<select>` of months would be typing into a dropdown by
+ *     another name.
+ *  2. The date is one the profile actually holds. The model may decide *when* a
+ *     saved date is written; it may not decide what the date is, exactly as
+ *     with every other factual answer.
+ *  3. **A day the applicant never stated is refused.** This is the one that
+ *     carries the guarantee. A `month`-precision record against a control that
+ *     wants a day produces a question, not `07/01/2021`, unless the applicant
+ *     has stored a convention saying which day they want used — and then the
+ *     day has to be the day that convention actually produces.
+ *  4. An end date earlier than the start date beside it is refused rather than
+ *     silently reordered. Two dates that contradict each other are a record to
+ *     correct, and swapping them would be the agent deciding which of the
+ *     applicant's two statements was the mistake.
+ */
+function checkSetDate(
+  element: ObservedElement,
+  action: AgentToolCall,
+  observation: PageObservation,
+  trustedValues: ReadonlyMap<string, string>,
+  dayConvention: DayConvention,
+): SafetyVerdict | undefined {
+  if (!(DATE_INTERACTION_TYPES as readonly string[]).includes(element.interactionType)) {
+    return {
+      allowed: false,
+      code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+      suggestedTool: (OPTION_INTERACTION_TYPES as readonly string[]).includes(
+        element.interactionType,
+      )
+        ? 'open_dropdown'
+        : 'type',
+      reason: `"${element.label}" is not a date control, so set_date does not apply to it.`,
+    };
+  }
+
+  const proposed = action.normalizedDate;
+  if (!proposed) {
+    return {
+      allowed: false,
+      code: 'DATE_USER_INPUT_REQUIRED',
+      reason: 'A set_date call must carry the date to write, and this one carried none.',
+    };
+  }
+
+  // A date is a fact about the applicant's life, so it comes from the record
+  // and nowhere else. `trustedValues` was built by the extension from the saved
+  // profile before any decider was asked anything.
+  const stored = normalizeStoredDate(trustedValues.get(element.elementId) ?? element.proposedValue);
+  if (stored.precision === 'unknown') {
+    return {
+      allowed: false,
+      code: 'DATE_USER_INPUT_REQUIRED',
+      reason: `Nothing saved answers "${element.label}", and a date is never invented.`,
+      replacement: agentDecisionSchema.parse({
+        kind: 'ASK_USER',
+        reason: 'No saved date answers this question.',
+        question: element.label,
+        elementId: element.elementId,
+        errorCode: 'DATE_USER_INPUT_REQUIRED',
+      }),
+    };
+  }
+
+  if (proposed.year !== stored.year || proposed.month !== stored.month) {
+    return {
+      allowed: false,
+      code: 'DATE_USER_INPUT_REQUIRED',
+      reason: `"${element.label}" would have been answered with a date the profile does not contain.`,
+    };
+  }
+
+  // ---- The day. ----------------------------------------------------------
+  //
+  // Where `2021-07` becoming `07/01/2021` is stopped. The stored date has no
+  // day; the proposed one does; therefore something chose it, and the only
+  // thing permitted to have chosen it is a convention the applicant explicitly
+  // saved. The check is against the day that convention *actually produces*,
+  // so a call claiming `first_day` while carrying the 15th is refused too.
+  if (proposed.day !== stored.day) {
+    if (stored.day !== null) {
+      return {
+        allowed: false,
+        code: 'DATE_USER_INPUT_REQUIRED',
+        reason: `"${element.label}" would have been answered with a day the profile does not record.`,
+      };
+    }
+    const convention = proposed.dayFromConvention;
+    if (convention === undefined || convention !== dayConvention) {
+      return {
+        allowed: false,
+        code: 'DATE_PRECISION_INSUFFICIENT',
+        reason: `"${element.label}" needs an exact day and the profile records only a month and year. A day is never chosen for you.`,
+        replacement: askForDate(element),
+      };
+    }
+    const expected =
+      proposed.year !== null && proposed.month !== null
+        ? convention === 'first_day'
+          ? 1
+          : lastDayOfMonth(proposed.year, proposed.month)
+        : null;
+    if (expected === null || proposed.day !== expected) {
+      return {
+        allowed: false,
+        code: 'DATE_PRECISION_INSUFFICIENT',
+        reason: `"${element.label}" carried a day the saved ${convention === 'first_day' ? 'first-day' : 'last-day'} convention does not produce.`,
+        replacement: askForDate(element),
+      };
+    }
+  }
+
+  const conflict = chronologyConflict(element, proposed, observation, trustedValues);
+  if (conflict) return conflict;
+
+  return undefined;
+}
+
+/** The question to put instead, when a date cannot be settled from the record. */
+function askForDate(element: ObservedElement): AgentDecision {
+  return agentDecisionSchema.parse({
+    kind: 'ASK_USER',
+    reason: 'The saved date is not precise enough for what this control asks for.',
+    question: element.label,
+    elementId: element.elementId,
+    errorCode: 'DATE_PRECISION_INSUFFICIENT',
+  });
+}
+
+/** Which intents name the start and the end of the same span. */
+const START_INTENTS = new Set(['employment_start_date', 'education_start_date']);
+const END_INTENTS = new Set(['employment_end_date', 'graduation_date']);
+
+/**
+ * An end date that precedes the start date beside it.
+ *
+ * The paired control is found the way a person would: the same section, the
+ * same repeated block, the opposite end of the span. Comparison is at the
+ * precision the two dates share, so July 2021 and 14 July 2021 do not
+ * contradict each other — inventing a day to break that tie would be the same
+ * fabrication the rest of this file exists to prevent.
+ *
+ * Refused rather than reordered. Two saved dates that contradict each other are
+ * a record for the applicant to correct, and choosing which of their two
+ * statements was the mistake is not the agent's call.
+ */
+function chronologyConflict(
+  element: ObservedElement,
+  proposed: NormalizedDate,
+  observation: PageObservation,
+  trustedValues: ReadonlyMap<string, string>,
+): SafetyVerdict | undefined {
+  const intent = element.intent ?? '';
+  const isEnd = END_INTENTS.has(intent);
+  const isStart = START_INTENTS.has(intent);
+  if (!isEnd && !isStart) return undefined;
+
+  const partner = observation.elements.find(
+    (candidate) =>
+      candidate.elementId !== element.elementId &&
+      candidate.section === element.section &&
+      candidate.blockIndex === element.blockIndex &&
+      (isEnd ? START_INTENTS : END_INTENTS).has(candidate.intent ?? ''),
+  );
+  if (!partner) return undefined;
+
+  const other = normalizeStoredDate(
+    trustedValues.get(partner.elementId) ?? partner.proposedValue ?? '',
+  );
+  if (other.precision === 'unknown') return undefined;
+
+  const start = isEnd ? other : proposed;
+  const end = isEnd ? proposed : other;
+  if (!isChronologyInvalid(start, end)) return undefined;
+  return {
+    allowed: false,
+    code: 'DATE_CHRONOLOGY_INVALID',
+    reason: `The saved end date for "${element.section || element.label}" is earlier than its start date, so neither was filled.`,
+    replacement: agentDecisionSchema.parse({
+      kind: 'ASK_USER',
+      reason: 'The saved start and end dates for this record contradict each other.',
+      question: element.label,
+      elementId: element.elementId,
+      errorCode: 'DATE_CHRONOLOGY_INVALID',
+    }),
+  };
 }
 
 /** Whether this call writes a value the applicant would be stating as fact. */

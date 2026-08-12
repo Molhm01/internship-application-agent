@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import { idSchema } from './common.js';
 import { errorCodeSchema } from './error.js';
+import {
+  dateRequirementSchema,
+  dateShapeSchema,
+  dateValidationStateSchema,
+  datePrecisionSchema,
+  dayConventionSchema,
+  normalizedDateSchema,
+} from './dates.js';
 
 /**
  * Agent Mode: the contract between the page, the model, and the executor.
@@ -109,6 +117,25 @@ export const OPTION_INTERACTION_TYPES: readonly InteractionType[] = [
   'CUSTOM_SELECT',
   'SEARCHABLE_COMBOBOX',
 ];
+
+/**
+ * The control families a date goes into, and which `type` is refused for.
+ *
+ * A date control is not a text box that happens to hold digits. It states a
+ * format — in its `type`, its `pattern`, or its placeholder — and it validates
+ * against that format, which means the *stored* representation of a date is
+ * almost never the one it will accept. On a live Lincoln Electric application
+ * the agent typed the profile's `2021-07` into a box reading `MM/DD/YYYY` and
+ * the employer answered "Invalid date."
+ *
+ * `type` cannot express a conversion, because the string it carries was chosen
+ * before anything looked at the control. `set_date` carries the date as parts
+ * and renders it at the moment of execution against the control in front of it,
+ * so the same saved fact becomes `07/12/2021` on one form and `2021-07-12` on
+ * another. That is why this is a separate list and a separate refusal rather
+ * than better prompt wording.
+ */
+export const DATE_INTERACTION_TYPES: readonly InteractionType[] = ['DATE_INPUT'];
 
 /** Where a dropdown currently is, so the tools available to it are decidable. */
 export const dropdownStateSchema = z.enum(['CLOSED', 'OPEN', 'SEARCHING', 'SELECTED']);
@@ -224,6 +251,16 @@ export const observedElementSchema = z
     searchInputFor: z.string().max(40).optional(),
     /** Which repeated block this belongs to, when the section has more than one. */
     blockIndex: z.number().int().nonnegative().max(50).optional(),
+    /**
+     * What this date control said about the date it will accept.
+     *
+     * Present only on `DATE_INPUT`, and made of the page's own words — the
+     * input type, the placeholder, the pattern, the bounds. It is what makes
+     * the decision "which string does this control want" answerable *before*
+     * anything is written, instead of discovered from an "Invalid date."
+     * message afterwards.
+     */
+    dateRequirement: dateRequirementSchema.optional(),
     /** The canonical intent, when the scanner resolved one. */
     intent: z.string().max(80).optional(),
     policy: answerPolicySchema,
@@ -310,6 +347,16 @@ export const AGENT_TOOLS = [
   'observe_page',
   'click',
   'type',
+  /**
+   * Writes a date into a date control, in whatever shape that control wants.
+   *
+   * Distinct from `type` because the value does not exist yet when the decision
+   * is made. `type` carries a finished string chosen against the profile;
+   * `set_date` carries the date as parts and the *executor* renders it against
+   * the control's stated format. That is the whole repair for the live failure
+   * in which `2021-07` was typed into an `MM/DD/YYYY` box.
+   */
+  'set_date',
   'clear',
   'focus',
   'open_dropdown',
@@ -332,6 +379,7 @@ export type AgentTool = z.infer<typeof agentToolSchema>;
 export const MUTATING_TOOLS: readonly AgentTool[] = [
   'click',
   'type',
+  'set_date',
   'clear',
   'select_option',
   'click_add',
@@ -367,6 +415,16 @@ export const agentToolCallSchema = z
      * exists" from being expressible.
      */
     optionId: z.string().max(80).optional(),
+    /**
+     * The date to write, for `set_date`. Parts, never a rendered string.
+     *
+     * There is deliberately nowhere in this object to put `"2021-07"` for a
+     * date — the shape a control receives is decided by the executor, against
+     * that control, at the moment of writing. And because `day` is separate
+     * from `month`, "the applicant did not state a day" survives all the way to
+     * the DOM instead of being lost inside a string that looks complete.
+     */
+    normalizedDate: normalizedDateSchema.optional(),
     /** Which stored document to attach, by kind. Never a path. */
     documentKind: z.enum(['resume', 'cover_letter']).optional(),
     /** The question to put to the applicant, for `ask_user`. */
@@ -469,6 +527,23 @@ export const toolExecutionResultSchema = z
     optionsSeen: z.number().int().nonnegative().max(5000).default(0),
     /** True when the page changed in a way the tool was waiting for. */
     pageChanged: z.boolean().default(false),
+    /**
+     * The shape `set_date` actually wrote, as a shape name.
+     *
+     * `us_full`, never `07/12/2021`. It is what lets a trace prove a date went
+     * in as `MM/DD/YYYY` without recording which date it was.
+     */
+    dateShapeWritten: dateShapeSchema.optional(),
+    /**
+     * How the page judged the date control on either side of the write.
+     *
+     * Both, because one is not interpretable without the other: a control that
+     * was already showing "Invalid date." before the agent touched it and one
+     * the agent's own value was rejected by look identical from the "after"
+     * reading alone, and only the second is this run's problem.
+     */
+    dateValidationBefore: dateValidationStateSchema.optional(),
+    dateValidationAfter: dateValidationStateSchema.optional(),
     reason: z.string().max(600).default(''),
     errorCode: errorCodeSchema.optional(),
     durationMs: z.number().nonnegative().max(600_000).default(0),
@@ -670,6 +745,61 @@ export const agentDropdownTraceSchema = z
 
 export type AgentDropdownTrace = z.infer<typeof agentDropdownTraceSchema>;
 
+/**
+ * How one date interaction actually went, end to end.
+ *
+ * The counterpart of the dropdown trace, and written to the same rule: it says
+ * everything about *what happened* and nothing about *what the date was*.
+ *
+ * `formattedValueShape` is the shape name — `us_full` — and never `07/12/2021`.
+ * An employment start date is a fact about somebody's life, and a trace is a
+ * document people paste into bug reports; there is no member here that can hold
+ * one. What survives is the pair that makes the live failure legible:
+ * `profilePrecision: 'month'` beside `requiredFormat: 'us_full'` is a record
+ * demanding a day the profile never held, and `validationAfter` recording the
+ * employer's own complaint is the difference between a date the form accepted
+ * and a date merely sitting in a box.
+ */
+export const agentDateTraceSchema = z
+  .object({
+    elementId: z.string().max(40),
+    /** The employer's own wording for the control. Never the value. */
+    field: z.string().max(200).default(''),
+    controlType: interactionTypeSchema,
+    /** How precisely the profile knew this date. Never the date. */
+    profilePrecision: datePrecisionSchema,
+    /** The shape the control asked for, and what said so. */
+    requiredFormat: dateShapeSchema.optional(),
+    requiredFormatEvidence: z.string().max(40).default(''),
+    /** True when the profile held a day, as opposed to one being needed. */
+    exactDateAvailable: z.boolean().default(false),
+    /** Which approved convention supplied a day, when one did. `none` otherwise. */
+    dateConventionUsed: dayConventionSchema.default('ask'),
+    requestedTool: agentToolSchema.optional(),
+    toolAllowed: z.boolean().default(true),
+    rejectionCode: errorCodeSchema.optional(),
+    /**
+     * The shape that was actually written — the *name* of it.
+     *
+     * `us_full`, not `07/12/2021`. This is the member somebody reading a trace
+     * uses to see that a date went in as `MM/DD/YYYY`, and it is deliberately
+     * incapable of telling them which date.
+     */
+    formattedValueShape: dateShapeSchema.optional(),
+    executionResult: z
+      .enum(['WRITTEN', 'REFUSED', 'CONTROL_NOT_FOUND', 'NOT_ATTEMPTED'])
+      .default('NOT_ATTEMPTED'),
+    /** The control's validity before the write, and after it. */
+    validationBefore: dateValidationStateSchema.optional(),
+    validationAfter: dateValidationStateSchema.optional(),
+    verified: z.boolean().default(false),
+    finalStatus: agentVerificationSchema.default('NOT_APPLICABLE'),
+    errorCode: errorCodeSchema.optional(),
+  })
+  .strict();
+
+export type AgentDateTrace = z.infer<typeof agentDateTraceSchema>;
+
 export const agentStepTraceSchema = z
   .object({
     step: z.number().int().nonnegative(),
@@ -685,6 +815,15 @@ export const agentStepTraceSchema = z
     /** The question as the employer worded it. Never what was written into it. */
     targetLabel: z.string().max(200).default(''),
     targetSection: z.string().max(120).default(''),
+    /**
+     * Which repeated block the target sat in, when the section has more than one.
+     *
+     * Part of the control's identity rather than decoration: a page with three
+     * Work Experience blocks has three controls labelled "End Date", and a run
+     * that recorded only the label could neither tell them apart in a trace nor
+     * remember which of them it had already asked about.
+     */
+    targetBlockIndex: z.number().int().nonnegative().max(50).optional(),
     executed: z.boolean().default(false),
     /** That a value was written — never which value. */
     wroteValue: z.boolean().default(false),
@@ -699,6 +838,8 @@ export const agentStepTraceSchema = z
     readyEvaluation: agentReadyEvaluationSchema.optional(),
     /** Present on every step whose target was a list control. */
     dropdown: agentDropdownTraceSchema.optional(),
+    /** Present on every step whose target was a date control. */
+    date: agentDateTraceSchema.optional(),
   })
   .strict();
 

@@ -1,6 +1,11 @@
 import {
   AGENT_ACTION_BUDGET,
+  DATE_INTERACTION_TYPES,
+  agentDateTraceSchema,
   agentDropdownTraceSchema,
+  normalizeStoredDate,
+  type AgentDateTrace,
+  type DayConvention,
   agentMarkerRecordSchema,
   agentRunTraceSchema,
   agentStepTraceSchema,
@@ -68,6 +73,16 @@ export interface AgentLoopHost {
   decide?(input: DecisionInput): Promise<AgentDecision>;
   /** Values the extension trusts for this observation, by element handle. */
   trustedValues(observation: PageObservation): Promise<ReadonlyMap<string, string>>;
+  /**
+   * What the applicant approved doing when a form demands a day their record
+   * does not hold.
+   *
+   * Optional, and absent means `ask` — the value that stops and asks rather
+   * than the one that writes the first of the month. A host that has not been
+   * updated to supply this cannot accidentally opt its user into a convention
+   * they never chose.
+   */
+  dayConvention?(): DayConvention;
   /** Called after each step so the popup can show what is happening. */
   onProgress?(progress: AgentProgress): void;
   /** True when a document is available and still unattached. Blocks readiness. */
@@ -159,6 +174,79 @@ function dropdownTraceFor(input: {
   });
 }
 
+/** Whether this control is one `set_date` writes to, and so earns a date trace. */
+function isDateControl(element: ObservedElement): boolean {
+  return (DATE_INTERACTION_TYPES as readonly string[]).includes(element.interactionType);
+}
+
+/**
+ * How one date interaction went, for the exported trace.
+ *
+ * Written to exactly the rule the dropdown trace is written to: everything
+ * about what happened, nothing about what the date was. `profilePrecision` is
+ * `month`; `requiredFormat` is `us_full`; `formattedValueShape` is `us_full`.
+ * Somebody reading this can see that a record holding a month and a year met a
+ * control demanding a day, and they cannot see whose employment it was or when
+ * it started.
+ *
+ * The pair that makes the live failure legible here is `validationBefore` and
+ * `validationAfter`. A box that was clean before and complains after is a value
+ * this run got refused; a box that complained both times was already broken and
+ * is not this action's doing, and telling those apart from the "after" reading
+ * alone is impossible.
+ */
+function dateTraceFor(input: {
+  before: ObservedElement;
+  after?: PageObservation;
+  call?: AgentToolCall;
+  execution?: ToolExecutionResult;
+  verification?: AgentVerification;
+  requestedTool?: AgentTool;
+  toolAllowed?: boolean;
+  rejectionCode?: ErrorCode;
+  dayConvention?: DayConvention;
+}): AgentDateTrace {
+  const { before, call, execution } = input;
+  const saved = normalizeStoredDate(before.proposedValue);
+  const proposed = call?.normalizedDate;
+  const executed = execution?.executed ?? false;
+  return agentDateTraceSchema.parse({
+    elementId: before.elementId,
+    // The employer's own wording for the question, exactly as the dropdown
+    // trace keeps it. It is their text, not the applicant's.
+    field: before.label.slice(0, 200),
+    controlType: before.interactionType,
+    profilePrecision: saved.precision,
+    ...(before.dateRequirement ? { requiredFormat: before.dateRequirement.shape } : {}),
+    requiredFormatEvidence: before.dateRequirement?.evidence ?? '',
+    exactDateAvailable: saved.precision === 'day',
+    // Says which convention supplied a day, and `ask` when none did — so a
+    // trace states, per field, whether a day was taken from the record or from
+    // a preference the applicant set.
+    dateConventionUsed: proposed?.dayFromConvention ?? input.dayConvention ?? 'ask',
+    ...(input.requestedTool ? { requestedTool: input.requestedTool } : {}),
+    toolAllowed: input.toolAllowed ?? true,
+    ...(input.rejectionCode ? { rejectionCode: input.rejectionCode } : {}),
+    ...(execution?.dateShapeWritten ? { formattedValueShape: execution.dateShapeWritten } : {}),
+    executionResult:
+      execution === undefined
+        ? 'NOT_ATTEMPTED'
+        : execution.errorCode === 'DATE_CONTROL_NOT_FOUND' ||
+            execution.errorCode === 'CONTROL_NOT_FOUND'
+          ? 'CONTROL_NOT_FOUND'
+          : executed
+            ? 'WRITTEN'
+            : 'REFUSED',
+    ...(execution?.dateValidationBefore
+      ? { validationBefore: execution.dateValidationBefore }
+      : {}),
+    ...(execution?.dateValidationAfter ? { validationAfter: execution.dateValidationAfter } : {}),
+    verified: input.verification === 'VERIFIED',
+    finalStatus: input.verification ?? 'NOT_APPLICABLE',
+    ...(execution?.errorCode ? { errorCode: execution.errorCode } : {}),
+  });
+}
+
 /** How the chosen option's text relates to the saved answer. Never the text. */
 function matchTypeOf(element: ObservedElement, optionId: string | undefined): string {
   const wanted = (element.proposedValue ?? '').trim();
@@ -187,6 +275,36 @@ function verify(
 ): AgentVerification {
   if (!execution.executed) return 'NOT_VERIFIED';
   switch (call.tool) {
+    // ---- A date is verified against the employer, not against the box. -----
+    //
+    // The distinction that makes this worth its own case. A control displaying
+    // `07/12/2021` beside a form still showing "Invalid date." has not been
+    // answered, and every prior version of this code would have called that a
+    // success because the text was there.
+    //
+    // So three things are asked, and the weakest of them comes last:
+    //
+    //  1. Does the employer's form still complain about this control? That
+    //     outranks everything on the page, including the browser's own opinion:
+    //     `2021-07` in a text box is *valid HTML* and was refused anyway.
+    //  2. Does the control still hold anything at all? A masked box that
+    //     silently discards what it did not understand keeps nothing.
+    //  3. Only then, does what it holds correspond to what was written?
+    case 'set_date': {
+      if (!before) return 'NOT_VERIFIED';
+      const now = after.elements.find(
+        (element) =>
+          element.label === before.label &&
+          element.section === before.section &&
+          element.blockIndex === before.blockIndex,
+      );
+      if (!now) return 'NOT_VERIFIED';
+      if (now.validationError.trim().length > 0) return 'VERIFICATION_FAILED';
+      if (execution.errorCode !== undefined) return 'VERIFICATION_FAILED';
+      const written = execution.observedValue.trim();
+      if (written.length === 0) return 'VERIFICATION_FAILED';
+      return now.currentValue.trim() === written ? 'VERIFIED' : 'VERIFICATION_FAILED';
+    }
     case 'type':
     case 'select_option': {
       if (!before) return 'NOT_VERIFIED';
@@ -320,6 +438,10 @@ function fallbackDecision(input: DecisionInput, readiness: AgentReadyEvaluation)
  */
 export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome> {
   const history = new AgentHistory();
+  // Read once per run, and defaulting to `ask`. Both the decider and the safety
+  // layer receive the same value, so the layer that *checks* a day cannot be
+  // working from a different preference than the layer that *chose* it.
+  const dayConvention: DayConvention = host.dayConvention?.() ?? 'ask';
   const now: () => string = host.now ? () => host.now!() : () => new Date().toISOString();
   const startedAt = now();
   const startedMs = Date.now();
@@ -405,7 +527,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     }
 
     const trustedValues = await host.trustedValues(observation);
-    const input: DecisionInput = { observation, history, trustedValues };
+    const input: DecisionInput = { observation, history, trustedValues, dayConvention };
 
     // ---- Ask, and record that we asked. ------------------------------------
     //
@@ -490,7 +612,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     // Safety runs against the observation the decision was made from, never a
     // later one. A decision is a claim about a specific page state, and it is
     // checked against that state or refused.
-    const verdict = checkDecision(decided, observation, trustedValues);
+    const verdict = checkDecision(decided, observation, trustedValues, dayConvention);
 
     // ---- A refused action is a correction, not the end of the run. ----------
     //
@@ -518,6 +640,9 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
           ...(refusedTarget ? { targetKind: refusedTarget.kind } : {}),
           targetLabel: (refusedTarget?.label ?? '').slice(0, 200),
           targetSection: refusedTarget?.section ?? '',
+          ...(refusedTarget?.blockIndex === undefined
+            ? {}
+            : { targetBlockIndex: refusedTarget.blockIndex }),
           // Never executed, so never counted as a browser action.
           executed: false,
           verification: 'NOT_VERIFIED',
@@ -534,6 +659,22 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
                   ...(decided.action?.tool ? { requestedTool: decided.action.tool } : {}),
                   toolAllowed: false,
                   ...(verdict.code ? { rejectionCode: verdict.code } : {}),
+                }),
+              }
+            : {}),
+          // The date refusal, on the record — and this is the step the whole
+          // repair is measured by. A trace showing `requestedTool: 'type'`,
+          // `toolAllowed: false`, `rejectionCode: 'WRONG_TOOL_FOR_CONTROL_TYPE'`
+          // against a DATE_INPUT is the live Lincoln failure being stopped,
+          // written down in a form a test can read.
+          ...(refusedTarget && isDateControl(refusedTarget)
+            ? {
+                date: dateTraceFor({
+                  before: refusedTarget,
+                  ...(decided.action?.tool ? { requestedTool: decided.action.tool } : {}),
+                  toolAllowed: false,
+                  ...(verdict.code ? { rejectionCode: verdict.code } : {}),
+                  dayConvention,
                 }),
               }
             : {}),
@@ -601,6 +742,20 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     }
 
     if (decision.kind === 'ASK_USER') {
+      // ---- A question that was already asked is not progress. --------------
+      //
+      // The fourth independent brake, and it exists because the other three
+      // could not see this case. A decider that keeps proposing a write the
+      // safety layer keeps converting into the *same* question spends no
+      // budget — the action never executes — takes no page action, and asks
+      // nothing new, so the action budget, the per-control failure ceiling and
+      // the unchanged-page streak all sit still while the loop runs forever.
+      //
+      // Found by an integration test over two saved dates that contradicted
+      // each other: the decider saw two perfectly fillable dates, the safety
+      // layer saw the contradiction between them, and neither could see what
+      // the other was doing.
+      const questionsBefore = history.openQuestions().length;
       history.record(
         agentStepTraceSchema.parse({
           step,
@@ -613,12 +768,19 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
           reason: decision.reason.slice(0, 300),
           targetLabel: targetLabel.slice(0, 200),
           targetSection: target?.section ?? '',
+          ...(target?.blockIndex === undefined ? {} : { targetBlockIndex: target.blockIndex }),
           ...(target ? { targetKind: target.kind } : {}),
           // The list was opened and read, and offered nothing matching. Carried
           // so a trace distinguishes that from a control nobody ever looked at.
           ...(decision.errorCode ? { errorCode: decision.errorCode } : {}),
           ...(target && isListControl(target)
             ? { dropdown: dropdownTraceFor({ before: target, after: observation }) }
+            : {}),
+          // A date the applicant has to supply. The trace records *why*: a
+          // `profilePrecision` of `month` beside a `requiredFormat` of
+          // `us_full` is the whole explanation, and it contains no dates.
+          ...(target && isDateControl(target)
+            ? { date: dateTraceFor({ before: target, after: observation, dayConvention }) }
             : {}),
         }),
         decision,
@@ -628,6 +790,11 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       // the twenty fields below it — the applicant answers the questions at the
       // end, together, rather than being interrupted per field.
       emit(`Need your input: ${targetLabel || decision.question || ''}`);
+      unchangedStreak = history.openQuestions().length > questionsBefore ? 0 : unchangedStreak + 1;
+      if (unchangedStreak >= 6) {
+        status = 'BLOCKED';
+        break;
+      }
       observation = await host.observe();
       observationCount += 1;
       continue;
@@ -678,6 +845,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         ...(target ? { targetKind: target.kind } : {}),
         targetLabel: targetLabel.slice(0, 200),
         targetSection: target?.section ?? '',
+        ...(target?.blockIndex === undefined ? {} : { targetBlockIndex: target.blockIndex }),
         executed: execution.executed,
         wroteValue: (call.value ?? '').length > 0,
         optionsSeen: Math.max(execution.optionsSeen, execution.options.length),
@@ -703,6 +871,20 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
                 verification,
                 requestedTool: call.tool,
                 toolAllowed: true,
+              }),
+            }
+          : {}),
+        ...(target && isDateControl(target)
+          ? {
+              date: dateTraceFor({
+                before: target,
+                after: observation,
+                call,
+                execution,
+                verification,
+                requestedTool: call.tool,
+                toolAllowed: true,
+                dayConvention,
               }),
             }
           : {}),

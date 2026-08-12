@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lincoln-style date controls — fixture</title>
+  </head>
+  <body>
+    <!--
+      The live date failure, reproduced control by control.
+
+      On a real Lincoln Electric application the Work Experience "From Date" box
+      displayed `MM/DD/YYYY`. The saved profile held that start date as
+      `2021-07`. The agent typed `2021-07` straight into the box and the
+      employer's own script answered "Invalid date."
+
+      The existing `lincoln-application.html` fixture could never reproduce that,
+      because its date controls are `<input type="month">` — native pickers whose
+      value format the browser enforces. The live control is nothing of the kind:
+      it is an ordinary text input whose *only* statement about its format is the
+      placeholder, and which is validated by the employer's own script on blur.
+      That combination is what this page exists to reproduce.
+
+      Every value here is fictional and the employer is invented ("Northwind
+      Industrial"). The submit button exists to be *not* clicked.
+    -->
+    <h1>Application — Work History</h1>
+    <form id="application" onsubmit="return false;">
+      <fieldset>
+        <legend>Profile</legend>
+
+        <!--
+          Ordinary text controls, on the same page on purpose. The date repair
+          must not change how these fill, and a fixture that carried only date
+          controls could not show that.
+        -->
+        <label for="firstName">First Name *</label>
+        <input id="firstName" name="firstName" type="text" required />
+
+        <label for="lastName">Last Name *</label>
+        <input id="lastName" name="lastName" type="text" required />
+
+        <label for="addressLine1">Street Address *</label>
+        <input id="addressLine1" name="addressLine1" type="text" required />
+
+        <label for="city">City *</label>
+        <input id="city" name="city" type="text" required />
+
+        <label for="postalCode">Zip/Postal Code *</label>
+        <input id="postalCode" name="postalCode" type="text" required />
+
+        <label for="phone">Phone Number *</label>
+        <input id="phone" name="phone" type="tel" required />
+      </fieldset>
+
+      <fieldset>
+        <legend>Work Experience</legend>
+
+        <!--
+          Block 1 — the exact live control shape.
+
+          `type="text"`, a `MM/DD/YYYY` placeholder, no `pattern`, and validation
+          performed by the page's own script rather than by the browser. A
+          value like `2021-07` is *perfectly valid HTML* in this box, which is
+          why native validity alone can never be the acceptance test.
+        -->
+        <div class="experience-block" data-experience-index="0">
+          <h3>Employer 1</h3>
+
+          <label for="employer0">Company Name</label>
+          <input id="employer0" name="employer0" type="text" />
+
+          <label for="title0">Position Title</label>
+          <input id="title0" name="title0" type="text" />
+
+          <label for="from0">From Date</label>
+          <input
+            id="from0"
+            name="from0"
+            type="text"
+            placeholder="MM/DD/YYYY"
+            aria-errormessage="from0Error"
+          />
+          <span id="from0Error" class="error" hidden>Invalid date.</span>
+
+          <label for="to0">End Date</label>
+          <input
+            id="to0"
+            name="to0"
+            type="text"
+            placeholder="MM/DD/YYYY"
+            aria-errormessage="to0Error"
+          />
+          <span id="to0Error" class="error" hidden>Invalid date.</span>
+
+          <label for="currentlyEmployed0">I currently work here</label>
+          <input id="currentlyEmployed0" name="currentlyEmployed0" type="checkbox" />
+        </div>
+
+        <!--
+          Block 2 — the same employer, asking for a month and a year instead.
+
+          Here so the fixture proves the agent reads each control's *own* stated
+          format rather than applying one format to every date on the page. The
+          same saved record answers this one completely, with no day needed and
+          nothing to ask about.
+        -->
+        <div class="experience-block" data-experience-index="1">
+          <h3>Employer 2</h3>
+
+          <label for="employer1">Company Name</label>
+          <input id="employer1" name="employer1" type="text" />
+
+          <label for="title1">Position Title</label>
+          <input id="title1" name="title1" type="text" />
+
+          <label for="from1">From Date</label>
+          <input
+            id="from1"
+            name="from1"
+            type="text"
+            placeholder="MM/YYYY"
+            aria-errormessage="from1Error"
+          />
+          <span id="from1Error" class="error" hidden>Invalid date.</span>
+
+          <label for="to1">End Date</label>
+          <input
+            id="to1"
+            name="to1"
+            type="text"
+            placeholder="MM/YYYY"
+            aria-errormessage="to1Error"
+          />
+          <span id="to1Error" class="error" hidden>Invalid date.</span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Education</legend>
+
+        <label for="educationStart">Education Start Date</label>
+        <input id="educationStart" name="educationStart" type="text" placeholder="MM/YYYY" />
+
+        <!--
+          A native picker, so the page also covers the case a placeholder-only
+          fix gets wrong: this control *renders* as the browser likes and holds
+          `YYYY-MM-DD` regardless.
+        -->
+        <label for="graduationDate">Graduation Date</label>
+        <input id="graduationDate" name="graduationDate" type="date" />
+      </fieldset>
+
+      <button id="next" type="button">Save and Continue</button>
+      <button id="submit" type="button">Submit Application</button>
+    </form>
+
+    <script>
+      (function () {
+        /**
+         * The employer's own date validator, reproduced.
+         *
+         * Validates on blur against the placeholder written on the control, and
+         * on rejection sets `aria-invalid` and reveals the error node the input
+         * already points at. This is the mechanism that produced "Invalid date."
+         * on the live application, and it is deliberately *not* HTML constraint
+         * validation: `2021-07` in this box passes every check the browser has.
+         */
+        var MASKS = {
+          'MM/DD/YYYY': /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/,
+          'MM/YYYY': /^(0[1-9]|1[0-2])\/\d{4}$/,
+        };
+
+        function validate(input) {
+          var mask = MASKS[input.placeholder];
+          if (!mask) return;
+          var errorId = input.getAttribute('aria-errormessage');
+          var error = errorId ? document.getElementById(errorId) : null;
+          var empty = input.value.trim() === '';
+          var ok = empty || mask.test(input.value.trim());
+          if (ok) {
+            input.removeAttribute('aria-invalid');
+            if (error) error.hidden = true;
+          } else {
+            input.setAttribute('aria-invalid', 'true');
+            if (error) error.hidden = false;
+          }
+        }
+
+        var masked = document.querySelectorAll('input[placeholder]');
+        for (var i = 0; i < masked.length; i += 1) {
+          (function (input) {
+            input.addEventListener('blur', function () {
+              validate(input);
+            });
+            input.addEventListener('focusout', function () {
+              validate(input);
+            });
+            input.addEventListener('change', function () {
+              validate(input);
+            });
+          })(masked[i]);
+        }
+
+        document.getElementById('submit').addEventListener('click', function () {
+          document.body.setAttribute('data-submitted', 'true');
+        });
+      })();
+    </script>
+  </body>
+</html>

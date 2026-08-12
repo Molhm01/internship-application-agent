@@ -28,6 +28,7 @@ import {
   scopeOf,
 } from '../scanner/optionDiscovery.js';
 import { answersFromList, isCustomCombobox, opensOptionList } from '../scanner/domScanner.js';
+import { dateRequirementOf, isDateControl, readDateValidation } from './dateControl.js';
 import { findControl } from '../dependencies/dependencyDetector.js';
 import { countBlocks, findAddControl, findSection } from '../repeaters/repeaterScanner.js';
 
@@ -164,6 +165,20 @@ export function interactionTypeOf(element: HTMLElement | null): InteractionType 
       return element.readOnly ? 'CUSTOM_SELECT' : 'SEARCHABLE_COMBOBOX';
     }
     if (element.readOnly && opensOptionList(element)) return 'CUSTOM_SELECT';
+    // ---- The Lincoln From Date box. ---------------------------------------
+    //
+    // Checked *after* the list readings and *before* falling through to text.
+    // After, because a control that opens a menu of months is a dropdown
+    // however it is labelled, and `set_date` must never be pointed at one.
+    // Before, because this is the exact control the agent typed `2021-07` into:
+    // an ordinary `<input type="text">` whose only statement about itself is
+    // `placeholder="MM/DD/YYYY"`.
+    //
+    // `isDateControl` returns true here only on that positive evidence — a
+    // format mask, a date `pattern`, a date-shaped value or bound. A text box
+    // that says nothing about dates stays `TEXT_INPUT`, which is what keeps
+    // Address, City and Postal Code on the ordinary `type` path.
+    if (isDateControl(element)) return 'DATE_INPUT';
     return 'TEXT_INPUT';
   }
 
@@ -317,6 +332,17 @@ function currentValueOf(field: DetectedField): string {
   if (!element) return '';
   if (element instanceof HTMLInputElement && element.type === 'file') {
     return element.files?.[0]?.name ?? '';
+  }
+  // A checkbox's `value` is the string it *submits when ticked* — "on" by
+  // default — and it reads the same whether the box is ticked or not. Returning
+  // it made every checkbox on every page look answered, so an "I currently work
+  // here" box could never be reached: the agent saw a control already holding
+  // "on" and moved past it. What a checkbox holds is whether it is checked.
+  if (
+    element instanceof HTMLInputElement &&
+    (element.type === 'checkbox' || element.type === 'radio')
+  ) {
+    return element.checked ? 'Yes' : '';
   }
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     return element.value.slice(0, 300);
@@ -614,11 +640,28 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
     const interactionType = interactionTypeOf(element);
     const listControl = (OPTION_INTERACTION_TYPES as readonly string[]).includes(interactionType);
     const commitment = commitmentOf(field, listControl);
+    // Read here rather than at execution time so the *decision* can be made
+    // against the control's stated format. That ordering is the repair: the old
+    // path chose a string first and discovered the format from an "Invalid
+    // date." message afterwards, by which point a wrong value was already in
+    // the employer's DOM.
+    const dateRequirement =
+      interactionType === 'DATE_INPUT' ? dateRequirementOf(element, field) : null;
+    // A date box the employer has flagged says so about itself, exactly as a
+    // dropdown does. Without this the "Invalid date." beside a text-backed date
+    // control was invisible to the loop, and a rejected value verified as a
+    // written one.
+    const dateValidation = interactionType === 'DATE_INPUT' ? readDateValidation(element) : null;
     elements.push({
       elementId: handle,
       section: field.section ?? '',
       label: field.label.slice(0, 300) || field.question.slice(0, 300),
-      kind: kindOf(field),
+      // The live element outranks the scan here for the same reason it does for
+      // dropdowns: the scanner reads a Lincoln From Date box as ordinary text,
+      // and `kind` is what a trace reports and what a coarse filter reads. A
+      // control the observer has just proven to be a date says so in both
+      // vocabularies rather than only in the authoritative one.
+      kind: interactionType === 'DATE_INPUT' ? 'date' : kindOf(field),
       interactionType,
       // A dropdown whose options this observation can already see is open (or
       // is a native select, which is always readable); anything else is shut.
@@ -644,7 +687,12 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
           ? ''
           : currentValueOf(field),
       selectionCommitted: commitment.committed,
-      validationError: commitment.validationError,
+      // A date control's own reading wins where it has one: `commitmentOf`
+      // knows about lists and about constraint validation, and knows nothing
+      // about an ATS that paints "Invalid date." beside a perfectly valid text
+      // box.
+      validationError: (dateValidation?.message || commitment.validationError).slice(0, 300),
+      ...(dateRequirement ? { dateRequirement } : {}),
       required: field.required,
       // Read from the live control rather than from the scan, because "is this
       // enabled" is exactly the fact that changes when a parent is answered.

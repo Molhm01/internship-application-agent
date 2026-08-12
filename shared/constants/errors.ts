@@ -147,6 +147,28 @@ export const ERROR_CODES = [
   // empty or the form still shows the question as required. Changing what a
   // control displays is not answering it.
   'SELECTION_NOT_COMMITTED',
+  // ---- Dates. --------------------------------------------------------------
+  //
+  // Eight codes for what used to be one silent write. On a live Lincoln
+  // Electric application the profile's `2021-07` was typed straight into a box
+  // whose placeholder read `MM/DD/YYYY`, and the employer answered "Invalid
+  // date." — a rejection the run neither noticed nor named. Every distinct way
+  // that can go wrong now has a code, because "the format was wrong", "the
+  // applicant never recorded a day", "the role is still current" and "the
+  // employer refused what we wrote" are four different problems with four
+  // different remedies, and exactly one of them is fixed by trying again.
+  //
+  // The one that carries the guarantee is `DATE_PRECISION_INSUFFICIENT`: a
+  // stored month and year against a control demanding a day is not a formatting
+  // problem, it is a fact nobody has stated, and the answer is a question
+  // rather than the first of the month.
+  'DATE_FORMAT_UNSUPPORTED',
+  'DATE_PRECISION_INSUFFICIENT',
+  'DATE_USER_INPUT_REQUIRED',
+  'DATE_CHRONOLOGY_INVALID',
+  'DATE_CONTROL_NOT_FOUND',
+  'DATE_EXECUTION_FAILED',
+  'DATE_VALIDATION_FAILED',
   // A required document is available and not yet attached.
   'DOCUMENT_ACTION_PENDING',
   'EXECUTION_CANCELLED',
@@ -411,6 +433,19 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'That choice is not one this control is currently offering. The list is read again before anything is selected.',
   SELECTION_NOT_COMMITTED:
     'This control shows a choice the form has not accepted, so it still counts as unanswered. Select it yourself.',
+  DATE_FORMAT_UNSUPPORTED:
+    'This date control asks for a format this build cannot write. Fill this date in yourself.',
+  DATE_PRECISION_INSUFFICIENT:
+    'This control needs an exact day and your profile records only a month and year. Enter the date yourself, or set a month/year day convention in your profile so it is applied consistently.',
+  DATE_USER_INPUT_REQUIRED:
+    'No saved date answers this question, and one is never invented. Enter it yourself.',
+  DATE_CHRONOLOGY_INVALID:
+    'The saved end date is earlier than the saved start date, so neither was filled. Correct the dates on that record.',
+  DATE_CONTROL_NOT_FOUND: 'This date control is no longer on the page. Reload it and run again.',
+  DATE_EXECUTION_FAILED:
+    'The date could not be written into this control. Export the Agent Trace and check the step that names it.',
+  DATE_VALIDATION_FAILED:
+    'The date was written and the employer’s form rejected it, so it still counts as unanswered. Enter it yourself.',
   AGENT_DECISION_INVALID_READY_STATE:
     'The agent tried to finish while fields it can fill were still blank. That decision was refused.',
   DOCUMENT_ACTION_PENDING:

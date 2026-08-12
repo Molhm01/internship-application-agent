@@ -39,6 +39,8 @@ export class AgentHistory {
   /** Actions proposed, refused ones included. What the budget is spent from. */
   private attempts = 0;
   private questions: string[] = [];
+  /** Which controls have been asked about, independent of the wording used. */
+  private readonly asked = new Set<string>();
 
   /** A key that survives re-observation, because handles do not. */
   private key(tool: string, label: string): string {
@@ -73,7 +75,43 @@ export class AgentHistory {
     }
     if (decision.kind === 'ASK_USER' && decision.question) {
       if (!this.questions.includes(decision.question)) this.questions.push(decision.question);
+      // Recorded separately from the question text, and this separation is not
+      // tidiness — it is a bug fix.
+      //
+      // "Have we already asked about this control" used to be answered by
+      // searching the question list for the control's *label*, which worked
+      // only because every asker happened to use the bare label as the
+      // question. The moment one of them asked something more useful — "From
+      // Date asks for MM/DD/YYYY and your profile records July 2021. What exact
+      // date should be used?" — the search stopped matching, the control looked
+      // unasked on every cycle, and the loop asked about it forever.
+      //
+      // So the two facts are stored as two things: what the applicant is shown,
+      // and which control it was about. The second is keyed on the control's
+      // identity rather than on any wording.
+      this.asked.add(this.askKey(step.targetLabel, step.targetSection, step.targetBlockIndex));
     }
+  }
+
+  /**
+   * Whether this run has already put a question to the applicant about this
+   * control.
+   *
+   * Keyed on label, section and block index together, because a page with three
+   * Work Experience blocks has three controls labelled "End Date" and they are
+   * three different questions. Keying on the label alone would ask about the
+   * first and silently skip the other two.
+   */
+  askedAbout(target: {
+    label: string;
+    section?: string;
+    blockIndex?: number | undefined;
+  }): boolean {
+    return this.asked.has(this.askKey(target.label, target.section ?? '', target.blockIndex));
+  }
+
+  private askKey(label: string, section: string, blockIndex: number | undefined): string {
+    return `${section}::${label}::${blockIndex ?? ''}`;
   }
 
   /**

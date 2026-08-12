@@ -111,8 +111,20 @@ export function trustedValuesFor(
           return job?.title;
         case 'employment_start_date':
           return job?.startDate;
+        // A current role has no end date, and this is where that stays true.
+        //
+        // Returning nothing is not a gap to be filled later: the *correct*
+        // answer for a role that has not ended is the form's own "I currently
+        // work here" control, which the case below answers. Today's date is
+        // never a substitute — writing it would state that the job ended today.
         case 'employment_end_date':
           return job?.current ? undefined : job?.endDate;
+        // Answered only from a record that positively says so. `current` is a
+        // boolean with a default of false, so an absent value and a stated "no"
+        // are indistinguishable here — which is why only the affirmative is
+        // ever produced, and an unticked box is left unticked.
+        case 'currently_employed':
+          return job?.current === true ? 'Yes' : undefined;
         case 'employment_type':
           return job?.employmentType;
         case 'reason_for_leaving':
@@ -216,6 +228,10 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
     // application finished while one is outstanding.
     documentsPending: () => documentsOutstanding(),
     buildId: input.buildId,
+    // The applicant's own standing decision about days they never recorded,
+    // read from the profile they own rather than from anything this run infers.
+    // Absent means `ask`, which is the schema's default and the safe one.
+    dayConvention: () => input.profile.preferences.monthYearDayConvention,
     ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     ...(input.isCancelled ? { isCancelled: input.isCancelled } : {}),
     ...(input.decide ? { decide: input.decide } : {}),
