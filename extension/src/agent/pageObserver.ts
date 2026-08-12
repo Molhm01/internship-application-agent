@@ -393,11 +393,21 @@ function errorTextOf(node: Element | null): string {
 /**
  * The employer form's complaint about this control, when it has one.
  *
- * Looked for where forms actually put it: the element's own constraint
- * validation, the node it names through `aria-errormessage` or
- * `aria-describedby`, and failing both, an error node inside the field's own
- * container. The container walk stops after three ancestors, so a page-level
- * banner about something else is never attributed to this control.
+ * Looked for where forms actually put it, in descending order of how much the
+ * source *means* it: the element's own constraint validation, the node it
+ * names through `aria-errormessage`, and — only for a control the page has
+ * flagged `aria-invalid` — a described-by node or an error node inside the
+ * field's own container.
+ *
+ * That flag is load-bearing rather than cautious. `aria-describedby` is the
+ * attribute for hints, and a required field on a real portal points at a
+ * permanent "This field is required" marker through it. Reading such a marker
+ * as a complaint made every filled text field on a live Lincoln Electric run
+ * report `VERIFICATION_FAILED`, which is where "six actions, zero verified"
+ * came from.
+ *
+ * The container walk stops after three ancestors, so a page-level banner about
+ * something else is never attributed to this control.
  */
 function validationErrorFor(element: HTMLElement): string {
   if (
@@ -410,14 +420,36 @@ function validationErrorFor(element: HTMLElement): string {
     }
   }
 
-  const named = [
-    ...(element.getAttribute('aria-errormessage') ?? '').split(/\s+/),
-    ...(element.getAttribute('aria-describedby') ?? '').split(/\s+/),
-  ].filter(Boolean);
-  for (const id of named) {
+  // `aria-errormessage` is *the* error attribute. A node named by it is the
+  // form's complaint by definition, so it is read whatever the control's other
+  // state says.
+  const flagged = element.getAttribute('aria-invalid') === 'true';
+  for (const id of (element.getAttribute('aria-errormessage') ?? '').split(/\s+/).filter(Boolean)) {
     const text = errorTextOf(elementById(scopeOf(element), id));
-    // A described-by node is often help text rather than an error, so only
-    // wording that actually complains is treated as one.
+    if (text && UNANSWERED_WORDING.test(text)) return text;
+  }
+
+  // ---- `aria-describedby` is help text, and was being read as a complaint. --
+  //
+  // The bug that produced six actions and zero verified on a live Lincoln
+  // Electric run. `aria-describedby` is the attribute for *hints*, and a
+  // required field on a real portal routinely points at a permanent "This field
+  // is required" marker through it. That marker does not go away when the field
+  // is filled — it is a label, not a verdict.
+  //
+  // The old reading accepted any described-by node whose wording matched
+  // "required", with no other evidence. So Street Address was filled correctly,
+  // read back correctly, and reported `VERIFICATION_FAILED` — because a static
+  // hint beside it said the word "required". Every text field on the page with
+  // such a hint failed the same way, permanently, and the run counted none of
+  // its own successful writes.
+  //
+  // So a described-by node now only counts as a complaint when the control is
+  // *also* flagged invalid. That is the same evidence the container walk below
+  // already required, and the asymmetry between the two was the whole defect.
+  if (!flagged) return '';
+  for (const id of (element.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean)) {
+    const text = errorTextOf(elementById(scopeOf(element), id));
     if (text && UNANSWERED_WORDING.test(text)) return text;
   }
 

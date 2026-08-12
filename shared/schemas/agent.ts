@@ -800,6 +800,106 @@ export const agentDateTraceSchema = z
 
 export type AgentDateTrace = z.infer<typeof agentDateTraceSchema>;
 
+/**
+ * What a control looked like when it was read back, as a name rather than a
+ * value.
+ *
+ * The whole point of these being names is that a trace can be pasted into a bug
+ * report. `HOLDS_EXPECTED` and `REJECTED_BY_FORM` are the two facts somebody
+ * debugging a run needs, and neither of them says what the applicant's address
+ * or phone number is.
+ */
+export const observedFieldStateSchema = z.enum([
+  'EMPTY',
+  'HOLDS_EXPECTED',
+  'HOLDS_OTHER',
+  'REJECTED_BY_FORM',
+  'NOT_FOUND',
+  'PLACEHOLDER',
+  'COMMITTED',
+  'UNKNOWN',
+]);
+
+export type ObservedFieldStateName = z.infer<typeof observedFieldStateSchema>;
+
+/**
+ * One action, end to end, as its own record.
+ *
+ * ## Why the aggregate was not enough
+ *
+ * A live run reported `actions: 6, verified: 0` and there was no way to learn
+ * anything more from it. Six actions had run; the values were visibly in the
+ * employer's form; and the run counted none of them. Whether that was the
+ * execution failing, the re-observation not happening, the control not being
+ * found again, or the verifier rejecting a correct value was simply not
+ * recorded anywhere — the two numbers were the entire evidence.
+ *
+ * So every action now says what became of it at each stage. The three fields
+ * that carry the diagnosis are `executionSuccess`, `verified`, and the pair of
+ * observation ids: an action with `executionSuccess: true`, `verified: false`,
+ * two *different* observation ids and `verificationObservedState:
+ * HOLDS_EXPECTED` is a verifier bug, and it is that specific combination that
+ * this repair was found by.
+ *
+ * Nothing here holds a value. `verificationExpectedState` is a state name, not
+ * the expected string.
+ */
+export const agentActionTraceSchema = z
+  .object({
+    step: z.number().int().nonnegative(),
+    decisionTool: agentToolSchema,
+    targetControlType: interactionTypeSchema.default('UNKNOWN'),
+    /** The canonical question, when the scanner resolved one. Never an answer. */
+    targetIntent: z.string().max(80).default(''),
+    /**
+     * The stable identity the verifier correlated on, as a key.
+     *
+     * Recorded because "the control could not be found again" is otherwise
+     * indistinguishable from "the control was found and held the wrong thing",
+     * and only the first is a correlation bug.
+     */
+    logicalKey: z.string().max(300).default(''),
+    /** False when the safety layer refused the action before it ran. */
+    actionAccepted: z.boolean().default(false),
+    executionStarted: z.boolean().default(false),
+    executionFinished: z.boolean().default(false),
+    /**
+     * The executor's own report. Deliberately separate from `verified`.
+     *
+     * A page can accept typing events perfectly and then reset the box; that is
+     * `executionSuccess: true, verified: false`, and it is a correct outcome
+     * rather than a contradiction.
+     */
+    executionSuccess: z.boolean().default(false),
+    domChanged: z.boolean().default(false),
+    /** The observation the decision was made from, and the one it was checked against. */
+    observationBefore: z.string().max(60).default(''),
+    observationAfter: z.string().max(60).default(''),
+    /** True only when those two are genuinely different readings of the page. */
+    freshObservation: z.boolean().default(false),
+    /** Which rule decided the verdict, so a wrong verdict names its own rule. */
+    verificationStrategy: z
+      .enum([
+        'TEXT_VALUE',
+        'OPTION_COMMITMENT',
+        'DATE_VALUE',
+        'PAGE_CHANGED',
+        'OPTIONS_READ',
+        'BLOCK_COUNT',
+        'NONE',
+      ])
+      .default('NONE'),
+    verificationExpectedState: observedFieldStateSchema.default('UNKNOWN'),
+    verificationObservedState: observedFieldStateSchema.default('UNKNOWN'),
+    verified: z.boolean().default(false),
+    verification: agentVerificationSchema.default('NOT_APPLICABLE'),
+    errorCode: errorCodeSchema.optional(),
+    durationMs: z.number().nonnegative().max(600_000).default(0),
+  })
+  .strict();
+
+export type AgentActionTrace = z.infer<typeof agentActionTraceSchema>;
+
 export const agentStepTraceSchema = z
   .object({
     step: z.number().int().nonnegative(),
@@ -840,6 +940,13 @@ export const agentStepTraceSchema = z
     dropdown: agentDropdownTraceSchema.optional(),
     /** Present on every step whose target was a date control. */
     date: agentDateTraceSchema.optional(),
+    /**
+     * Present on every step that proposed a tool call, refused ones included.
+     *
+     * The record that makes a run diagnosable one action at a time rather than
+     * as two aggregate counters.
+     */
+    action: agentActionTraceSchema.optional(),
   })
   .strict();
 

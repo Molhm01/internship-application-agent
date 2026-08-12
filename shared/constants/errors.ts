@@ -147,6 +147,44 @@ export const ERROR_CODES = [
   // empty or the form still shows the question as required. Changing what a
   // control displays is not answering it.
   'SELECTION_NOT_COMMITTED',
+  // ---- One agent action, and why it did not count. -------------------------
+  //
+  // A live run reported `status: BLOCKED, actions: 6, verified: 0,
+  // failureCode: undefined`. Every one of those six actions had *worked* — the
+  // values were in the employer's DOM — and none of them could say what had
+  // become of it, because the only vocabulary available was a dropdown code
+  // (`SELECTION_NOT_COMMITTED`) being applied to text fields and a blank where
+  // the run's own failure reason should have been.
+  //
+  // So each distinct outcome gets a name. The ones that matter most are the
+  // pair that used to be indistinguishable: `ACTION_EXECUTION_FAILED` is the
+  // write not happening, and `ACTION_VERIFICATION_FAILED` is the write
+  // happening and the page not keeping it. Those call for opposite responses,
+  // and conflating them is why a run could report zero progress while visibly
+  // filling a form.
+  'ACTION_EXECUTION_FAILED',
+  'ACTION_VERIFICATION_FAILED',
+  'ACTION_NO_DOM_CHANGE',
+  // The control was there when the decision was made and is not there now.
+  // Distinct from `CONTROL_NOT_FOUND`, which is "no such control at all": this
+  // one is a page that re-rendered under an action already in flight.
+  'STALE_ELEMENT',
+  // A text box that did not keep what was typed into it. Its own code because
+  // the previous build reported this with `SELECTION_NOT_COMMITTED` — a
+  // dropdown code — which made a text failure unsearchable in a trace.
+  'TEXT_VALUE_NOT_COMMITTED',
+  // The verifier's verdict on a list control that displays a choice the form
+  // did not keep. `SELECTION_NOT_COMMITTED` is the *executor's* code for the
+  // same page condition, caught one layer earlier; both exist because a trace
+  // that says which layer noticed is a trace that says whether the executor's
+  // own check is working.
+  'OPTION_SELECTION_NOT_COMMITTED',
+  // One control the run tried repeatedly and could not settle.
+  'AGENT_REPEATED_ACTION_FAILURE',
+  // The run stopped because nothing it did was changing the page any more.
+  'AGENT_NO_PROGRESS',
+  // The run spent its whole action budget without reaching a finished state.
+  'AGENT_ACTION_BUDGET_EXHAUSTED',
   // ---- Dates. --------------------------------------------------------------
   //
   // Eight codes for what used to be one silent write. On a live Lincoln
@@ -433,6 +471,23 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'That choice is not one this control is currently offering. The list is read again before anything is selected.',
   SELECTION_NOT_COMMITTED:
     'This control shows a choice the form has not accepted, so it still counts as unanswered. Select it yourself.',
+  ACTION_EXECUTION_FAILED:
+    'The agent could not carry out this action on the page. Export the Agent Trace and check the step that names it.',
+  ACTION_VERIFICATION_FAILED:
+    'The action ran and the page did not keep the result, so the field still counts as unanswered. Fill it in yourself.',
+  ACTION_NO_DOM_CHANGE: 'This action changed nothing on the page. Fill this field in yourself.',
+  STALE_ELEMENT:
+    'The page replaced this control while the agent was working on it. Run it again on the settled page.',
+  TEXT_VALUE_NOT_COMMITTED:
+    'This box did not keep what was typed into it, so it still counts as unanswered. Type it in yourself.',
+  OPTION_SELECTION_NOT_COMMITTED:
+    'This control shows a choice the form has not accepted, so it still counts as unanswered. Select it yourself.',
+  AGENT_REPEATED_ACTION_FAILURE:
+    'The agent tried this control several times and the page refused each attempt. Finish this field yourself.',
+  AGENT_NO_PROGRESS:
+    'The agent stopped because its actions were no longer changing the page. Export the Agent Trace to see the last step it attempted.',
+  AGENT_ACTION_BUDGET_EXHAUSTED:
+    'The agent used its whole action budget without finishing. Export the Agent Trace and check what it was repeating.',
   DATE_FORMAT_UNSUPPORTED:
     'This date control asks for a format this build cannot write. Fill this date in yourself.',
   DATE_PRECISION_INSUFFICIENT:

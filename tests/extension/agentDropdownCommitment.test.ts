@@ -280,7 +280,15 @@ describe('a selection the form did not keep is a failure, not a success', () => 
     const selected = outcome.trace.steps.filter((step) => step.tool === 'select_option');
     expect(selected.length).toBeGreaterThan(0);
     expect(selected.every((step) => step.verification === 'VERIFICATION_FAILED')).toBe(true);
-    expect(selected.every((step) => step.errorCode === 'SELECTION_NOT_COMMITTED')).toBe(true);
+    // `OPTION_SELECTION_NOT_COMMITTED`, the *verifier's* verdict, rather than
+    // `SELECTION_NOT_COMMITTED`, the executor's. The step now carries the code
+    // from the layer that read the page back, because that is the reading taken
+    // last and against fresh evidence — and because the executor's codes were
+    // being applied to controls they did not describe, which is how a failed
+    // text write came to be filed under a dropdown code.
+    expect(selected.every((step) => step.errorCode === 'OPTION_SELECTION_NOT_COMMITTED')).toBe(
+      true,
+    );
     // No *answer* is counted as landed. Opening the list verifies — the list
     // really was read — and choosing from it never does, which is the only
     // arrangement under which the two can be told apart afterwards.

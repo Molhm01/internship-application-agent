@@ -6,11 +6,17 @@ import {
   normalizeStoredDate,
   type AgentDateTrace,
   type DayConvention,
+  agentActionTraceSchema,
   agentMarkerRecordSchema,
   agentRunTraceSchema,
   agentStepTraceSchema,
+  describeFieldState,
   displaysSelection,
+  findLogicalField,
+  logicalFieldKey,
   OPTION_INTERACTION_TYPES,
+  type AgentActionTrace,
+  type ObservedFieldStateName,
   type AgentDecision,
   type AgentDropdownTrace,
   type AgentTool,
@@ -266,71 +272,227 @@ function matchTypeOf(element: ObservedElement, optionId: string | undefined): st
   // "NJ" an acceptable rendering of "New Jersey".
   return option.label.length <= 4 ? 'ABBREVIATION' : 'SEMANTIC';
 }
+/**
+ * One action's whole life, for the exported trace.
+ *
+ * Built for *every* proposed action, refused ones included, because a refusal
+ * is a thing that happened to a control and the previous trace recorded it
+ * nowhere a reader would look.
+ *
+ * The three fields that make a run diagnosable are `executionSuccess`,
+ * `verified` and the two observation ids. `executionSuccess: true` with
+ * `verified: false` over two *different* observations and
+ * `verificationObservedState: HOLDS_EXPECTED` is a verifier bug — which is
+ * exactly the combination the live "six actions, zero verified" run would have
+ * shown, and could not, because none of those five facts were recorded.
+ *
+ * Nothing here holds a value: `targetIntent` is the canonical question, and the
+ * two states are names.
+ */
+function actionTraceFor(input: {
+  step: number;
+  call: AgentToolCall;
+  target: ObservedElement | undefined;
+  execution?: ToolExecutionResult;
+  outcome?: VerificationVerdict;
+  observationBefore: string;
+  observationAfter: string;
+  accepted: boolean;
+  rejectionCode?: ErrorCode;
+}): AgentActionTrace {
+  const { call, target, execution, outcome } = input;
+  const errorCode = input.rejectionCode ?? outcome?.errorCode ?? execution?.errorCode;
+  return agentActionTraceSchema.parse({
+    step: input.step,
+    decisionTool: call.tool,
+    targetControlType: target?.interactionType ?? 'UNKNOWN',
+    targetIntent: (target?.intent ?? '').slice(0, 80),
+    logicalKey: target ? logicalFieldKey(target).slice(0, 300) : '',
+    actionAccepted: input.accepted,
+    executionStarted: input.accepted,
+    executionFinished: input.accepted && execution !== undefined,
+    // The executor's own report, kept strictly separate from the verdict. A
+    // page can accept every typing event and then reset the box.
+    executionSuccess: execution?.executed ?? false,
+    domChanged: execution?.pageChanged ?? false,
+    observationBefore: input.observationBefore.slice(0, 60),
+    observationAfter: input.observationAfter.slice(0, 60),
+    // Two different ids means the loop genuinely looked again. Recorded rather
+    // than assumed, because a verifier checking against a stale observation and
+    // one checking against a fresh one are indistinguishable without it.
+    freshObservation:
+      input.observationAfter.length > 0 && input.observationAfter !== input.observationBefore,
+    verificationStrategy: outcome?.strategy ?? 'NONE',
+    verificationExpectedState: outcome?.expected ?? ('UNKNOWN' satisfies ObservedFieldStateName),
+    verificationObservedState: outcome?.observed ?? ('UNKNOWN' satisfies ObservedFieldStateName),
+    verified: outcome?.verification === 'VERIFIED',
+    verification: outcome?.verification ?? 'NOT_APPLICABLE',
+    ...(errorCode ? { errorCode } : {}),
+    durationMs: execution?.durationMs ?? 0,
+  });
+}
 
+/**
+ * The verdict on one action, with the reasoning that produced it.
+ *
+ * A verdict rather than a bare enum, because the enum alone is what made the
+ * live failure undiagnosable: six actions came back `VERIFICATION_FAILED` and
+ * there was no record of *which* of the four possible reasons had fired. The
+ * strategy, the two states and the code are the diagnosis, and they cost
+ * nothing to carry.
+ */
+interface VerificationVerdict {
+  verification: AgentVerification;
+  strategy: AgentActionTrace['verificationStrategy'];
+  expected: ObservedFieldStateName;
+  observed: ObservedFieldStateName;
+  /** Set only when the verdict is a failure. Never left to the caller to guess. */
+  errorCode?: ErrorCode;
+}
+
+function verdict(
+  verification: AgentVerification,
+  strategy: AgentActionTrace['verificationStrategy'],
+  expected: ObservedFieldStateName,
+  observed: ObservedFieldStateName,
+  errorCode?: ErrorCode,
+): VerificationVerdict {
+  return { verification, strategy, expected, observed, ...(errorCode ? { errorCode } : {}) };
+}
+
+/**
+ * Did the action do what it claimed?
+ *
+ * ## The failure this was rewritten for
+ *
+ * A live Lincoln Electric run reported `actions: 6, verified: 0` while the
+ * employer's form visibly held the values that had been written. Reproduced
+ * against a fixture, three separate rules in the previous version of this
+ * function each rejected a *correct* write:
+ *
+ *  1. **A static "required" hint counted as a rejection.** The observer read
+ *     `aria-describedby` as an error source, so a required field pointing at a
+ *     permanent "This field is required" marker reported `validationError` for
+ *     ever, and the first line of the text check failed it. Fixed in the
+ *     observer; the rule here is unchanged and now fires only on real evidence.
+ *  2. **A reformatted value counted as a different value.** `+1 201 555 0134`
+ *     stored as `(201) 555-0134` failed a containment test over the country
+ *     code. Now `holdsWrittenValue`, which understands that for a value that is
+ *     essentially digits, the digits are the value.
+ *  3. **The control could not always be found again.** Correlation was exact
+ *     equality of label, section and block index, so a re-render that changed a
+ *     required marker or moved a control lost it entirely. Now
+ *     `findLogicalField`, which correlates on canonical intent first.
+ *
+ * ## What has not changed
+ *
+ * The page after the action is still the only admissible evidence, and the
+ * executor's own report is still not evidence. `executionSuccess` and
+ * `verified` remain separate answers to separate questions: a form can accept
+ * every typing event and then reset the box, and that is a failure however
+ * cleanly the events were dispatched.
+ */
 function verify(
   call: AgentToolCall,
   before: ObservedElement | undefined,
   after: PageObservation,
   execution: ToolExecutionResult,
-): AgentVerification {
-  if (!execution.executed) return 'NOT_VERIFIED';
+): VerificationVerdict {
+  if (!execution.executed) {
+    return verdict(
+      'NOT_VERIFIED',
+      'NONE',
+      'UNKNOWN',
+      'UNKNOWN',
+      execution.errorCode ?? 'ACTION_EXECUTION_FAILED',
+    );
+  }
   switch (call.tool) {
     // ---- A date is verified against the employer, not against the box. -----
     //
-    // The distinction that makes this worth its own case. A control displaying
-    // `07/12/2021` beside a form still showing "Invalid date." has not been
-    // answered, and every prior version of this code would have called that a
-    // success because the text was there.
-    //
-    // So three things are asked, and the weakest of them comes last:
-    //
-    //  1. Does the employer's form still complain about this control? That
-    //     outranks everything on the page, including the browser's own opinion:
-    //     `2021-07` in a text box is *valid HTML* and was refused anyway.
-    //  2. Does the control still hold anything at all? A masked box that
-    //     silently discards what it did not understand keeps nothing.
-    //  3. Only then, does what it holds correspond to what was written?
+    // A control displaying `07/12/2021` beside a form still showing "Invalid
+    // date." has not been answered. So three things are asked, weakest last:
+    // does the form still complain, does the control hold anything at all, and
+    // only then does what it holds match what was written.
     case 'set_date': {
-      if (!before) return 'NOT_VERIFIED';
-      const now = after.elements.find(
-        (element) =>
-          element.label === before.label &&
-          element.section === before.section &&
-          element.blockIndex === before.blockIndex,
-      );
-      if (!now) return 'NOT_VERIFIED';
-      if (now.validationError.trim().length > 0) return 'VERIFICATION_FAILED';
-      if (execution.errorCode !== undefined) return 'VERIFICATION_FAILED';
+      if (!before)
+        return verdict('NOT_VERIFIED', 'DATE_VALUE', 'UNKNOWN', 'UNKNOWN', 'STALE_ELEMENT');
+      const now = findLogicalField(after.elements, before);
+      if (!now) {
+        return verdict(
+          'NOT_VERIFIED',
+          'DATE_VALUE',
+          'HOLDS_EXPECTED',
+          'NOT_FOUND',
+          'STALE_ELEMENT',
+        );
+      }
       const written = execution.observedValue.trim();
-      if (written.length === 0) return 'VERIFICATION_FAILED';
-      return now.currentValue.trim() === written ? 'VERIFIED' : 'VERIFICATION_FAILED';
+      if (now.validationError.trim().length > 0) {
+        return verdict(
+          'VERIFICATION_FAILED',
+          'DATE_VALUE',
+          'HOLDS_EXPECTED',
+          'REJECTED_BY_FORM',
+          'DATE_VALIDATION_FAILED',
+        );
+      }
+      if (execution.errorCode !== undefined) {
+        return verdict(
+          'VERIFICATION_FAILED',
+          'DATE_VALUE',
+          'HOLDS_EXPECTED',
+          'HOLDS_OTHER',
+          execution.errorCode,
+        );
+      }
+      if (written.length === 0) {
+        return verdict(
+          'VERIFICATION_FAILED',
+          'DATE_VALUE',
+          'HOLDS_EXPECTED',
+          'EMPTY',
+          'DATE_EXECUTION_FAILED',
+        );
+      }
+      return now.currentValue.trim() === written
+        ? verdict('VERIFIED', 'DATE_VALUE', 'HOLDS_EXPECTED', 'HOLDS_EXPECTED')
+        : verdict(
+            'VERIFICATION_FAILED',
+            'DATE_VALUE',
+            'HOLDS_EXPECTED',
+            now.currentValue.trim().length === 0 ? 'EMPTY' : 'HOLDS_OTHER',
+            'DATE_VALIDATION_FAILED',
+          );
     }
     case 'type':
     case 'select_option': {
-      if (!before) return 'NOT_VERIFIED';
-      // Found by label rather than by handle: the handles were reminted by the
-      // observation this is checking against, and a control the page replaced
-      // has a new one.
+      const listStrategy = call.tool === 'select_option' ? 'OPTION_COMMITMENT' : 'TEXT_VALUE';
+      if (!before) {
+        return verdict('NOT_VERIFIED', listStrategy, 'UNKNOWN', 'UNKNOWN', 'STALE_ELEMENT');
+      }
+      // ---- Found again by *logical* identity, not by handle equality. ------
       //
-      // The block index is part of the identity, and leaving it out was a real
-      // bug: a page with two Work Experience blocks has two controls labelled
-      // "Company Name", so every write to the second block was checked against
-      // the first one's value and reported NOT_VERIFIED over a field that had
-      // been filled correctly.
-      const now = after.elements.find(
-        (element) =>
-          element.label === before.label &&
-          element.section === before.section &&
-          element.blockIndex === before.blockIndex,
-      );
-      if (!now) return 'NOT_VERIFIED';
+      // The handles were reminted by the observation this is checking against,
+      // so the control just written to necessarily has a new one. Correlation
+      // is on canonical intent within the same frame, section and repeated
+      // block — which is what survives a re-render that rewords the label, and
+      // what keeps block 2's "Company Name" from being confirmed against
+      // block 1's.
+      const now = findLogicalField(after.elements, before);
+      if (!now) {
+        return verdict(
+          'NOT_VERIFIED',
+          listStrategy,
+          'HOLDS_EXPECTED',
+          'NOT_FOUND',
+          'STALE_ELEMENT',
+        );
+      }
       const wanted = call.value ?? '';
-      if (!wanted.trim()) return 'NOT_APPLICABLE';
+      if (!wanted.trim()) return verdict('NOT_APPLICABLE', 'NONE', 'UNKNOWN', 'UNKNOWN');
 
       // ---- A list control is verified against the form, not the label. -----
-      //
-      // Three things are asked of a dropdown, and the previous version of this
-      // asked only the weakest of them.
       //
       //  1. Does the form still say the question is unanswered? That outranks
       //     everything: Education Type displayed "BS" while the page went on
@@ -340,51 +502,111 @@ function verify(
       //     chosen from.
       //  3. Only then, does the displayed text correspond to the choice?
       //
-      // And that last comparison is `displaysSelection` rather than
-      // `includes`. Substring containment approved "No Selection" as an answer
-      // of "No" — a placeholder verifying as a real choice, which is the exact
-      // shape of failure this whole path exists to stop.
+      // That last comparison is `displaysSelection` rather than `includes`:
+      // substring containment once approved "No Selection" as an answer of
+      // "No", a placeholder verifying as a real choice.
       if (isListControl(now)) {
-        if (now.validationError.trim().length > 0) return 'VERIFICATION_FAILED';
-        if (!now.selectionCommitted) return 'VERIFICATION_FAILED';
-        if (now.currentValue.trim().length === 0) return 'VERIFICATION_FAILED';
+        if (now.validationError.trim().length > 0) {
+          return verdict(
+            'VERIFICATION_FAILED',
+            'OPTION_COMMITMENT',
+            'COMMITTED',
+            'REJECTED_BY_FORM',
+            'OPTION_SELECTION_NOT_COMMITTED',
+          );
+        }
+        if (!now.selectionCommitted) {
+          return verdict(
+            'VERIFICATION_FAILED',
+            'OPTION_COMMITMENT',
+            'COMMITTED',
+            'PLACEHOLDER',
+            'OPTION_SELECTION_NOT_COMMITTED',
+          );
+        }
+        if (now.currentValue.trim().length === 0) {
+          return verdict(
+            'VERIFICATION_FAILED',
+            'OPTION_COMMITMENT',
+            'COMMITTED',
+            'EMPTY',
+            'OPTION_SELECTION_NOT_COMMITTED',
+          );
+        }
         const aliases = call.optionId
           ? before.options
               .filter((option) => option.optionId === call.optionId)
               .map((option) => option.label)
           : [];
         return displaysSelection(now.currentValue, wanted, { aliases })
-          ? 'VERIFIED'
-          : 'VERIFICATION_FAILED';
+          ? verdict('VERIFIED', 'OPTION_COMMITMENT', 'COMMITTED', 'COMMITTED')
+          : verdict(
+              'VERIFICATION_FAILED',
+              'OPTION_COMMITMENT',
+              'COMMITTED',
+              'HOLDS_OTHER',
+              'OPTION_SELECTION_NOT_COMMITTED',
+            );
       }
 
-      // A text box holds what was written, or it does not. The form's own
-      // complaint still counts against it — a rejected value is not a written
-      // one — but containment stays, because a box may reformat what it keeps.
-      if (now.validationError.trim().length > 0) return 'VERIFICATION_FAILED';
-      const reduce = (value: string): string =>
-        value
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, ' ')
-          .trim();
-      const held = reduce(now.currentValue);
-      const target = reduce(wanted);
-      return held === target || held.includes(target) ? 'VERIFIED' : 'VERIFICATION_FAILED';
+      // ---- A text box holds what was written, or it does not. --------------
+      //
+      // The form's own complaint still counts against it — a rejected value is
+      // not a written one — but that complaint is now read only on real
+      // evidence rather than from a static "required" hint, which is what made
+      // every filled field on the live run report a failure.
+      //
+      // And the comparison is `holdsWrittenValue`, which accepts a control that
+      // *reformatted* what it kept. A phone box storing `(201) 555-0134` for
+      // `+1 201 555 0134` has the applicant's number in it, and reporting that
+      // as a failure was the second half of the same bug.
+      const observedState = describeFieldState({
+        found: true,
+        currentValue: now.currentValue,
+        expected: wanted,
+        validationError: now.validationError,
+      });
+      if (observedState === 'HOLDS_EXPECTED') {
+        return verdict('VERIFIED', 'TEXT_VALUE', 'HOLDS_EXPECTED', 'HOLDS_EXPECTED');
+      }
+      return verdict(
+        'VERIFICATION_FAILED',
+        'TEXT_VALUE',
+        'HOLDS_EXPECTED',
+        observedState,
+        observedState === 'REJECTED_BY_FORM'
+          ? 'ACTION_VERIFICATION_FAILED'
+          : 'TEXT_VALUE_NOT_COMMITTED',
+      );
     }
     case 'click_add': {
       // The page grew a block, or it did not. `pageChanged` here is the block
       // count rising, observed by the tool against the section it pressed.
-      return execution.pageChanged ? 'VERIFIED' : 'NOT_VERIFIED';
+      return execution.pageChanged
+        ? verdict('VERIFIED', 'BLOCK_COUNT', 'COMMITTED', 'COMMITTED')
+        : verdict('NOT_VERIFIED', 'BLOCK_COUNT', 'COMMITTED', 'UNKNOWN', 'ACTION_NO_DOM_CHANGE');
     }
     case 'open_dropdown':
     case 'get_options': {
-      return execution.options.length > 0 ? 'VERIFIED' : 'NOT_VERIFIED';
+      // Reading a list is a real step forward even though it writes nothing:
+      // the next decision cannot choose an option until this has happened.
+      return execution.options.length > 0
+        ? verdict('VERIFIED', 'OPTIONS_READ', 'COMMITTED', 'COMMITTED')
+        : verdict(
+            'NOT_VERIFIED',
+            'OPTIONS_READ',
+            'COMMITTED',
+            'EMPTY',
+            execution.errorCode ?? 'DROPDOWN_OPEN_FAILED',
+          );
     }
     case 'click_next': {
-      return execution.pageChanged ? 'VERIFIED' : 'NOT_VERIFIED';
+      return execution.pageChanged
+        ? verdict('VERIFIED', 'PAGE_CHANGED', 'COMMITTED', 'COMMITTED')
+        : verdict('NOT_VERIFIED', 'PAGE_CHANGED', 'COMMITTED', 'UNKNOWN', 'ACTION_NO_DOM_CHANGE');
     }
     default:
-      return 'NOT_APPLICABLE';
+      return verdict('NOT_APPLICABLE', 'NONE', 'UNKNOWN', 'UNKNOWN');
   }
 }
 
@@ -402,6 +624,28 @@ export interface AgentRunOutcome {
  */
 /** How many refused actions a run tolerates before it stops and says why. */
 const MAX_REJECTED_ACTIONS = 12;
+
+/**
+ * Why a run that stopped short stopped, derived from what it actually did.
+ *
+ * Exists because `status: BLOCKED, failureCode: undefined` is what a live run
+ * reported, and it is the least useful thing a run can say about itself. There
+ * is always an answer available — the steps are right there — and this picks
+ * the most specific one the run's own record supports.
+ *
+ * Ordered by how much it narrows the search: a control tried repeatedly and
+ * refused every time is a page problem with a named control; actions that ran
+ * and were not kept is a commitment problem; and only when neither applies is
+ * "it stopped getting anywhere" the honest answer.
+ */
+function blockedReasonFrom(history: AgentHistory): ErrorCode {
+  if (history.exhaustedLabels().length > 0) return 'AGENT_REPEATED_ACTION_FAILURE';
+  const steps = history.all();
+  if (steps.some((entry) => entry.verification === 'VERIFICATION_FAILED')) {
+    return 'ACTION_VERIFICATION_FAILED';
+  }
+  return 'AGENT_NO_PROGRESS';
+}
 
 function decisionErrorFor(cause: unknown): AgentRunTrace['steps'][number]['errorCode'] {
   const detail = cause instanceof Error ? cause.message.toLowerCase() : String(cause).toLowerCase();
@@ -522,6 +766,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       break;
     }
     if (history.budgetExhausted()) {
+      failure = 'AGENT_ACTION_BUDGET_EXHAUSTED';
       status = 'BLOCKED';
       break;
     }
@@ -678,6 +923,24 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
                 }),
               }
             : {}),
+          // A refused action is still an action that was proposed, and it gets
+          // the same record as one that ran. `actionAccepted: false` beside
+          // `verified: false` is the honest reading: nothing reached the page,
+          // so nothing could be verified — as distinct from an action that ran
+          // and was not kept, which looks completely different here.
+          ...(decided.action
+            ? {
+                action: actionTraceFor({
+                  step,
+                  call: decided.action,
+                  target: refusedTarget,
+                  observationBefore: observation.observationId,
+                  observationAfter: '',
+                  accepted: false,
+                  ...(verdict.code ? { rejectionCode: verdict.code } : {}),
+                }),
+              }
+            : {}),
         }),
         // Recorded as an *action* decision so the history counts the failure
         // against this tool and this control, which is what makes the next
@@ -737,7 +1000,24 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         }),
         decision,
       );
-      status = decision.kind === 'READY_FOR_REVIEW' ? 'READY_FOR_REVIEW' : 'BLOCKED';
+      if (decision.kind === 'READY_FOR_REVIEW') {
+        status = 'READY_FOR_REVIEW';
+      } else {
+        // ---- A BLOCKED run always says why. --------------------------------
+        //
+        // This is the path the live run stopped on, and it reported
+        // `failureCode: undefined` — a run that gave up with no stated reason,
+        // which is the one thing a diagnosis cannot survive. The decider ran
+        // out of ideas, readiness disagreed, and the fallback produced BLOCKED
+        // carrying nothing.
+        //
+        // The reason is derived from what the run actually did, most specific
+        // first: controls it tried and could not settle, then actions the page
+        // refused to keep, and only failing both the generic "it stopped
+        // getting anywhere".
+        status = 'BLOCKED';
+        failure = failure ?? blockedReasonFrom(history);
+      }
       break;
     }
 
@@ -792,6 +1072,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       emit(`Need your input: ${targetLabel || decision.question || ''}`);
       unchangedStreak = history.openQuestions().length > questionsBefore ? 0 : unchangedStreak + 1;
       if (unchangedStreak >= 6) {
+        failure = 'AGENT_NO_PROGRESS';
         status = 'BLOCKED';
         break;
       }
@@ -818,10 +1099,19 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
 
     // Re-observe *before* verifying. The page's state after the action is the
     // only admissible evidence about whether the action worked.
+    //
+    // `observationBefore` is captured first, because "did the loop actually
+    // look again" turned out to be a question nobody could answer about the
+    // live run: a verifier checking against the same observation it decided
+    // from and one checking against a fresh one produce identical traces unless
+    // both ids are written down.
+    const observationBefore = observation.observationId;
+    const readinessBefore = readiness;
     observation = await host.observe();
     observationCount += 1;
     mark('AGENT_OBSERVATION_CREATED', step, observation);
-    const verification = verify(call, target, observation, execution);
+    const outcome = verify(call, target, observation, execution);
+    const verification = outcome.verification;
     mark('AGENT_VERIFICATION_FINISHED', step, observation, { tool: call.tool });
 
     if (navigationTarget?.finalSubmit && execution.executed) {
@@ -851,16 +1141,44 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         optionsSeen: Math.max(execution.optionsSeen, execution.options.length),
         pageChanged: execution.pageChanged,
         verification,
-        // The tool's own code first, when it has one — it names the more
-        // specific cause. Failing that, a verification the page contradicted is
-        // recorded as exactly that, so a step where a control displayed the
-        // answer and kept nothing is not filed as an unexplained silence.
-        ...(execution.errorCode
-          ? { errorCode: execution.errorCode }
-          : verification === 'VERIFICATION_FAILED'
-            ? { errorCode: 'SELECTION_NOT_COMMITTED' as const }
-            : {}),
+        // ---- The verifier's own code, not the executor's. -----------------
+        //
+        // The order used to be the other way round, and it hid the failure. The
+        // executor's `type` reports `VALUE_NOT_VERIFIED` whenever the box does
+        // not hold its literal argument, which a control that *reformats* what
+        // it keeps always triggers; and when the executor had no code at all, a
+        // failed text verification was filed under `SELECTION_NOT_COMMITTED` —
+        // a dropdown code, on a text field, which made the live failure
+        // unsearchable in its own trace.
+        //
+        // So the verdict from the page comes first. It is the reading taken
+        // last, against fresh evidence, and it is the one that decides whether
+        // the field counts.
+        //
+        // And a step that verified carries *no* code at all, whatever the
+        // executor thought. The executor's `type` reports `VALUE_NOT_VERIFIED`
+        // for any box that does not hold its literal argument, so a control
+        // that reformatted a phone number arrived at a verified step wearing an
+        // error — which is precisely the kind of contradiction that makes a
+        // trace unreadable.
+        ...(verification === 'VERIFIED'
+          ? {}
+          : outcome.errorCode
+            ? { errorCode: outcome.errorCode }
+            : execution.errorCode
+              ? { errorCode: execution.errorCode }
+              : {}),
         durationMs: execution.durationMs,
+        action: actionTraceFor({
+          step,
+          call,
+          target,
+          execution,
+          outcome,
+          observationBefore,
+          observationAfter: observation.observationId,
+          accepted: true,
+        }),
         ...(target && isListControl(target)
           ? {
               dropdown: dropdownTraceFor({
@@ -897,16 +1215,57 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       if (!completed.includes(targetLabel)) completed.push(targetLabel);
     }
 
-    // A page that does not respond twice running is finished, whatever the
-    // decider still wants to try. This is the third independent brake, and the
-    // one that catches a decider looping over actions that "succeed" without
-    // changing anything.
-    unchangedStreak =
-      execution.pageChanged || verification === 'VERIFIED' ? 0 : unchangedStreak + 1;
+    // ---- Progress is measured from the page, not from the executor. --------
+    //
+    // A page that does not respond several times running is finished, whatever
+    // the decider still wants to try. But "did not respond" has to be read from
+    // the observations either side of the action, and it previously was not: it
+    // was `execution.pageChanged`, which for `type` is the *executor* asking
+    // whether the box holds its literal argument. A control that reformatted
+    // what it kept reported `pageChanged: false` while genuinely having been
+    // filled, so filling a form correctly counted as six steps of no progress.
+    //
+    // So three independent signs of progress are accepted, any one of which
+    // means the run is getting somewhere:
+    //
+    //  1. the action verified against fresh page state;
+    //  2. the page has fewer required blanks than it did before;
+    //  3. the page has fewer fields the agent could still fill.
+    //
+    // Reading (2) and (3) from the readiness evaluation is deliberate — it is
+    // the same predicate that decides whether the run may finish, so "made
+    // progress" and "is finished" can never disagree about what counts.
+    const readinessAfter = evaluateReady({
+      observation,
+      askedQuestions: history.openQuestions(),
+      documentsPending: host.documentsPending?.() ?? false,
+      finalSubmitReached: history.submitActionCount() > 0,
+      unresolvedByAgent: history.exhaustedLabels(),
+    });
+    const madeProgress =
+      verification === 'VERIFIED' ||
+      readinessAfter.unresolvedRequired < readinessBefore.unresolvedRequired ||
+      readinessAfter.knownActionableRemaining < readinessBefore.knownActionableRemaining;
+    unchangedStreak = madeProgress ? 0 : unchangedStreak + 1;
     if (unchangedStreak >= 6) {
+      failure = 'AGENT_NO_PROGRESS';
       status = 'BLOCKED';
       break;
     }
+  }
+
+  // ---- A run that did not finish always names a reason. --------------------
+  //
+  // Every path above now sets one, and this is the backstop that makes that a
+  // guarantee rather than a convention somebody has to maintain. The live run
+  // reported `status: BLOCKED, failureCode: undefined`, and a future exit added
+  // to this loop would silently do the same again — so the invariant is
+  // enforced here, once, where every path converges.
+  //
+  // `CANCELLED` is exempt on purpose: the applicant pressing stop is not a
+  // failure and has no cause to report.
+  if ((status === 'BLOCKED' || status === 'FAILED') && failure === undefined) {
+    failure = blockedReasonFrom(history);
   }
 
   // The loop's own condition guarantees `status` has left RUNNING by here; the

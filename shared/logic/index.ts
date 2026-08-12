@@ -41,6 +41,8 @@ export * from './finalFieldStatus.js';
 export * from './actionContract.js';
 export * from './dateValues.js';
 export * from './normalizedDate.js';
+export * from './logicalField.js';
+export * from './valueCommitment.js';
 export * from './degreeLevel.js';
 export * from './discoverySource.js';
 export * from './buildProvenance.js';

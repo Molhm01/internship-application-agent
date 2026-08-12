@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Agent verification — fixture</title>
+  </head>
+  <body>
+    <!--
+      The live verification failure, reproduced control by control.
+
+      A real Lincoln Electric run reported `actions: 6, verified: 0, status:
+      BLOCKED, failureCode: undefined` while text fields visibly filled on the
+      page. Reproducing that needed three things the existing lab pages do not
+      have, and every one of them is here:
+
+        1. Required fields that point at a *permanent* "This field is required"
+           hint through `aria-describedby`. On a real portal that marker is a
+           label and stays put after the field is filled. The observer used to
+           read it as the form rejecting the value, so every field beside one
+           failed verification for ever.
+
+        2. A control that *reformats* what it is given. The phone box stores
+           `(201) 555-0134` for `+1 201 555 0134`, which is correct behaviour and
+           used to be counted as the box holding a different value.
+
+        3. A control that changes what it displays and commits nothing — the
+           Education Type shape — so the run has one action that must NOT verify
+           sitting beside six that must.
+
+      Every value here is fictional and the employer is invented. The submit
+      button exists to be *not* clicked.
+    -->
+    <h1>Application</h1>
+    <form id="application" onsubmit="return false;">
+      <fieldset>
+        <legend>Profile</legend>
+
+        <label for="addressLine1">Street Address *</label>
+        <input
+          id="addressLine1"
+          name="addressLine1"
+          type="text"
+          required
+          aria-describedby="addressHint"
+        />
+        <span id="addressHint" class="hint">This field is required</span>
+
+        <label for="city">City *</label>
+        <input id="city" name="city" type="text" required aria-describedby="cityHint" />
+        <span id="cityHint" class="hint">This field is required</span>
+
+        <label for="postalCode">Zip/Postal Code *</label>
+        <input
+          id="postalCode"
+          name="postalCode"
+          type="text"
+          required
+          aria-describedby="postalHint"
+        />
+        <span id="postalHint" class="hint">This field is required</span>
+
+        <!-- Reformats on change, as a real portal does. -->
+        <label for="phone">Phone Number *</label>
+        <input id="phone" name="phone" type="tel" required aria-describedby="phoneHint" />
+        <span id="phoneHint" class="hint">This field is required</span>
+      </fieldset>
+
+      <fieldset>
+        <legend>Work Experience</legend>
+        <div class="experience-block" data-experience-index="0">
+          <label for="employer0">Company Name</label>
+          <input id="employer0" name="employer0" type="text" aria-describedby="employerHint" />
+          <span id="employerHint" class="hint">This field is required</span>
+
+          <label for="title0">Position Title</label>
+          <input id="title0" name="title0" type="text" />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Education</legend>
+
+        <!--
+          A control that displays a choice and keeps nothing. Its trigger text
+          changes when an option is clicked; the hidden input it actually
+          submits through stays empty, and the page goes on saying the question
+          is required.
+        -->
+        <label id="educationTypeLabel">Education Type *</label>
+        <div
+          id="educationType"
+          role="combobox"
+          aria-haspopup="listbox"
+          aria-labelledby="educationTypeLabel"
+          aria-expanded="false"
+          aria-required="true"
+          tabindex="0"
+        >
+          <span id="educationTypeText">No Selection</span>
+          <input type="hidden" name="educationType" value="" />
+        </div>
+        <ul id="educationTypeMenu" role="listbox" hidden>
+          <li role="option" data-value="hs">High School</li>
+          <li role="option" data-value="ba">Bachelor's Degree</li>
+        </ul>
+        <span id="educationTypeError" class="error">Education Type is required</span>
+      </fieldset>
+
+      <button id="next" type="button">Save and Continue</button>
+      <button id="submit" type="button">Submit Application</button>
+    </form>
+
+    <script>
+      (function () {
+        /**
+         * The phone box's own formatter.
+         *
+         * Stores the applicant's number the way this employer stores numbers.
+         * The value is correct and it is not the string that was written, which
+         * is the whole point of it being here.
+         */
+        var phone = document.getElementById('phone');
+        phone.addEventListener('change', function () {
+          var digits = phone.value.replace(/\D/g, '');
+          digits = digits.slice(-10);
+          if (digits.length === 10) {
+            phone.value =
+              '(' + digits.slice(0, 3) + ') ' + digits.slice(3, 6) + '-' + digits.slice(6);
+          }
+        });
+
+        /**
+         * The dropdown that lies.
+         *
+         * Opens, offers real options, and on selection changes only the text its
+         * trigger renders. The hidden input stays empty and the error stays
+         * visible, so the form has not accepted anything — exactly the live
+         * Education Type behaviour.
+         */
+        var control = document.getElementById('educationType');
+        var menu = document.getElementById('educationTypeMenu');
+        var text = document.getElementById('educationTypeText');
+
+        control.addEventListener('click', function () {
+          var open = control.getAttribute('aria-expanded') === 'true';
+          control.setAttribute('aria-expanded', open ? 'false' : 'true');
+          menu.hidden = open;
+        });
+
+        menu.addEventListener('click', function (event) {
+          var option = event.target.closest('[role="option"]');
+          if (!option) return;
+          text.textContent = option.textContent;
+          // And commits nothing. No hidden value, no aria-selected, and the
+          // error node stays exactly where it was.
+          control.setAttribute('aria-expanded', 'false');
+          menu.hidden = true;
+        });
+
+        document.getElementById('submit').addEventListener('click', function () {
+          document.body.setAttribute('data-submitted', 'true');
+        });
+      })();
+    </script>
+  </body>
+</html>

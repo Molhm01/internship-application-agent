@@ -2,6 +2,7 @@ import {
   DATE_INTERACTION_TYPES,
   dropdownDirectiveSchema,
   formatNormalizedDate,
+  holdsWrittenValue,
   OPTION_INTERACTION_TYPES,
   toolExecutionResultSchema,
   type AgentToolCall,
@@ -384,21 +385,32 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
         element.focus();
         setNativeValue(element, value);
         dispatchValueEvents(element);
-        // Verified against the control's own state, here and not later: a
-        // framework that rejects or reformats a value leaves the box holding
-        // something else, and that is a failure rather than a success.
+        // Read back from the control's own state, here and not later.
+        //
+        // `holdsWrittenValue` rather than `===`, because a control that
+        // *reformats* what it keeps has still kept it. A phone box handed
+        // `+1 201 555 0134` and storing `(201) 555-0134` has the applicant's
+        // number in it; reporting that as `VALUE_NOT_VERIFIED` made a
+        // correctly filled field look like a failed write at every layer above
+        // this one, and contributed to a live run counting zero of its own
+        // successful writes.
+        //
+        // A box that kept something genuinely different, or nothing, is still a
+        // failure — and the loop's verifier takes the same reading again
+        // against fresh page state, because this one is the executor's opinion
+        // and the executor's opinion is not evidence.
         const observed = element.value;
+        const kept = holdsWrittenValue(observed, value);
         return result(
           call,
           {
             executed: true,
             observedValue: observed.slice(0, 600),
-            pageChanged: observed === value,
-            ...(observed === value ? {} : { errorCode: 'VALUE_NOT_VERIFIED' as const }),
-            reason:
-              observed === value
-                ? 'The control holds what was written.'
-                : 'The control holds something else.',
+            pageChanged: kept,
+            ...(kept ? {} : { errorCode: 'TEXT_VALUE_NOT_COMMITTED' as const }),
+            reason: kept
+              ? 'The control holds what was written.'
+              : 'The control holds something else.',
           },
           begun,
         );
