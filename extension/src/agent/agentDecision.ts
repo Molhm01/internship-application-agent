@@ -168,14 +168,40 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     // The list is in hand. Choose one of *these* choices, by its handle.
     const match = chooseOffered(element);
     if (!match) {
-      // Known answer, and the page does not offer it. Never resolved by typing
-      // it in: the applicant is asked instead.
+      // A searchable list that has not been searched yet.
+      //
+      // Its open menu shows only what it has chosen to render — often the first
+      // few dozen rows of several thousand — so "the saved answer is not here"
+      // is not yet true, it is only unproven. The query goes into the menu's own
+      // search box, which the observer emits as a separate `TEXT_INPUT`; the
+      // dropdown itself stays untypeable, and the field stays unanswered until a
+      // real option is chosen from the narrowed list.
+      const search = element.searchInputId;
+      if (search !== undefined && element.dropdownState === 'OPEN') {
+        const searchElement = live.find((candidate) => candidate.elementId === search);
+        if (searchElement && !history.exhausted('type', searchElement.label)) {
+          return agentDecisionSchema.parse({
+            kind: 'ACTION',
+            reason: `"${element.label}" offers a search box; narrowing the list before choosing.`,
+            action: {
+              tool: 'type',
+              elementId: search,
+              value: element.proposedValue,
+            },
+          });
+        }
+      }
+
+      // Known answer, and the page does not offer it — including after the list
+      // was searched. Never resolved by typing it into the control: the
+      // applicant is asked instead.
       if (history.openQuestions().includes(element.label)) continue;
       return agentDecisionSchema.parse({
         kind: 'ASK_USER',
         reason: `"${element.label}" was opened and offers no choice matching the saved answer.`,
         question: element.label,
         elementId: element.elementId,
+        errorCode: 'DROPDOWN_TARGET_NOT_FOUND',
       });
     }
     return agentDecisionSchema.parse({
@@ -276,6 +302,9 @@ export function buildDecisionPrompt(input: DecisionInput): string {
       optionCount: element.options.length,
       // The handles a select_option may name. Nothing else is selectable.
       optionIds: element.options.slice(0, 60).map((option) => option.optionId),
+      // The only element a query may be typed into for this control.
+      searchInputId: element.searchInputId,
+      searchInputFor: element.searchInputFor,
       dependsOn: element.dependsOnElementId,
       dependencyActive: element.dependencyActive,
     }));
@@ -298,9 +327,13 @@ export function buildDecisionPrompt(input: DecisionInput): string {
     '- For interactionType NATIVE_SELECT or CUSTOM_SELECT: NEVER call type.',
     '  Call open_dropdown first, look at the options the next observation',
     '  reports, then call select_option with one of their optionIds.',
-    '- For SEARCHABLE_COMBOBOX: open first, then type only into the search box',
-    '  inside the opened menu, then select a real result. Typing a query is not',
-    '  choosing an answer, and a field is not done until an option is selected.',
+    '- For SEARCHABLE_COMBOBOX: open first. The opened menu reports its own',
+    '  search box as a separate element, named by searchInputId. Type the query',
+    '  into THAT elementId, never into the dropdown. Then select a real result.',
+    '  Typing a query is not choosing an answer, and the field is not done until',
+    '  an option is selected and verified.',
+    '- dropdownState tells you where a control is: CLOSED (open it), OPEN (read',
+    '  its options and choose), SEARCHING (a query is already narrowing it).',
     '- Never invent an option. select_option takes an optionId from the current',
     '  observation; anything else names nothing and will be refused.',
     '- If the opened list offers no match, ask the user. Do not type the answer.',

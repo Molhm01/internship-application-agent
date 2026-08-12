@@ -34,7 +34,10 @@ export class AgentHistory {
   private readonly steps: AgentStepTrace[] = [];
   private readonly failures = new Map<string, number>();
   private readonly successes = new Set<string>();
+  /** Actions that reached the page. What the run reports having done. */
   private actions = 0;
+  /** Actions proposed, refused ones included. What the budget is spent from. */
+  private attempts = 0;
   private questions: string[] = [];
 
   /** A key that survives re-observation, because handles do not. */
@@ -45,9 +48,23 @@ export class AgentHistory {
   record(step: AgentStepTrace, decision: AgentDecision, execution?: ToolExecutionResult): void {
     this.steps.push(step);
     if (decision.kind === 'ACTION' && decision.action) {
-      this.actions += 1;
+      // Two different counts, and conflating them was wrong.
+      //
+      // `attempts` bounds the run: a decider that keeps proposing a refused
+      // action must still burn budget, or a loop of refusals never ends.
+      //
+      // `actions` is what the run *reports having done to the page*, and a
+      // refused action did nothing to the page. Counting it there would put the
+      // agent back in the business of reporting work it did not do — which is
+      // the whole family of failure this repair exists to close.
+      this.attempts += 1;
+      if (step.executed) this.actions += 1;
       const key = this.key(decision.action.tool, step.targetLabel);
-      if (execution?.executed && step.verification !== 'NOT_VERIFIED') {
+      // `=== 'VERIFIED'`, not "anything but NOT_VERIFIED". The difference is
+      // `VERIFICATION_FAILED` — a control the page was read back on and found
+      // *not* to hold the answer — and admitting that to the success set would
+      // let the run stop retrying a field it had demonstrably failed to fill.
+      if (execution?.executed && step.verification === 'VERIFIED') {
         this.successes.add(key);
         this.failures.delete(key);
       } else {
@@ -95,7 +112,7 @@ export class AgentHistory {
 
   /** Whether the run may take another action at all. */
   budgetExhausted(): boolean {
-    return this.actions >= AGENT_ACTION_BUDGET;
+    return this.attempts >= AGENT_ACTION_BUDGET;
   }
 
   actionCount(): number {

@@ -452,6 +452,47 @@ export function optionItemsIn(container: HTMLElement): HTMLElement[] {
   return isStructuralMenu(container) ? structuralOptionItems(container) : [];
 }
 
+/**
+ * The one box inside an open dropdown that takes a search query.
+ *
+ * Two shapes, and they are genuinely different controls. Workday and its
+ * imitators put a text input *inside* the opened menu, below the heading and
+ * above the list. React-select and the ARIA autocomplete pattern make the
+ * trigger itself the editable box. Both are returned here, and neither is the
+ * dropdown: typing into one narrows a list, and a narrowed list still has to be
+ * chosen from.
+ *
+ * Returns null for a menu with no search box — the common case, and the one
+ * where a query typed anywhere at all would be a query typed into an answer.
+ */
+export function findSearchInput(
+  trigger: HTMLElement,
+  listbox: HTMLElement | null,
+): HTMLElement | null {
+  if (listbox) {
+    const inside = Array.from(
+      listbox.querySelectorAll<HTMLInputElement>(
+        'input[type="text"], input[type="search"], input:not([type])',
+      ),
+    ).find((input) => !input.readOnly && !input.disabled && isVisible(input));
+    if (inside) return inside;
+  }
+  // The trigger is the search box only when a person could actually type into
+  // it. A `readonly` combobox trigger opens a list and takes no characters.
+  if (
+    trigger instanceof HTMLInputElement &&
+    !trigger.readOnly &&
+    !trigger.disabled &&
+    trigger.type !== 'hidden' &&
+    (trigger.getAttribute('aria-autocomplete') === 'list' ||
+      trigger.getAttribute('aria-autocomplete') === 'both' ||
+      trigger.getAttribute('role') === 'combobox')
+  ) {
+    return trigger;
+  }
+  return null;
+}
+
 /** Reads the selectable entries of an open popup, whatever role it uses. */
 export function readOptions(listbox: HTMLElement): DiscoveredOption[] {
   return optionItemsIn(listbox)

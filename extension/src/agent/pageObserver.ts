@@ -3,6 +3,7 @@ import {
   describesThirdPartyDetails,
   isNeverGuessedQuestion,
   isPlaceholderSelection,
+  OPTION_INTERACTION_TYPES,
   observedControlKindSchema,
   observedElementSchema,
   pageObservationSchema,
@@ -17,11 +18,14 @@ import {
 import { scanDom } from '../scanner/domScanner.js';
 import { detectAtsByHostname, isFinalSubmitControl } from '../scanner/adapters.js';
 import {
+  elementById,
   findListbox,
+  findSearchInput,
   isVisible,
   readOptions,
   readSelectedText,
   resolveTrigger,
+  scopeOf,
 } from '../scanner/optionDiscovery.js';
 import { answersFromList, isCustomCombobox, opensOptionList } from '../scanner/domScanner.js';
 import { findControl } from '../dependencies/dependencyDetector.js';
@@ -215,13 +219,14 @@ export function policyFor(field: DetectedField, proposed: string | undefined): A
  * indistinguishable from the agent flailing. `optionsKnown` reports which case
  * this is, so the model can tell "no options" from "not looked yet".
  */
-function optionsOf(
+export function optionsOf(
   field: DetectedField,
   handle: string,
-): { options: ObservedElement['options']; known: boolean } {
+): { options: ObservedElement['options']; known: boolean; searchInput: HTMLElement | null } {
   const element = findControl(document, field.selector);
   if (element instanceof HTMLSelectElement) {
     return {
+      searchInput: null,
       options: Array.from(element.options).map((option, index) => ({
         // Minted from the handle that read them, so a choice can only ever be
         // named by an observation that actually saw it offered.
@@ -241,11 +246,23 @@ function optionsOf(
   // contains, or the contract "open, look, choose" has no middle step and the
   // agent would be back to deciding an answer before seeing the choices.
   if (element) {
-    const menu = findListbox(resolveTrigger(element));
+    const trigger = resolveTrigger(element);
+    const menu = findListbox(trigger);
     if (menu) {
       const live = readOptions(menu);
-      if (live.length > 0) {
+      // The search box is reported whenever the menu is open — including when
+      // the query has narrowed the list to nothing. That case is precisely when
+      // the agent needs to know a search box exists, so it can clear or shorten
+      // the query rather than conclude the control offers no choices.
+      // The menu has to be *on screen* for its search box to count. An ARIA
+      // combobox keeps an empty `<ul role="listbox">` in the document while it
+      // is shut, and treating that as an open menu would report a closed
+      // control as OPEN with nothing in it — which reads as "opened and offers
+      // no choices" when the truth is "never opened".
+      const searchInput = isVisible(menu) ? findSearchInput(trigger, menu) : null;
+      if (live.length > 0 || searchInput) {
         return {
+          searchInput,
           options: live.map((option, index) => ({
             optionId: optionHandle(handle, index),
             label: option.label.slice(0, 300),
@@ -257,10 +274,19 @@ function optionsOf(
       }
     }
   }
-  return { options: [], known: false };
+  return { options: [], known: false, searchInput: null };
 }
 
 /** `e12::option::3` — one offered choice, named by the observation that read it. */
+/**
+ * The suffix that marks a handle as a menu's own search box.
+ *
+ * Shared rather than spelled twice: the observer mints these handles and the
+ * executor decides, from the handle alone, whether a `type` is a query into an
+ * open menu or an answer being written into a dropdown. Those two must agree.
+ */
+export const SEARCH_HANDLE_SUFFIX = '::search';
+
 export function optionHandle(elementHandle: string, index: number): string {
   return `${elementHandle}::option::${index}`;
 }
@@ -297,6 +323,141 @@ function currentValueOf(field: DetectedField): string {
   }
   const displayed = readSelectedText(element);
   return isPlaceholderSelection(displayed) ? '' : displayed.slice(0, 300);
+}
+
+/**
+ * What the form is holding, as distinct from what the control is showing.
+ *
+ * The distinction the live failure turned on. Education Type displayed "BS";
+ * the value behind it was empty, and the employer form went on saying
+ * "Education Type is required" while the run recorded the field as answered.
+ * Reading the trigger's text is therefore not verification — it is reading the
+ * one part of a widget that can change without anything having been selected.
+ *
+ * Two independent readings are taken, and either one is enough to say the
+ * control is unanswered:
+ *
+ *  1. The backing store, when the widget has one that can be found.
+ *  2. The form's own complaint, which outranks everything else on the page.
+ */
+export interface ControlCommitment {
+  /** False only on positive evidence that the form kept nothing. */
+  committed: boolean;
+  /** The form's own validation text, when it is showing one. */
+  validationError: string;
+  /** True when that text is the form saying this question is still unanswered. */
+  saysUnanswered: boolean;
+}
+
+/** Wording by which a form says a question has not been answered yet. */
+const UNANSWERED_WORDING =
+  /\b(is\s+)?required\b|please\s+(select|choose|pick|enter)|must\s+be\s+(selected|chosen|provided)|make\s+a\s+selection|cannot\s+be\s+(blank|empty)|mandatory/i;
+
+/** Anything a form puts an error into, near the control it is about. */
+const ERROR_TEXT_SELECTOR =
+  '[role="alert"],[aria-live="assertive"],[class*="error" i],[class*="invalid" i]';
+
+/** The text of an element, if it is on screen and short enough to be a message. */
+function errorTextOf(node: Element | null): string {
+  if (!(node instanceof HTMLElement) || !isVisible(node)) return '';
+  const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > 0 && text.length <= 300 ? text : '';
+}
+
+/**
+ * The employer form's complaint about this control, when it has one.
+ *
+ * Looked for where forms actually put it: the element's own constraint
+ * validation, the node it names through `aria-errormessage` or
+ * `aria-describedby`, and failing both, an error node inside the field's own
+ * container. The container walk stops after three ancestors, so a page-level
+ * banner about something else is never attributed to this control.
+ */
+function validationErrorFor(element: HTMLElement): string {
+  if (
+    element instanceof HTMLSelectElement ||
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement
+  ) {
+    if (element.willValidate && !element.validity.valid && element.validationMessage) {
+      return element.validationMessage.slice(0, 300);
+    }
+  }
+
+  const named = [
+    ...(element.getAttribute('aria-errormessage') ?? '').split(/\s+/),
+    ...(element.getAttribute('aria-describedby') ?? '').split(/\s+/),
+  ].filter(Boolean);
+  for (const id of named) {
+    const text = errorTextOf(elementById(scopeOf(element), id));
+    // A described-by node is often help text rather than an error, so only
+    // wording that actually complains is treated as one.
+    if (text && UNANSWERED_WORDING.test(text)) return text;
+  }
+
+  // Only a control the page has flagged gets its container searched. Without
+  // that guard an error elsewhere in the same fieldset would be read as this
+  // control's, and a correctly answered dropdown would report as failed.
+  if (element.getAttribute('aria-invalid') !== 'true') return '';
+  let container: HTMLElement | null = element.parentElement;
+  for (let depth = 0; depth < 3 && container; depth += 1) {
+    for (const node of Array.from(container.querySelectorAll(ERROR_TEXT_SELECTOR))) {
+      const text = errorTextOf(node);
+      if (text) return text;
+    }
+    container = container.parentElement;
+  }
+  return '';
+}
+
+/**
+ * Whether a list control's backing store holds anything.
+ *
+ * Returns true when no backing store can be found at all. That is deliberate:
+ * this reading exists to catch a control caught *empty*, and a widget whose
+ * storage this code cannot locate has not been caught at anything. The
+ * validation reading above is the safety net for those.
+ */
+function holdsCommittedValue(element: HTMLElement): boolean {
+  if (element instanceof HTMLSelectElement) {
+    if (element.selectedIndex < 0 || element.value.trim().length === 0) return false;
+    return !isPlaceholderSelection(readSelectedText(element));
+  }
+  const inner = element.querySelector('select');
+  if (inner instanceof HTMLSelectElement) return holdsCommittedValue(inner);
+
+  // React-select and its imitators submit through a hidden input. It is the
+  // widget's real answer, and an empty one is the widget saying it has none.
+  const hidden = element.querySelector<HTMLInputElement>('input[type="hidden"][name]');
+  if (hidden) return hidden.value.trim().length > 0;
+
+  // A listbox that marks its chosen row, or a trigger still pointing at one
+  // after the menu shut. Either is the widget having recorded a choice.
+  if (element.querySelector('[aria-selected="true"],[data-selected="true"]')) return true;
+  const trigger = resolveTrigger(element);
+  if ((trigger.getAttribute('aria-activedescendant') ?? '').length > 0) return true;
+  if (trigger instanceof HTMLInputElement && trigger.type !== 'hidden') {
+    return trigger.value.trim().length > 0;
+  }
+  return true;
+}
+
+/**
+ * Both readings for one control, taken only where they mean something.
+ *
+ * Text boxes are exempt from the commitment reading — a typed value *is* the
+ * backing value — but not from the validation reading, because a form
+ * rejecting what was typed is still a form that has not accepted it.
+ */
+export function commitmentOf(field: DetectedField, isListControl: boolean): ControlCommitment {
+  const element = findControl(document, field.selector);
+  if (!element) return { committed: true, validationError: '', saysUnanswered: false };
+  const validationError = validationErrorFor(element);
+  return {
+    committed: isListControl ? holdsCommittedValue(element) : true,
+    validationError,
+    saysUnanswered: validationError.length > 0 && UNANSWERED_WORDING.test(validationError),
+  };
 }
 
 /**
@@ -425,6 +586,7 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
 
   const handleByFieldId = new Map<string, string>();
   const elements: ObservedElement[] = [];
+  const searchInputs: { handle: string; owner: string; element: HTMLElement }[] = [];
 
   for (const [index, field] of fields.entries()) {
     const handle = `e${index}`;
@@ -432,18 +594,57 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
     handleByFieldId.set(field.id, handle);
 
     const proposed = input.proposedValues?.[field.id];
-    const { options, known } = optionsOf(field, handle);
+    const { options, known, searchInput } = optionsOf(field, handle);
     const element = findControl(document, field.selector);
+    // The search box inside an open menu, promoted to a control in its own
+    // right.
+    //
+    // This is what keeps the searchable case from becoming an exception to the
+    // rule. The dropdown stays untypeable; the query goes into a real element
+    // that is genuinely a text box, and the validator checks it by exactly the
+    // same test it applies to Address. Nothing had to be carved out.
+    const searchHandle = searchInput ? `${handle}${SEARCH_HANDLE_SUFFIX}` : undefined;
+    if (searchInput && searchHandle) {
+      registry.elements.set(searchHandle, searchInput);
+      searchInputs.push({ handle: searchHandle, owner: handle, element: searchInput });
+    }
+    // Computed once, because both readings below turn on it: only a control
+    // that answers from a list can be caught displaying a choice the form did
+    // not keep.
+    const interactionType = interactionTypeOf(element);
+    const listControl = (OPTION_INTERACTION_TYPES as readonly string[]).includes(interactionType);
+    const commitment = commitmentOf(field, listControl);
     elements.push({
       elementId: handle,
       section: field.section ?? '',
       label: field.label.slice(0, 300) || field.question.slice(0, 300),
       kind: kindOf(field),
-      interactionType: interactionTypeOf(element),
+      interactionType,
       // A dropdown whose options this observation can already see is open (or
       // is a native select, which is always readable); anything else is shut.
-      dropdownState: known ? 'OPEN' : 'CLOSED',
-      currentValue: currentValueOf(field),
+      // An open menu whose search box already holds a query is SEARCHING — the
+      // list on screen is a filtered view, not the control's whole vocabulary,
+      // and "not found here" does not mean "not offered".
+      dropdownState: known
+        ? searchInput instanceof HTMLInputElement && searchInput.value.trim().length > 0
+          ? 'SEARCHING'
+          : 'OPEN'
+        : 'CLOSED',
+      searchable: searchHandle !== undefined,
+      ...(searchHandle ? { searchInputId: searchHandle } : {}),
+      // The reading that closes the live failure.
+      //
+      // `currentValue` is what every later judgement is made from — whether the
+      // control still needs attention, whether the run may call itself
+      // finished — so a control displaying "BS" over an empty value must report
+      // *nothing*, not "BS". Otherwise the agent skips a field the employer's
+      // form is still marking required, and the applicant is told it is done.
+      currentValue:
+        listControl && (!commitment.committed || commitment.saysUnanswered)
+          ? ''
+          : currentValueOf(field),
+      selectionCommitted: commitment.committed,
+      validationError: commitment.validationError,
       required: field.required,
       // Read from the live control rather than from the scan, because "is this
       // enabled" is exactly the fact that changes when a parent is answered.
@@ -474,6 +675,33 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
     if (!observed || !parentHandle) continue;
     observed.dependsOnElementId = parentHandle;
     observed.dependencyActive = input.dependencyActive?.[field.id] ?? false;
+  }
+
+  // Appended only now, after the dependency pass — that loop walks `elements`
+  // and `fields` by the same index, and a search box has no field behind it.
+  for (const search of searchInputs) {
+    const owner = elements.find((element) => element.elementId === search.owner);
+    elements.push(
+      observedElementSchema.parse({
+        elementId: search.handle,
+        section: owner?.section ?? '',
+        // Named for the dropdown it belongs to, so a decision about it is
+        // legible in a trace without recording what was typed.
+        label: `Search within ${owner?.label ?? 'dropdown'}`,
+        kind: 'text',
+        interactionType: 'TEXT_INPUT',
+        currentValue:
+          search.element instanceof HTMLInputElement ? search.element.value.slice(0, 300) : '',
+        // Never required and never carrying a saved answer: a query is a way of
+        // finding an answer, not an answer. Readiness must not be satisfiable
+        // by having typed one, and this is what stops it counting.
+        required: false,
+        policy: 'UNKNOWN_FACT',
+        searchInputFor: search.owner,
+        visible: isVisible(search.element),
+        frameId: 0,
+      }),
+    );
   }
 
   const sections = [...new Set(fields.map((field) => field.section ?? '').filter(Boolean))];

@@ -184,6 +184,44 @@ export const observedElementSchema = z
      */
     options: z.array(observedOptionSchema).max(400).default([]),
     optionsKnown: z.boolean().default(false),
+    /**
+     * Whether the *form* holds this selection, as opposed to merely showing it.
+     *
+     * A dropdown has two states that look identical from outside and are not
+     * the same thing at all: the text its trigger renders, and the value it
+     * submits. On Lincoln Electric the Education Type trigger read "BS" and the
+     * backing value was empty, so the form went on reporting the question as
+     * required while the run counted it answered.
+     *
+     * Defaults to true, and is set false only on *positive evidence* — a
+     * `<select>` sitting on an empty value, a backing input the widget left
+     * blank, a listbox with nothing marked selected. A widget whose storage
+     * cannot be found is not accused of losing anything.
+     */
+    selectionCommitted: z.boolean().default(true),
+    /**
+     * The employer form's own complaint about this control, when it has one.
+     *
+     * The most authoritative signal on the page: whatever the control displays,
+     * a form still saying "Education Type is required" has not accepted an
+     * answer. Read from `aria-invalid`, constraint validation, and the error
+     * text the control points at.
+     */
+    validationError: z.string().max(300).default(''),
+    /**
+     * The search box inside this dropdown's *currently open* menu.
+     *
+     * Present only while the menu is open and actually carries one. It is also
+     * emitted as an observed element in its own right, typed `TEXT_INPUT`, so
+     * the one place a query may be typed is a real control the validator can
+     * check — rather than an exception carved into the rule that a dropdown is
+     * never typed into.
+     */
+    searchInputId: z.string().max(40).optional(),
+    /** True when this control's open menu offers a search box. */
+    searchable: z.boolean().default(false),
+    /** The dropdown this element is the search box for, when it is one. */
+    searchInputFor: z.string().max(40).optional(),
     /** Which repeated block this belongs to, when the section has more than one. */
     blockIndex: z.number().int().nonnegative().max(50).optional(),
     /** The canonical intent, when the scanner resolved one. */
@@ -370,6 +408,15 @@ export const agentDecisionSchema = z
     question: z.string().max(500).optional(),
     /** The element the question is about, so the popup can name it. */
     elementId: z.string().max(40).optional(),
+    /**
+     * Why the agent could not settle this itself.
+     *
+     * Set on an ASK_USER that follows a dropdown the agent opened, read, and
+     * found nothing matching in — `DROPDOWN_TARGET_NOT_FOUND`. It records that
+     * the list was actually consulted, which is what distinguishes "the page
+     * does not offer this answer" from "the agent never looked".
+     */
+    errorCode: errorCodeSchema.optional(),
   })
   .strict()
   .superRefine((decision, ctx) => {
@@ -430,7 +477,28 @@ export const toolExecutionResultSchema = z
 
 export type ToolExecutionResult = z.infer<typeof toolExecutionResultSchema>;
 
-export const agentVerificationSchema = z.enum(['VERIFIED', 'NOT_VERIFIED', 'NOT_APPLICABLE']);
+/**
+ * How an action's effect was checked against the page afterwards.
+ *
+ * Four states, not three, because "could not confirm" and "confirmed wrong"
+ * are different facts and only one of them is recoverable by looking again.
+ *
+ * - `VERIFIED` — the control holds what the action intended.
+ * - `NOT_VERIFIED` — nothing could be read back. The control was replaced, or
+ *   the page moved on, and the outcome is genuinely unknown.
+ * - `VERIFICATION_FAILED` — the page was read and contradicts the action. The
+ *   live case: Education Type *displayed* "BS" while the value behind it was
+ *   empty and the form still showed "Education Type is required". A control
+ *   that changed its visible text and kept nothing has failed, and calling that
+ *   merely unconfirmed is how a blank application came to report success.
+ * - `NOT_APPLICABLE` — the action wrote nothing to verify.
+ */
+export const agentVerificationSchema = z.enum([
+  'VERIFIED',
+  'NOT_VERIFIED',
+  'VERIFICATION_FAILED',
+  'NOT_APPLICABLE',
+]);
 
 export type AgentVerification = z.infer<typeof agentVerificationSchema>;
 
@@ -553,6 +621,55 @@ export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
  * member here able to hold a typed value, a document byte, a password, or a
  * demographic selection.
  */
+/**
+ * How one dropdown interaction actually went, end to end.
+ *
+ * Handles, counts and booleans only. `optionIdChosen` is `e12::option::3` — it
+ * names *which* choice was taken without recording what the choice said, so a
+ * trace can be handed to somebody else while the applicant's state, school and
+ * field of study stay out of it.
+ */
+export const agentDropdownTraceSchema = z
+  .object({
+    elementId: z.string().max(40),
+    controlType: interactionTypeSchema,
+    /** The state the control displayed, never the value it displayed. */
+    currentDisplayState: z.enum(['PLACEHOLDER', 'HAS_SELECTION']).default('PLACEHOLDER'),
+    /** What the decider asked for, before the validator had a view. */
+    requestedTool: agentToolSchema.optional(),
+    toolAllowed: z.boolean().default(true),
+    rejectionCode: errorCodeSchema.optional(),
+    triggerFound: z.boolean().default(false),
+    opened: z.boolean().default(false),
+    menuFound: z.boolean().default(false),
+    optionCount: z.number().int().nonnegative().default(0),
+    searchable: z.boolean().default(false),
+    scrollable: z.boolean().default(false),
+    /** The handle of the option taken. Never its text. */
+    optionIdChosen: z.string().max(80).optional(),
+    semanticMatchType: z
+      .enum(['EXACT', 'CASE_INSENSITIVE', 'ABBREVIATION', 'CONTAINS', 'SEMANTIC', 'NONE'])
+      .default('NONE'),
+    optionClicked: z.boolean().default(false),
+    frameworkEventsDispatched: z.boolean().default(false),
+    displayedSelectionChanged: z.boolean().default(false),
+    /**
+     * Whether the form kept the choice, as distinct from displaying it.
+     *
+     * Recorded beside `displayedSelectionChanged` precisely so the two can
+     * disagree in an exported trace. `true, false` is the live failure written
+     * down: the control changed what it showed and the form kept nothing.
+     */
+    selectionCommitted: z.boolean().default(false),
+    /** True when the form still shows a validation complaint afterwards. */
+    validationErrorPresent: z.boolean().default(false),
+    verified: z.boolean().default(false),
+    finalStatus: agentVerificationSchema.default('NOT_APPLICABLE'),
+  })
+  .strict();
+
+export type AgentDropdownTrace = z.infer<typeof agentDropdownTraceSchema>;
+
 export const agentStepTraceSchema = z
   .object({
     step: z.number().int().nonnegative(),
@@ -580,6 +697,8 @@ export const agentStepTraceSchema = z
     decisionProvider: z.enum(['deterministic', 'model', 'none']).default('none'),
     /** The nine-condition verdict for the observation this step ended on. */
     readyEvaluation: agentReadyEvaluationSchema.optional(),
+    /** Present on every step whose target was a list control. */
+    dropdown: agentDropdownTraceSchema.optional(),
   })
   .strict();
 

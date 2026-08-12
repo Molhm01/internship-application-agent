@@ -142,6 +142,11 @@ export const ERROR_CODES = [
   'DROPDOWN_TARGET_NOT_FOUND',
   // A choice was named that the control is not currently offering.
   'OPTION_HANDLE_UNKNOWN',
+  // An option was clicked and the control did not keep it. The visible text may
+  // even read correctly — "BS" on Education Type — while the value behind it is
+  // empty or the form still shows the question as required. Changing what a
+  // control displays is not answering it.
+  'SELECTION_NOT_COMMITTED',
   // A required document is available and not yet attached.
   'DOCUMENT_ACTION_PENDING',
   'EXECUTION_CANCELLED',
@@ -404,6 +409,8 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'This list was opened and read, and your saved answer is not one of the choices it offers. Choose one yourself.',
   OPTION_HANDLE_UNKNOWN:
     'That choice is not one this control is currently offering. The list is read again before anything is selected.',
+  SELECTION_NOT_COMMITTED:
+    'This control shows a choice the form has not accepted, so it still counts as unanswered. Select it yourself.',
   AGENT_DECISION_INVALID_READY_STATE:
     'The agent tried to finish while fields it can fill were still blank. That decision was refused.',
   DOCUMENT_ACTION_PENDING:

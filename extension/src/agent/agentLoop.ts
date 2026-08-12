@@ -1,9 +1,15 @@
 import {
   AGENT_ACTION_BUDGET,
+  agentDropdownTraceSchema,
   agentMarkerRecordSchema,
   agentRunTraceSchema,
   agentStepTraceSchema,
+  displaysSelection,
+  OPTION_INTERACTION_TYPES,
   type AgentDecision,
+  type AgentDropdownTrace,
+  type AgentTool,
+  type ErrorCode,
   type AgentMarker,
   type AgentMarkerRecord,
   type AgentProgress,
@@ -83,6 +89,96 @@ export interface AgentLoopHost {
  * that mistake is the reason this project exists in its current form — so the
  * verifier compares the control's state now against what the action intended.
  */
+/** Whether this control answers from a list, and so earns a dropdown trace. */
+function isListControl(element: ObservedElement): boolean {
+  return (OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType);
+}
+
+/**
+ * How one dropdown interaction went, for the exported trace.
+ *
+ * Built only for steps whose target answers from a list, and built out of what
+ * was actually observed rather than what was intended: `menuFound` is the
+ * observer having read options, `displayedSelectionChanged` is the control
+ * showing something different afterwards. Handles, counts and booleans only —
+ * an exported trace names *which* option was taken and never what it said.
+ */
+function dropdownTraceFor(input: {
+  before: ObservedElement;
+  after?: PageObservation;
+  call?: AgentToolCall;
+  execution?: ToolExecutionResult;
+  verification?: AgentVerification;
+  requestedTool?: AgentTool;
+  toolAllowed?: boolean;
+  rejectionCode?: ErrorCode;
+}): AgentDropdownTrace {
+  const { before, after, call, execution } = input;
+  const now = after?.elements.find(
+    (element) =>
+      element.label === before.label &&
+      element.section === before.section &&
+      element.blockIndex === before.blockIndex,
+  );
+  const optionCount = Math.max(
+    before.options.length,
+    execution?.optionsSeen ?? 0,
+    execution?.options.length ?? 0,
+  );
+  const chosen = call?.optionId;
+  return agentDropdownTraceSchema.parse({
+    elementId: before.elementId,
+    controlType: before.interactionType,
+    currentDisplayState: before.currentValue.trim().length > 0 ? 'HAS_SELECTION' : 'PLACEHOLDER',
+    ...(input.requestedTool ? { requestedTool: input.requestedTool } : {}),
+    toolAllowed: input.toolAllowed ?? true,
+    ...(input.rejectionCode ? { rejectionCode: input.rejectionCode } : {}),
+    // The tool resolved something to press, which is the only sense in which a
+    // trigger is "found" from out here.
+    triggerFound: execution?.executed ?? false,
+    opened: (execution?.optionsSeen ?? 0) > 0 || (execution?.options.length ?? 0) > 0,
+    menuFound: optionCount > 0,
+    optionCount,
+    searchable: before.searchable,
+    // More rows than a menu shows at once is the only scrollability this layer
+    // can honestly assert without measuring the page.
+    scrollable: optionCount > 10,
+    ...(chosen ? { optionIdChosen: chosen } : {}),
+    semanticMatchType: matchTypeOf(before, chosen),
+    optionClicked: call?.tool === 'select_option' && (execution?.executed ?? false),
+    frameworkEventsDispatched: execution?.executed ?? false,
+    displayedSelectionChanged: now !== undefined && now.currentValue !== before.currentValue,
+    // The pair that makes the live failure legible in an exported trace. A
+    // control that changed what it shows and committed nothing writes
+    // `displayedSelectionChanged: true, selectionCommitted: false`, which is
+    // the whole defect in two booleans.
+    selectionCommitted: now?.selectionCommitted ?? false,
+    validationErrorPresent: (now?.validationError ?? '').trim().length > 0,
+    verified: input.verification === 'VERIFIED',
+    finalStatus: input.verification ?? 'NOT_APPLICABLE',
+  });
+}
+
+/** How the chosen option's text relates to the saved answer. Never the text. */
+function matchTypeOf(element: ObservedElement, optionId: string | undefined): string {
+  const wanted = (element.proposedValue ?? '').trim();
+  const option = element.options.find((candidate) => candidate.optionId === optionId);
+  if (!option || !wanted) return 'NONE';
+  if (option.label === wanted) return 'EXACT';
+  if (option.label.toLowerCase() === wanted.toLowerCase()) return 'CASE_INSENSITIVE';
+  const reduce = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  const a = reduce(option.label);
+  const b = reduce(wanted);
+  if (a.includes(b) || b.includes(a)) return 'CONTAINS';
+  // Matched by the alias tables rather than by its text, which is what makes
+  // "NJ" an acceptable rendering of "New Jersey".
+  return option.label.length <= 4 ? 'ABBREVIATION' : 'SEMANTIC';
+}
+
 function verify(
   call: AgentToolCall,
   before: ObservedElement | undefined,
@@ -110,16 +206,52 @@ function verify(
           element.blockIndex === before.blockIndex,
       );
       if (!now) return 'NOT_VERIFIED';
-      const wanted = (call.value ?? '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim();
-      const held = now.currentValue
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim();
-      if (!wanted) return 'NOT_APPLICABLE';
-      return held === wanted || held.includes(wanted) ? 'VERIFIED' : 'NOT_VERIFIED';
+      const wanted = call.value ?? '';
+      if (!wanted.trim()) return 'NOT_APPLICABLE';
+
+      // ---- A list control is verified against the form, not the label. -----
+      //
+      // Three things are asked of a dropdown, and the previous version of this
+      // asked only the weakest of them.
+      //
+      //  1. Does the form still say the question is unanswered? That outranks
+      //     everything: Education Type displayed "BS" while the page went on
+      //     showing "Education Type is required", and the page was right.
+      //  2. Did the widget keep a value behind the text? A trigger whose label
+      //     changed over an empty backing store has been *typed into*, not
+      //     chosen from.
+      //  3. Only then, does the displayed text correspond to the choice?
+      //
+      // And that last comparison is `displaysSelection` rather than
+      // `includes`. Substring containment approved "No Selection" as an answer
+      // of "No" — a placeholder verifying as a real choice, which is the exact
+      // shape of failure this whole path exists to stop.
+      if (isListControl(now)) {
+        if (now.validationError.trim().length > 0) return 'VERIFICATION_FAILED';
+        if (!now.selectionCommitted) return 'VERIFICATION_FAILED';
+        if (now.currentValue.trim().length === 0) return 'VERIFICATION_FAILED';
+        const aliases = call.optionId
+          ? before.options
+              .filter((option) => option.optionId === call.optionId)
+              .map((option) => option.label)
+          : [];
+        return displaysSelection(now.currentValue, wanted, { aliases })
+          ? 'VERIFIED'
+          : 'VERIFICATION_FAILED';
+      }
+
+      // A text box holds what was written, or it does not. The form's own
+      // complaint still counts against it — a rejected value is not a written
+      // one — but containment stays, because a box may reformat what it keeps.
+      if (now.validationError.trim().length > 0) return 'VERIFICATION_FAILED';
+      const reduce = (value: string): string =>
+        value
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+      const held = reduce(now.currentValue);
+      const target = reduce(wanted);
+      return held === target || held.includes(target) ? 'VERIFIED' : 'VERIFICATION_FAILED';
     }
     case 'click_add': {
       // The page grew a block, or it did not. `pageChanged` here is the block
@@ -392,6 +524,19 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
           ...(verdict.code ? { errorCode: verdict.code } : {}),
           decisionProvider: provider,
           readyEvaluation: readiness,
+          // The refusal itself, on the record. A reader of the trace can see
+          // that a decider asked to type into a list control and was stopped —
+          // which is the evidence that the contract is doing anything at all.
+          ...(refusedTarget && isListControl(refusedTarget)
+            ? {
+                dropdown: dropdownTraceFor({
+                  before: refusedTarget,
+                  ...(decided.action?.tool ? { requestedTool: decided.action.tool } : {}),
+                  toolAllowed: false,
+                  ...(verdict.code ? { rejectionCode: verdict.code } : {}),
+                }),
+              }
+            : {}),
         }),
         // Recorded as an *action* decision so the history counts the failure
         // against this tool and this control, which is what makes the next
@@ -469,6 +614,12 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
           targetLabel: targetLabel.slice(0, 200),
           targetSection: target?.section ?? '',
           ...(target ? { targetKind: target.kind } : {}),
+          // The list was opened and read, and offered nothing matching. Carried
+          // so a trace distinguishes that from a control nobody ever looked at.
+          ...(decision.errorCode ? { errorCode: decision.errorCode } : {}),
+          ...(target && isListControl(target)
+            ? { dropdown: dropdownTraceFor({ before: target, after: observation }) }
+            : {}),
         }),
         decision,
       );
@@ -532,8 +683,29 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         optionsSeen: Math.max(execution.optionsSeen, execution.options.length),
         pageChanged: execution.pageChanged,
         verification,
-        ...(execution.errorCode ? { errorCode: execution.errorCode } : {}),
+        // The tool's own code first, when it has one — it names the more
+        // specific cause. Failing that, a verification the page contradicted is
+        // recorded as exactly that, so a step where a control displayed the
+        // answer and kept nothing is not filed as an unexplained silence.
+        ...(execution.errorCode
+          ? { errorCode: execution.errorCode }
+          : verification === 'VERIFICATION_FAILED'
+            ? { errorCode: 'SELECTION_NOT_COMMITTED' as const }
+            : {}),
         durationMs: execution.durationMs,
+        ...(target && isListControl(target)
+          ? {
+              dropdown: dropdownTraceFor({
+                before: target,
+                after: observation,
+                call,
+                execution,
+                verification,
+                requestedTool: call.tool,
+                toolAllowed: true,
+              }),
+            }
+          : {}),
       }),
       decision,
       execution,

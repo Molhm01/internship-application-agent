@@ -149,6 +149,50 @@ export function checkDecision(
     }
   }
 
+  // ---- 4b. The search box inside an open menu. ------------------------------
+  //
+  // The one place a query may be typed, and it is a real control rather than an
+  // exception: the observer only emits it while the menu is genuinely open, and
+  // it is typed as `TEXT_INPUT` because that is what it is.
+  //
+  // What is checked here is that the query comes from the answer being looked
+  // for. `typeSearchNarrowing` shortens a saved value — "Clifton, New Jersey,
+  // United States" becomes "Clifton" — so a prefix or a word of the owner's
+  // trusted answer is accepted, and anything else is a string the model made up
+  // to see what came back.
+  if (element?.searchInputFor !== undefined && action.tool === 'type') {
+    const owner = findElement(observation, element.searchInputFor);
+    if (!owner) {
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        reason: 'That search box belongs to a dropdown this observation no longer shows.',
+      };
+    }
+    if (owner.dropdownState === 'CLOSED') {
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        suggestedTool: 'open_dropdown',
+        reason: `"${owner.label}" is not open, so there is nothing to search.`,
+      };
+    }
+    const intended = trustedValues.get(owner.elementId) ?? owner.proposedValue ?? '';
+    const query = (action.value ?? '').trim();
+    if (query.length > 0 && intended.trim().length > 0 && !isNarrowingOf(query, intended)) {
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        reason: `That search text is not part of the saved answer for "${owner.label}".`,
+      };
+    }
+    // Deliberately falls through to nothing else. A query is not an answer, so
+    // none of the value-bearing rules below apply to it — and, just as
+    // deliberately, typing it does not make the owner answered. Only a verified
+    // `select_option` does that.
+    return { allowed: true, reason: '' };
+  }
+
   // Choosing requires the list to have been read. A control whose options this
   // observation has never seen cannot be selected from, because the choice
   // would be one the agent imagined rather than one the page offered.
@@ -274,6 +318,28 @@ function isValueBearing(action: AgentToolCall): boolean {
     (action.tool === 'type' || action.tool === 'select_option') &&
     (action.value ?? '').trim().length > 0
   );
+}
+
+/**
+ * Whether a search query is drawn from the answer being searched for.
+ *
+ * Accepts the whole value, any leading part of it, and any single word in it —
+ * the three shapes `searchQueriesFor` produces when it shortens a saved value
+ * to something a filtered list will actually match. Rejects anything that
+ * introduces text the saved answer does not contain.
+ */
+function isNarrowingOf(query: string, intended: string): boolean {
+  const reduce = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  const q = reduce(query);
+  const source = reduce(intended);
+  if (!q || !source) return false;
+  if (source.startsWith(q)) return true;
+  const words = new Set(source.split(' '));
+  return q.split(' ').every((word) => words.has(word));
 }
 
 /** Loose comparison, so "New Jersey" and "new jersey" are the same answer. */
