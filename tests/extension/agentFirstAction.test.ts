@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentDecisionSchema,
+  logicalFieldKey,
   observedElementSchema,
   type ObservedElement,
   type PageObservation,
@@ -193,7 +194,13 @@ describe('the READY_FOR_REVIEW predicate', () => {
     expect(evaluation.askUserRemaining).toBe(1);
   });
 
-  it('allows readiness once every question has been put to the applicant', () => {
+  it('refuses readiness while a question has been asked and not answered', () => {
+    // This assertion used to say the opposite — that putting a question to the
+    // applicant made the application ready — and that is precisely the defect a
+    // live Lincoln Electric run shipped: five questions asked, none answered,
+    // `askUserRemaining: 0`, and the applicant told their form was done.
+    //
+    // Asking is not answering. Only an answer clears a question now.
     const relatives = element({ label: 'Relatives? *', kind: 'dropdown', required: true });
     const evaluation = evaluateReady({
       observation: observation([relatives]),
@@ -201,6 +208,46 @@ describe('the READY_FOR_REVIEW predicate', () => {
       documentsPending: false,
       finalSubmitReached: false,
     });
+    expect(evaluation.askUserRemaining).toBe(1);
+    expect(evaluation.unresolvedRequired).toBe(1);
+    expect(evaluation.ready).toBe(false);
+  });
+
+  it('stops counting a question once it is answered, and still wants the field filled', () => {
+    // An answer resolves the *question* and does not fill the *box*. The
+    // control is still blank, so the application is still not finished — but it
+    // is no longer waiting on the applicant to decide anything, which is a
+    // different state and gets a different status.
+    const relatives = element({ label: 'Relatives? *', kind: 'dropdown', required: true });
+    const evaluation = evaluateReady({
+      observation: observation([relatives]),
+      askedQuestions: [relatives.label],
+      answeredQuestions: [logicalFieldKey(relatives)],
+      documentsPending: false,
+      finalSubmitReached: false,
+    });
+    expect(evaluation.askUserRemaining).toBe(0);
+    // Still blank, so still not a finished application.
+    expect(evaluation.unresolvedRequired).toBe(1);
+    expect(evaluation.ready).toBe(false);
+  });
+
+  it('allows readiness once the field actually holds the answer', () => {
+    const relatives = element({
+      label: 'Relatives? *',
+      kind: 'dropdown',
+      required: true,
+      currentValue: 'No',
+    });
+    const evaluation = evaluateReady({
+      observation: observation([relatives]),
+      askedQuestions: [relatives.label],
+      answeredQuestions: [logicalFieldKey(relatives)],
+      documentsPending: false,
+      finalSubmitReached: false,
+    });
+    expect(evaluation.unresolvedRequired).toBe(0);
+    expect(evaluation.askUserRemaining).toBe(0);
     expect(evaluation.ready).toBe(true);
   });
 
@@ -214,7 +261,14 @@ describe('the READY_FOR_REVIEW predicate', () => {
   });
 
   it('ignores a dormant conditional child', () => {
-    const parent = element({ label: 'Relatives? *', kind: 'dropdown', required: true });
+    // The parent is answered *and filled*, so the only control that could still
+    // be counted is the dormant child — which is what this test is about.
+    const parent = element({
+      label: 'Relatives? *',
+      kind: 'dropdown',
+      required: true,
+      currentValue: 'No',
+    });
     const child = element({
       label: 'If you have any relatives currently employed, provide their full name…',
       kind: 'textarea',
@@ -225,13 +279,38 @@ describe('the READY_FOR_REVIEW predicate', () => {
     const evaluation = evaluateReady({
       observation: observation([parent, child]),
       askedQuestions: [parent.label],
+      // The parent is answered, so the only thing that could still be counted
+      // here is the dormant child — which is what this test is about.
+      answeredQuestions: [logicalFieldKey(parent)],
       documentsPending: false,
       finalSubmitReached: false,
     });
     // The child is not a question the form is currently asking, so it neither
     // blocks readiness nor becomes a chore on the applicant's list.
     expect(evaluation.askUserRemaining).toBe(0);
+    expect(evaluation.unresolvedRequired).toBe(0);
     expect(evaluation.ready).toBe(true);
+  });
+
+  it('counts the dormant child’s parent, and only its parent, while unanswered', () => {
+    // The same page with nothing answered: exactly one outstanding question,
+    // never two. A dormant conditional child must not become a chore.
+    const parent = element({ label: 'Relatives? *', kind: 'dropdown', required: true });
+    const child = element({
+      label: 'If you have any relatives currently employed, provide their full name…',
+      kind: 'textarea',
+      required: true,
+      dependsOnElementId: parent.elementId,
+      dependencyActive: false,
+    });
+    const evaluation = evaluateReady({
+      observation: observation([parent, child]),
+      askedQuestions: [],
+      documentsPending: false,
+      finalSubmitReached: false,
+    });
+    expect(evaluation.askUserRemaining).toBe(1);
+    expect(evaluation.ready).toBe(false);
   });
 });
 

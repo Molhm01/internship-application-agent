@@ -588,17 +588,85 @@ export type AgentVerification = z.infer<typeof agentVerificationSchema>;
  * says READY_FOR_REVIEW and a run that says READY_FOR_REVIEW look identical,
  * and only one of them had actually finished. These counts are the difference.
  */
+/**
+ * How one required field ended the run.
+ *
+ * Every required control on the page finishes in exactly one of these, and that
+ * exhaustiveness is the point. The live failure was a run reporting
+ * `unresolvedRequired: 9` beside `ready: true` — nine required fields that were
+ * blank and were in *no* category at all, so they blocked nothing and were
+ * reported to nobody. A field cannot disappear from the accounting any more,
+ * because there is nowhere for it to disappear to.
+ */
+export const agentFieldOutcomeSchema = z.enum([
+  /** Filled by the agent and confirmed against the page afterwards. */
+  'FILLED_VERIFIED',
+  /** Blank, and nothing saved answers it. The applicant must supply it. */
+  'USER_INPUT_REQUIRED',
+  /** Answered, and the applicant has to confirm it before submitting. */
+  'USER_REVIEW_REQUIRED',
+  /** A conditional control its parent does not currently switch on. */
+  'NOT_APPLICABLE',
+  /** A saved answer exists and the page would not accept it. */
+  'BLOCKED_EXECUTION',
+  /** The question is answerable in principle and the profile holds nothing. */
+  'BLOCKED_DATA_MISSING',
+  /** A control that would submit. Never pressed, by construction. */
+  'FINAL_SUBMIT_PROTECTED',
+]);
+
+export type AgentFieldOutcome = z.infer<typeof agentFieldOutcomeSchema>;
+
+/**
+ * The readiness verdict, recorded per cycle.
+ *
+ * ## What went wrong with the previous version
+ *
+ * `unresolvedRequired` was computed, reported, and **never referenced by the
+ * `ready` conjunction**. It was a display counter beside a boolean that did not
+ * consult it, so a live run reported nine blank required fields and called
+ * itself ready in the same object.
+ *
+ * Every count here now feeds the verdict, and the counts are exhaustive over
+ * the required fields: an unresolved required control is *always* in one of
+ * `knownActionableRemaining`, `askUserRemaining` or `blockedRequiredRemaining`,
+ * and every one of those blocks readiness. A test asserts the arithmetic, so a
+ * field cannot fall out of the accounting without something failing.
+ */
 export const agentReadyEvaluationSchema = z
   .object({
+    /** Required, live, and holding nothing. The number that must reach zero. */
     unresolvedRequired: z.number().int().nonnegative(),
+    /** Required fields the agent filled and the page confirmed. */
+    verifiedRequired: z.number().int().nonnegative().default(0),
     /** Fields with a saved answer that has not been applied. Blocks readiness. */
     knownActionableRemaining: z.number().int().nonnegative(),
-    /** Required questions not yet put to the applicant. Blocks readiness. */
+    /**
+     * Required questions the applicant has not answered yet.
+     *
+     * *Not* "questions not yet asked". The previous definition subtracted every
+     * question the agent had put to the applicant, so asking five questions
+     * drove this to zero and readiness followed — the agent marked its own
+     * questions resolved by asking them. Only an answer removes one now.
+     */
     askUserRemaining: z.number().int().nonnegative(),
+    /** Required fields with a saved answer the page refused. Blocks readiness. */
+    blockedRequiredRemaining: z.number().int().nonnegative().default(0),
+    /** Required, available documents not yet attached. Blocks readiness. */
+    requiredDocumentsPending: z.number().int().nonnegative().default(0),
+    /** Optional blanks. Reported, and deliberately not blocking. */
+    optionalRemaining: z.number().int().nonnegative().default(0),
     documentsPending: z.boolean().default(false),
     finalSubmitReached: z.boolean().default(false),
     /** Fields the agent tried and could not settle. The applicant finishes these. */
     blockedRemaining: z.number().int().nonnegative().default(0),
+    /**
+     * The authoritative predicate: may this application be called finished?
+     *
+     * True only when every count above that represents outstanding work is
+     * zero. It is deliberately the *strict* reading — "the agent has done all
+     * it safely can" is a different question, answered by the run status.
+     */
     ready: z.boolean(),
   })
   .strict();
@@ -677,9 +745,93 @@ export const agentMarkerRecordSchema = z
 
 export type AgentMarkerRecord = z.infer<typeof agentMarkerRecordSchema>;
 
+/**
+ * One question the applicant has to answer, and whether they have.
+ *
+ * ## Why questions became objects
+ *
+ * They were a `string[]` of question text, and "has this been asked" was
+ * answered by searching that array. Two things followed. Asking a question put
+ * it in the list, and being in the list made readiness stop counting it — so
+ * the agent resolved its own questions by asking them, and a run with five
+ * outstanding questions reported `askUserRemaining: 0`. And there was nowhere
+ * to record an *answer*, because nothing in a list of strings can be answered.
+ *
+ * So a question carries the identity of the control it is about, survives
+ * re-observation through `logicalKey` rather than through a handle, and has an
+ * `answeredAt` that only the applicant can set.
+ */
+export const agentPendingQuestionSchema = z
+  .object({
+    /** Stable across observations. The handle is not. */
+    logicalKey: z.string().max(300),
+    /** The employer's own wording for the control. Never an answer. */
+    label: z.string().max(200),
+    section: z.string().max(120).default(''),
+    blockIndex: z.number().int().nonnegative().max(50).optional(),
+    /** The question as put to the applicant. */
+    question: z.string().max(500),
+    /** Why it had to be asked, so the popup can group them sensibly. */
+    outcome: agentFieldOutcomeSchema.default('USER_INPUT_REQUIRED'),
+    askedAt: z.string().max(40).default(''),
+    /**
+     * When the applicant answered. Empty means still outstanding.
+     *
+     * There is deliberately no way for the agent to set this. Asking is not
+     * answering, and conflating the two is the whole defect this schema exists
+     * to make unrepresentable.
+     */
+    answeredAt: z.string().max(40).default(''),
+    errorCode: errorCodeSchema.optional(),
+  })
+  .strict();
+
+export type AgentPendingQuestion = z.infer<typeof agentPendingQuestionSchema>;
+
+/**
+ * What the run actually accomplished, in the terms the popup speaks.
+ *
+ * Exists so the applicant is told "6 fields filled, 5 questions need you, 4
+ * fields blocked, résumé still to attach" instead of "Application ready for
+ * review" over a form with nine blank required boxes.
+ */
+export const agentRunSummarySchema = z
+  .object({
+    verifiedFields: z.number().int().nonnegative().default(0),
+    pendingUserQuestions: z.number().int().nonnegative().default(0),
+    blockedRequiredFields: z.number().int().nonnegative().default(0),
+    optionalUnresolvedFields: z.number().int().nonnegative().default(0),
+    requiredDocumentsPending: z.number().int().nonnegative().default(0),
+    /** Available documents the form does not require. Reported, not blocking. */
+    optionalDocumentsPending: z.number().int().nonnegative().default(0),
+    /** One sentence for the popup. Counts and employer wording only. */
+    headline: z.string().max(300).default(''),
+  })
+  .strict();
+
+export type AgentRunSummary = z.infer<typeof agentRunSummarySchema>;
+
+/**
+ * How a run ended, in priority order.
+ *
+ * The order matters and is enforced in `agentLoop`: `READY_FOR_REVIEW` is the
+ * *lowest-risk* terminal state and the last one considered, not the default a
+ * run falls into when the decider stops having ideas. A live run reached it
+ * with nine blank required fields and five unanswered questions, because
+ * "nothing left I can do" and "nothing left to do" were the same state.
+ *
+ * `READY_FOR_USER_REVIEW` is the one that separates them: the agent has done
+ * everything it safely can, and there is outstanding work that belongs to the
+ * applicant. It is a success for the agent and emphatically not a finished
+ * application.
+ */
 export const agentRunStatusSchema = z.enum([
   'RUNNING',
+  /** Everything is done. No blanks, no questions, no documents outstanding. */
   'READY_FOR_REVIEW',
+  /** The agent finished its part; explicitly surfaced items remain for the user. */
+  'READY_FOR_USER_REVIEW',
+  /** Questions are outstanding and unanswered. */
   'WAITING_FOR_USER',
   'BLOCKED',
   'CANCELLED',
@@ -994,6 +1146,20 @@ export const agentRunTraceSchema = z
      * has to say so in a field a test can read.
      */
     failureCode: errorCodeSchema.optional(),
+    /**
+     * Why the run ended where it did, on *every* non-finished ending.
+     *
+     * Distinct from `failureCode`, which is for a run that went wrong. A run
+     * that stops because five questions need the applicant has not gone wrong —
+     * it has finished its part — and saying so with a code rather than leaving
+     * the status to speak for itself is what stops "READY_FOR_REVIEW" from
+     * meaning two incompatible things.
+     */
+    statusReason: errorCodeSchema.optional(),
+    /** What was accomplished and what remains, for the popup. */
+    summary: agentRunSummarySchema.optional(),
+    /** Every question put to the applicant, with whether they have answered. */
+    pendingQuestions: z.array(agentPendingQuestionSchema).max(60).default([]),
     steps: z.array(agentStepTraceSchema).max(400).default([]),
     /** Questions still waiting on the applicant, as the employer worded them. */
     openQuestions: z.array(z.string().max(300)).max(60).default([]),
@@ -1015,6 +1181,13 @@ export const agentProgressSchema = z
     /** Questions the agent has stopped to ask. */
     questions: z.array(z.string().max(300)).max(60).default([]),
     blocked: z.array(z.string().max(300)).max(60).default([]),
+    /**
+     * The questions as objects, so the popup can render a queue rather than a
+     * list of sentences — and can tell an answered one from an outstanding one.
+     */
+    pendingQuestions: z.array(agentPendingQuestionSchema).max(60).default([]),
+    /** What the run has accomplished so far. */
+    summary: agentRunSummarySchema.optional(),
   })
   .strict();
 

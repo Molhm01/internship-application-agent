@@ -215,6 +215,8 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
   let latestTrusted = new Map<string, string>();
   // A file control that is required, empty, and has a document available for it.
   let documentsOutstandingNow = false;
+  let requiredDocumentsPendingNow = 0;
+  let optionalDocumentsPendingNow = 0;
   const documentsOutstanding = (): boolean => documentsOutstandingNow;
 
   const host: AgentLoopHost = {
@@ -227,6 +229,8 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
     // attachment subsystem is unchanged; this only refuses to call an
     // application finished while one is outstanding.
     documentsPending: () => documentsOutstanding(),
+    requiredDocumentsPending: () => requiredDocumentsPendingNow,
+    optionalDocumentsPending: () => optionalDocumentsPendingNow,
     buildId: input.buildId,
     // The applicant's own standing decision about days they never recorded,
     // read from the profile they own rather than from anything this run infers.
@@ -248,18 +252,41 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
         },
       );
       latestTrusted = trustedValuesFor(observation, input.profile);
-      // Recomputed each observation, from what the page currently shows.
+      // ---- Documents, counted per control and per requiredness. -------------
+      //
+      // The live contradiction this replaces: `resumeVerified: false` beside
+      // `documentsPending: false`. The old check asked whether *any* document
+      // was available and whether *some* upload control carried `required` —
+      // one boolean for two different questions — so an available tailored
+      // résumé sitting beside an upload control the employer had not marked
+      // required counted as nothing at all, and vanished from both the
+      // readiness predicate and the applicant's list.
+      //
+      // Requiredness is read from the scanner, which already derives it from
+      // the native attribute, `aria-required`, ATS metadata and visible
+      // markers. It is deliberately not inferred from anything else — guessing
+      // that an upload is required would block readiness on forms that do not
+      // ask for one.
       const haveDocument =
         (input.documents?.resume ?? false) || (input.documents?.coverLetter ?? false);
-      documentsOutstandingNow =
-        haveDocument &&
-        observation.elements.some(
-          (element) =>
-            element.kind === 'file_upload' &&
-            element.required &&
-            element.visible &&
-            element.currentValue.trim().length === 0,
-        );
+      const emptyUploads = observation.elements.filter(
+        (element) =>
+          element.kind === 'file_upload' &&
+          element.visible &&
+          !element.disabled &&
+          element.currentValue.trim().length === 0,
+      );
+      // Required and available: real outstanding work, and it blocks.
+      requiredDocumentsPendingNow = haveDocument
+        ? emptyUploads.filter((element) => element.required).length
+        : 0;
+      // Available and the form does not require it. Reported to the applicant
+      // in the summary and deliberately not a blocker — an optional cover
+      // letter must never hold an application open.
+      optionalDocumentsPendingNow = haveDocument
+        ? emptyUploads.filter((element) => !element.required).length
+        : 0;
+      documentsOutstandingNow = requiredDocumentsPendingNow > 0;
       // The observer classified each control's policy without knowing what the
       // worker could answer, so the classification is refined here, where the
       // trusted values are.

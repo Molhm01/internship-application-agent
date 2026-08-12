@@ -1,7 +1,10 @@
 import {
   AGENT_ACTION_BUDGET,
   AGENT_MAX_REPEATED_FAILURES,
+  agentPendingQuestionSchema,
+  logicalFieldKey,
   type AgentDecision,
+  type AgentPendingQuestion,
   type AgentStepTrace,
   type ToolExecutionResult,
 } from '@internship-agent/shared';
@@ -41,6 +44,16 @@ export class AgentHistory {
   private questions: string[] = [];
   /** Which controls have been asked about, independent of the wording used. */
   private readonly asked = new Set<string>();
+  /**
+   * The question queue, as objects rather than sentences.
+   *
+   * Keyed by logical key so an entry survives re-observation, and carrying an
+   * `answeredAt` that only `recordAnswer` can set. The previous version was a
+   * `string[]` of question text, which had two consequences: readiness treated
+   * membership as resolution, so asking a question resolved it; and there was
+   * nowhere to record an answer, because a list of strings cannot hold one.
+   */
+  private readonly pending = new Map<string, AgentPendingQuestion>();
 
   /** A key that survives re-observation, because handles do not. */
   private key(tool: string, label: string): string {
@@ -90,7 +103,61 @@ export class AgentHistory {
       // and which control it was about. The second is keyed on the control's
       // identity rather than on any wording.
       this.asked.add(this.askKey(step.targetLabel, step.targetSection, step.targetBlockIndex));
+      // Queued as an outstanding question, and it stays outstanding. Asking is
+      // not answering — the whole live failure was those two being the same
+      // event — so nothing here can set `answeredAt`.
+      const key = logicalFieldKey({
+        label: step.targetLabel,
+        section: step.targetSection,
+        blockIndex: step.targetBlockIndex,
+      });
+      if (!this.pending.has(key)) {
+        this.pending.set(
+          key,
+          agentPendingQuestionSchema.parse({
+            logicalKey: key,
+            label: step.targetLabel.slice(0, 200),
+            section: step.targetSection.slice(0, 120),
+            ...(step.targetBlockIndex === undefined ? {} : { blockIndex: step.targetBlockIndex }),
+            question: decision.question.slice(0, 500),
+            outcome: 'USER_INPUT_REQUIRED',
+            askedAt: new Date().toISOString(),
+            ...(decision.errorCode ? { errorCode: decision.errorCode } : {}),
+          }),
+        );
+      }
     }
+  }
+
+  /**
+   * The applicant answered one of the questions.
+   *
+   * The *only* way an entry leaves the outstanding queue. There is deliberately
+   * no agent-side path to this: a run that could mark its own questions
+   * answered would be the live failure with an extra step.
+   */
+  recordAnswer(logicalKey: string): boolean {
+    const question = this.pending.get(logicalKey);
+    if (!question || question.answeredAt.length > 0) return false;
+    this.pending.set(logicalKey, { ...question, answeredAt: new Date().toISOString() });
+    return true;
+  }
+
+  /** Every question this run raised, answered ones included. */
+  allQuestions(): readonly AgentPendingQuestion[] {
+    return [...this.pending.values()];
+  }
+
+  /** The questions still waiting on the applicant. */
+  unansweredQuestions(): readonly AgentPendingQuestion[] {
+    return [...this.pending.values()].filter((entry) => entry.answeredAt.length === 0);
+  }
+
+  /** Logical keys the applicant has answered, for the readiness predicate. */
+  answeredKeys(): string[] {
+    return [...this.pending.values()]
+      .filter((entry) => entry.answeredAt.length > 0)
+      .map((entry) => entry.logicalKey);
   }
 
   /**

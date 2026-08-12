@@ -489,8 +489,33 @@ test.describe('the run is genuinely a loop', () => {
     }
   });
 
-  test('reaches READY_FOR_REVIEW', () => {
-    expect(evidence.trace.status).toBe('READY_FOR_REVIEW');
+  test('reaches a terminal state that matches what it actually finished', () => {
+    // This assertion used to demand READY_FOR_REVIEW, and it was wrong for the
+    // same reason the live runs were: this fixture carries company-specific
+    // questions nothing saved can answer, so the run *cannot* honestly report a
+    // finished application. It used to anyway, because asking a question
+    // counted as resolving it and blank required fields were absent from the
+    // readiness conjunction entirely.
+    //
+    // What the run must do now is end in a state that corresponds to the page.
+    expect(['READY_FOR_REVIEW', 'READY_FOR_USER_REVIEW', 'WAITING_FOR_USER']).toContain(
+      evidence.trace.status,
+    );
+    const readiness = evidence.trace.finalReadyEvaluation;
+    if (evidence.trace.status === 'READY_FOR_REVIEW') {
+      expect(readiness?.unresolvedRequired).toBe(0);
+    } else {
+      // Not finished, and it says so rather than claiming completion.
+      expect(readiness?.ready).toBe(false);
+      expect(readiness?.unresolvedRequired ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  test('never claims completion over blank required fields', () => {
+    const readiness = evidence.trace.finalReadyEvaluation;
+    if ((readiness?.unresolvedRequired ?? 0) > 0) {
+      expect(evidence.trace.status).not.toBe('READY_FOR_REVIEW');
+    }
   });
 });
 

@@ -126,6 +126,24 @@ interface AgentStep {
   action?: AgentActionTrace;
 }
 
+interface AgentReadyEvaluation {
+  unresolvedRequired: number;
+  verifiedRequired: number;
+  knownActionableRemaining: number;
+  askUserRemaining: number;
+  blockedRequiredRemaining: number;
+  requiredDocumentsPending: number;
+  optionalRemaining: number;
+  ready: boolean;
+}
+
+interface AgentPendingQuestion {
+  logicalKey: string;
+  label: string;
+  question: string;
+  answeredAt: string;
+}
+
 interface AgentTrace {
   runId: string;
   buildId: string;
@@ -135,6 +153,10 @@ interface AgentTrace {
   verifiedCount: number;
   submitActionCount: number;
   failureCode?: string;
+  statusReason?: string;
+  finalReadyEvaluation?: AgentReadyEvaluation;
+  summary?: { headline: string; verifiedFields: number; pendingUserQuestions: number };
+  pendingQuestions: AgentPendingQuestion[];
   steps: AgentStep[];
   openQuestions: string[];
 }
@@ -439,6 +461,58 @@ test.describe('the run says what became of it', () => {
     const serialized = JSON.stringify(evidence.trace);
     for (const value of ['48 Maple Avenue', 'Clifton', '07011', '201 555 0134', '(201) 555-0134']) {
       expect(serialized, `the trace leaked ${value}`).not.toContain(value);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+test.describe('completion is never claimed over unresolved required fields', () => {
+  test('does not report READY_FOR_REVIEW while required fields are blank', () => {
+    // The live contradiction, through the production path: two consecutive
+    // Lincoln runs reported READY_FOR_REVIEW beside `unresolvedRequired: 9`.
+    const readiness = evidence.trace.finalReadyEvaluation;
+    expect(readiness, 'the run recorded no readiness evaluation').toBeDefined();
+    if ((readiness?.unresolvedRequired ?? 0) > 0) {
+      expect(evidence.trace.status).not.toBe('READY_FOR_REVIEW');
+      expect(readiness?.ready).toBe(false);
+    }
+  });
+
+  test('ready and unresolvedRequired can never contradict each other', () => {
+    const readiness = evidence.trace.finalReadyEvaluation;
+    if (readiness?.ready === true) {
+      expect(readiness.unresolvedRequired).toBe(0);
+      expect(readiness.askUserRemaining).toBe(0);
+      expect(readiness.blockedRequiredRemaining).toBe(0);
+      expect(readiness.requiredDocumentsPending).toBe(0);
+    }
+  });
+
+  test('every unresolved required field is accounted for in a bucket', () => {
+    // The invariant that stops a field disappearing from the accounting.
+    const readiness = evidence.trace.finalReadyEvaluation;
+    if (!readiness) return;
+    expect(
+      readiness.knownActionableRemaining +
+        readiness.askUserRemaining +
+        readiness.blockedRequiredRemaining,
+    ).toBe(readiness.unresolvedRequired);
+  });
+
+  test('a non-finished ending carries a reason and a summary', () => {
+    if (evidence.trace.status === 'READY_FOR_REVIEW') return;
+    expect(evidence.trace.statusReason, 'the run stopped short and said nothing').toBeDefined();
+    expect(evidence.trace.summary?.headline.length ?? 0).toBeGreaterThan(0);
+  });
+
+  test('questions the agent asked are still outstanding, not self-resolved', () => {
+    // Asking is not answering. Nothing in the agent may set `answeredAt`.
+    for (const question of evidence.trace.pendingQuestions) {
+      expect(question.answeredAt, 'the agent answered its own question').toBe('');
+    }
+    const readiness = evidence.trace.finalReadyEvaluation;
+    if (evidence.trace.pendingQuestions.length > 0) {
+      expect(readiness?.askUserRemaining ?? 0).toBeGreaterThan(0);
     }
   });
 });

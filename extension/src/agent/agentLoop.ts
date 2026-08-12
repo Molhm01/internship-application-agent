@@ -8,7 +8,9 @@ import {
   type DayConvention,
   agentActionTraceSchema,
   agentMarkerRecordSchema,
+  agentRunSummarySchema,
   agentRunTraceSchema,
+  type AgentRunSummary,
   agentStepTraceSchema,
   describeFieldState,
   displaysSelection,
@@ -93,6 +95,20 @@ export interface AgentLoopHost {
   onProgress?(progress: AgentProgress): void;
   /** True when a document is available and still unattached. Blocks readiness. */
   documentsPending?(): boolean;
+  /**
+   * How many *required* documents are available and not yet attached.
+   *
+   * Separate from `documentsPending` because requiredness decides whether it
+   * blocks. A live run reported `resumeVerified: false` beside
+   * `documentsPending: false`, and the reason was that the old check demanded
+   * the upload control carry `required` — so an optional control with a
+   * tailored résumé waiting for it counted as nothing at all. Optional
+   * documents are now reported through `optionalDocumentsPending` instead of
+   * being silently dropped.
+   */
+  requiredDocumentsPending?(): number;
+  /** Available documents the form does not require. Reported, never blocking. */
+  optionalDocumentsPending?(): number;
   /** True when the user has asked the run to stop. */
   isCancelled?(): boolean;
   now?(): string;
@@ -626,6 +642,85 @@ export interface AgentRunOutcome {
 const MAX_REJECTED_ACTIONS = 12;
 
 /**
+ * How a run that reached the end of its work should describe itself.
+ *
+ * ## Why this is a priority ladder and not a boolean
+ *
+ * A live run reported `READY_FOR_REVIEW` over an application with nine blank
+ * required fields and five unanswered questions, because the only two outcomes
+ * available were "ready" and "blocked", and the decider running out of safe
+ * actions was indistinguishable from the application being finished.
+ *
+ * So the terminal states are ordered by how much is still owed, and
+ * `READY_FOR_REVIEW` is the *last* one considered rather than the default. It
+ * is reachable only when the readiness predicate — which now includes
+ * `unresolvedRequired === 0` — is satisfied outright.
+ *
+ * The ordering is by what the applicant has to do first: answer questions,
+ * then finish fields the page refused, then attach documents.
+ */
+function terminalStateFor(readiness: AgentReadyEvaluation): {
+  status: AgentRunStatus;
+  reason?: ErrorCode;
+} {
+  if (readiness.ready) return { status: 'READY_FOR_REVIEW' };
+  if (readiness.askUserRemaining > 0) {
+    return { status: 'WAITING_FOR_USER', reason: 'WAITING_FOR_USER_INPUT' };
+  }
+  if (readiness.blockedRequiredRemaining > 0) {
+    return { status: 'READY_FOR_USER_REVIEW', reason: 'REQUIRED_FIELDS_BLOCKED' };
+  }
+  if (readiness.requiredDocumentsPending > 0) {
+    return { status: 'READY_FOR_USER_REVIEW', reason: 'REQUIRED_DOCUMENT_PENDING' };
+  }
+  if (readiness.unresolvedRequired > 0) {
+    // Required blanks the buckets above did not claim. Reported rather than
+    // ignored: this is the exact condition the live run swallowed, and it must
+    // reach the applicant even if the classification did not anticipate it.
+    return { status: 'READY_FOR_USER_REVIEW', reason: 'PARTIAL_COMPLETION' };
+  }
+  if (readiness.knownActionableRemaining > 0) {
+    return { status: 'READY_FOR_USER_REVIEW', reason: 'PARTIAL_COMPLETION' };
+  }
+  return { status: 'READY_FOR_USER_REVIEW', reason: 'NO_MORE_SAFE_ACTIONS' };
+}
+
+/**
+ * What the run accomplished and what it left, in the terms the popup speaks.
+ *
+ * The headline exists so the applicant reads "Agent completed 6 fields. 5
+ * questions need your input. 4 required fields could not be completed."
+ * instead of "Application ready for review" over a form with nine blank boxes.
+ * Counts and the employer's own wording only — never an answer.
+ */
+function summaryFor(
+  readiness: AgentReadyEvaluation,
+  history: AgentHistory,
+  optionalDocumentsPending: number,
+): AgentRunSummary {
+  const pendingUserQuestions = history.unansweredQuestions().length;
+  const parts: string[] = [];
+  parts.push(`Agent completed ${history.verifiedCount()} field(s).`);
+  if (pendingUserQuestions > 0) parts.push(`${pendingUserQuestions} question(s) need your input.`);
+  if (readiness.blockedRequiredRemaining > 0) {
+    parts.push(`${readiness.blockedRequiredRemaining} required field(s) could not be completed.`);
+  }
+  if (readiness.requiredDocumentsPending > 0) {
+    parts.push(`${readiness.requiredDocumentsPending} required document(s) still need attaching.`);
+  }
+  if (parts.length === 1 && readiness.ready) parts.push('Nothing else is outstanding.');
+  return agentRunSummarySchema.parse({
+    verifiedFields: history.verifiedCount(),
+    pendingUserQuestions,
+    blockedRequiredFields: readiness.blockedRequiredRemaining,
+    optionalUnresolvedFields: readiness.optionalRemaining,
+    requiredDocumentsPending: readiness.requiredDocumentsPending,
+    optionalDocumentsPending,
+    headline: parts.join(' ').slice(0, 300),
+  });
+}
+
+/**
  * Why a run that stopped short stopped, derived from what it actually did.
  *
  * Exists because `status: BLOCKED, failureCode: undefined` is what a live run
@@ -699,6 +794,15 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
   // rather than spending its budget being corrected.
   let rejectedActions = 0;
   let failure: AgentRunTrace['steps'][number]['errorCode'] | undefined;
+  /**
+   * Why the run ended where it did, on every ending that is not "finished".
+   *
+   * Separate from `failure` because they are separate facts: a run that stops
+   * with five questions outstanding has *succeeded* at its part, and reporting
+   * that as a failure would be as misleading as the READY_FOR_REVIEW it
+   * replaces.
+   */
+  let statusReason: ErrorCode | undefined;
   let lastReadiness: AgentReadyEvaluation | undefined;
 
   /**
@@ -755,6 +859,12 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       completed: [...completed],
       questions: [...history.openQuestions()],
       blocked: [],
+      // The queue as objects, so the popup can show which questions are still
+      // outstanding rather than a list of sentences it cannot tick off.
+      pendingQuestions: [...history.unansweredQuestions()],
+      ...(lastReadiness
+        ? { summary: summaryFor(lastReadiness, history, host.optionalDocumentsPending?.() ?? 0) }
+        : {}),
     });
   };
 
@@ -823,7 +933,11 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     const readiness = evaluateReady({
       observation,
       askedQuestions: history.openQuestions(),
+      // Only an *answer* removes a question from the accounting. Passing the
+      // asked list here is what made the agent resolve its own questions.
+      answeredQuestions: history.answeredKeys(),
       documentsPending: host.documentsPending?.() ?? false,
+      requiredDocumentsPending: host.requiredDocumentsPending?.() ?? 0,
       finalSubmitReached: history.submitActionCount() > 0,
       // Controls the run tried and could not settle. They are the applicant's
       // now, not pending work — without this the predicate would deadlock
@@ -1001,7 +1115,17 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         decision,
       );
       if (decision.kind === 'READY_FOR_REVIEW') {
-        status = 'READY_FOR_REVIEW';
+        // ---- READY is granted by the predicate, never by the decider. ------
+        //
+        // The decider saying READY means "I have run out of things I can
+        // safely do", and on a live run that was accepted verbatim over an
+        // application with nine blank required fields and five unanswered
+        // questions. It is now converted through the terminal ladder, so a
+        // decider that has finished its part yields READY_FOR_USER_REVIEW or
+        // WAITING_FOR_USER unless the predicate is genuinely satisfied.
+        const terminal = terminalStateFor(readiness);
+        status = terminal.status;
+        statusReason = terminal.reason;
       } else {
         // ---- A BLOCKED run always says why. --------------------------------
         //
@@ -1238,7 +1362,11 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     const readinessAfter = evaluateReady({
       observation,
       askedQuestions: history.openQuestions(),
+      // Only an *answer* removes a question from the accounting. Passing the
+      // asked list here is what made the agent resolve its own questions.
+      answeredQuestions: history.answeredKeys(),
       documentsPending: host.documentsPending?.() ?? false,
+      requiredDocumentsPending: host.requiredDocumentsPending?.() ?? 0,
       finalSubmitReached: history.submitActionCount() > 0,
       unresolvedByAgent: history.exhaustedLabels(),
     });
@@ -1268,9 +1396,65 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     failure = blockedReasonFrom(history);
   }
 
+  // ---- READY_FOR_REVIEW is checked one last time against the predicate. ----
+  //
+  // The invariant this whole task exists for, enforced where every path
+  // converges rather than at each of them. A live run reported
+  // `READY_FOR_REVIEW` beside `unresolvedRequired: 9`, and no amount of
+  // care at the individual exits would have caught it — the two facts were
+  // produced in different places and never compared.
+  //
+  // So the claim is re-checked against the last readiness evaluation. A run
+  // that cannot substantiate "finished" is downgraded to the honest terminal
+  // state and says why. This can only ever *demote* a status.
+  const finalReadiness = lastReadiness;
+  if (status === 'READY_FOR_REVIEW' && finalReadiness && !finalReadiness.ready) {
+    const terminal = terminalStateFor(finalReadiness);
+    status = terminal.status;
+    statusReason = statusReason ?? terminal.reason;
+  }
+  // ---- Outstanding questions outrank "the loop stopped moving". -----------
+  //
+  // A run that ran out of progress *and* has unanswered questions is, to the
+  // applicant, a run waiting on them — that is the thing they can act on, and
+  // `BLOCKED` sends them looking for a fault instead. So the status follows the
+  // priority ladder while `failureCode` keeps the diagnosis, and the two facts
+  // stay separately readable rather than one overwriting the other.
+  //
+  // Restricted to the stall codes on purpose: a run that FAILED, or that
+  // stopped because no decision could be obtained, is not waiting on the
+  // applicant and must not be dressed up as though it were.
+  const STALLED: readonly (ErrorCode | undefined)[] = [
+    'AGENT_NO_PROGRESS',
+    'AGENT_REPEATED_ACTION_FAILURE',
+    'ACTION_VERIFICATION_FAILED',
+    'AGENT_ACTION_BUDGET_EXHAUSTED',
+  ];
+  if (
+    status === 'BLOCKED' &&
+    (finalReadiness?.askUserRemaining ?? 0) > 0 &&
+    STALLED.includes(failure)
+  ) {
+    status = 'WAITING_FOR_USER';
+    statusReason = statusReason ?? 'WAITING_FOR_USER_INPUT';
+  }
+
+  if (status !== 'READY_FOR_REVIEW' && status !== 'RUNNING' && statusReason === undefined) {
+    statusReason =
+      failure ?? (finalReadiness ? terminalStateFor(finalReadiness).reason : undefined);
+  }
+
+  const summary = finalReadiness
+    ? summaryFor(finalReadiness, history, host.optionalDocumentsPending?.() ?? 0)
+    : undefined;
+
   // The loop's own condition guarantees `status` has left RUNNING by here; the
-  // only ways out are the four terminal assignments above.
-  emit(status === 'READY_FOR_REVIEW' ? 'Application ready for review' : 'Stopped');
+  // only ways out are the terminal assignments above.
+  emit(
+    status === 'READY_FOR_REVIEW'
+      ? 'Application ready for review'
+      : (summary?.headline ?? 'Stopped'),
+  );
 
   return {
     status,
@@ -1293,6 +1477,9 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       ...(host.profileContext ? { profileContext: host.profileContext } : {}),
       markers,
       ...(failure ? { failureCode: failure } : {}),
+      ...(statusReason ? { statusReason } : {}),
+      ...(summary ? { summary } : {}),
+      pendingQuestions: [...history.allQuestions()],
       steps: [...history.all()],
       openQuestions: [...history.openQuestions()],
       totalDurationMs: Math.max(0, Date.now() - startedMs),

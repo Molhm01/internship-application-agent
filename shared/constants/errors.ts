@@ -147,6 +147,22 @@ export const ERROR_CODES = [
   // empty or the form still shows the question as required. Changing what a
   // control displays is not answering it.
   'SELECTION_NOT_COMMITTED',
+  // ---- How a run ended, when it did not end finished. ----------------------
+  //
+  // A live run reported `status: READY_FOR_REVIEW` over an application with
+  // nine blank required fields and five unanswered questions. "The agent has
+  // run out of things it can safely do" and "the application is complete" were
+  // the same terminal state, so there was no way for the run to say the first
+  // without claiming the second.
+  //
+  // These are the reasons a run can finish its own part without the
+  // application being done. None of them is a failure — the agent did what it
+  // could — and every one of them means something is still owed by somebody.
+  'WAITING_FOR_USER_INPUT',
+  'REQUIRED_FIELDS_BLOCKED',
+  'REQUIRED_DOCUMENT_PENDING',
+  'PARTIAL_COMPLETION',
+  'NO_MORE_SAFE_ACTIONS',
   // ---- One agent action, and why it did not count. -------------------------
   //
   // A live run reported `status: BLOCKED, actions: 6, verified: 0,
@@ -471,6 +487,16 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'That choice is not one this control is currently offering. The list is read again before anything is selected.',
   SELECTION_NOT_COMMITTED:
     'This control shows a choice the form has not accepted, so it still counts as unanswered. Select it yourself.',
+  WAITING_FOR_USER_INPUT:
+    'The agent filled everything it safely could. The questions it could not answer are waiting for you.',
+  REQUIRED_FIELDS_BLOCKED:
+    'Some required fields could not be completed. They are listed so you can finish them yourself.',
+  REQUIRED_DOCUMENT_PENDING:
+    'This application requires a document that has not been attached yet. Attach it before submitting.',
+  PARTIAL_COMPLETION:
+    'The agent completed part of this application. The rest is listed for you to finish.',
+  NO_MORE_SAFE_ACTIONS:
+    'The agent has done everything it can do safely. Anything left needs you to decide it.',
   ACTION_EXECUTION_FAILED:
     'The agent could not carry out this action on the page. Export the Agent Trace and check the step that names it.',
   ACTION_VERIFICATION_FAILED:
