@@ -197,6 +197,56 @@ export const observedOptionSchema = z
   .strict();
 
 /**
+ * Value-free structural evidence captured at the final Agent classifier.
+ * Emitted only for the three temporary SuccessFactors diagnostic targets and
+ * only when developer diagnostics are enabled.
+ */
+export const controlClassificationTraceSchema = z
+  .object({
+    event: z.literal('CONTROL_CLASSIFICATION_TRACE'),
+    elementTagName: z.string().max(40),
+    elementTypeAttribute: z.string().max(40),
+    elementRole: z.string().max(80),
+    elementAriaHasPopup: z.string().max(80),
+    elementAriaExpanded: z.string().max(20),
+    elementHasAriaControls: z.boolean(),
+    elementAriaAutocomplete: z.string().max(80),
+    elementReadonly: z.boolean(),
+    elementDisabled: z.boolean(),
+    parentTagName: z.string().max(40),
+    parentRole: z.string().max(80),
+    parentAriaHasPopup: z.string().max(80),
+    parentAriaExpanded: z.string().max(20),
+    closestRoleComboboxExists: z.boolean(),
+    closestAriaHasPopupExists: z.boolean(),
+    closestButtonExists: z.boolean(),
+    nearbyButtonCount: z.number().int().nonnegative().max(100),
+    nearbyDropdownArrowCount: z.number().int().nonnegative().max(100),
+    associatedLabelRelationType: z.enum([
+      'label_for',
+      'aria_labelledby',
+      'aria_label',
+      'wrapped_label',
+      'container_text',
+      'none',
+    ]),
+    logicalFieldContainerTag: z.string().max(40),
+    logicalFieldContainerClassTokens: z.array(z.string().max(60)).max(16),
+    nativeSelectExistsInFieldContainer: z.boolean(),
+    inputExistsInFieldContainer: z.boolean(),
+    buttonExistsInFieldContainer: z.boolean(),
+    roleComboboxExistsInFieldContainer: z.boolean(),
+    ariaHasPopupExistsInFieldContainer: z.boolean(),
+    scannerTypeBeforeNormalization: z.string().max(80),
+    adapterType: z.string().max(80),
+    normalizedType: z.string().max(80),
+    finalAgentControlType: interactionTypeSchema,
+  })
+  .strict();
+
+export type ControlClassificationTrace = z.infer<typeof controlClassificationTraceSchema>;
+
+/**
  * One control, as it stands at this instant.
  *
  * `elementId` is minted per observation. It is the only way the model can name
@@ -213,6 +263,8 @@ export const observedElementSchema = z
     kind: observedControlKindSchema,
     /** How this control must be operated. The tool validator's authority. */
     interactionType: interactionTypeSchema.default('UNKNOWN'),
+    /** Temporary developer-only structural trace for the live classifier miss. */
+    controlClassificationTrace: controlClassificationTraceSchema.optional(),
     /** Where this dropdown is, when it is one. */
     dropdownState: dropdownStateSchema.default('CLOSED'),
     /** What the control displays now. Empty for a control holding nothing. */
@@ -353,6 +405,39 @@ export type PageObservation = z.infer<typeof pageObservationSchema>;
 // Multiple-choice model contract
 // ---------------------------------------------------------------------------
 
+/** Sanitized context from the last action the page rejected or did not keep. */
+export const agentFailureFeedbackSchema = z
+  .object({
+    previousTool: z.lazy(() => agentToolSchema),
+    /** Employer wording only; never the value that was attempted. */
+    field: z.string().max(200),
+    logicalField: z.string().max(300).default(''),
+    result: errorCodeSchema,
+    /** More specific verifier/executor code, when one exists. */
+    detailErrorCode: errorCodeSchema.optional(),
+    observedState: z.enum([
+      'EMPTY',
+      'HOLDS_EXPECTED',
+      'HOLDS_OTHER',
+      'REJECTED_BY_FORM',
+      'NOT_FOUND',
+      'PLACEHOLDER',
+      'COMMITTED',
+      'UNKNOWN',
+    ]),
+    pageChanged: z.boolean(),
+    /** Authoritative type recorded on the failed action's observation. */
+    previousControlType: interactionTypeSchema,
+    /** Authoritative type on the fresh observation used for recovery. */
+    controlType: interactionTypeSchema,
+    identicalActionAlreadyFailed: z.boolean().default(false),
+    /** Strategy correction only. It never contains an applicant value. */
+    guidance: z.string().max(500),
+  })
+  .strict();
+
+export type AgentFailureFeedback = z.infer<typeof agentFailureFeedbackSchema>;
+
 export const agentChoiceRequestSchema = z
   .object({
     fieldType: interactionTypeSchema,
@@ -371,6 +456,7 @@ export const agentChoiceRequestSchema = z
       )
       .min(1)
       .max(400),
+    previousFailure: agentFailureFeedbackSchema.optional(),
   })
   .strict();
 
@@ -991,9 +1077,7 @@ export const agentDropdownTraceSchema = z
     /** The handle of the option taken. Never its text. */
     optionIdChosen: z.string().max(80).optional(),
     optionIdsChosen: z.array(z.string().max(80)).max(100).default([]),
-    matchingStrategy: z
-      .enum(['EXACT', 'ALIAS', 'SEMANTIC', 'LLM', 'UNKNOWN'])
-      .default('UNKNOWN'),
+    matchingStrategy: z.enum(['EXACT', 'ALIAS', 'SEMANTIC', 'LLM', 'UNKNOWN']).default('UNKNOWN'),
     llmCalled: z.boolean().default(false),
     semanticMatchType: z
       .enum(['EXACT', 'CASE_INSENSITIVE', 'ABBREVIATION', 'CONTAINS', 'SEMANTIC', 'NONE'])
@@ -1135,6 +1219,8 @@ export const agentActionTraceSchema = z
     toolRequested: agentToolSchema,
     targetControlType: interactionTypeSchema.default('UNKNOWN'),
     controlType: interactionTypeSchema.default('UNKNOWN'),
+    /** Final-authority evidence, when the developer-only capture selected this field. */
+    controlClassificationTrace: controlClassificationTraceSchema.optional(),
     /** Employer wording only; never the value supplied to the field. */
     fieldLabel: z.string().max(200).default(''),
     /** The canonical question, when the scanner resolved one. Never an answer. */
@@ -1261,6 +1347,8 @@ export const agentStepTraceSchema = z
     durationMs: z.number().nonnegative().max(600_000).default(0),
     /** Which side chose this action. 'none' for a terminal decision. */
     decisionProvider: z.enum(['deterministic', 'model', 'none']).default('none'),
+    /** True only when the invoked model request carried previousFailure. */
+    modelReceivedFailureFeedback: z.boolean().optional(),
     /** The nine-condition verdict for the observation this step ended on. */
     readyEvaluation: agentReadyEvaluationSchema.optional(),
     /** Present on every step whose target was a list control. */

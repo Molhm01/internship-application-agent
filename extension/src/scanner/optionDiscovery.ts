@@ -15,6 +15,7 @@ import {
   structuralOptionItems,
   watchForMenu,
 } from './structuralMenu.js';
+import { choiceOwnershipOf } from './controlOwnership.js';
 
 /**
  * Reads the choices a control actually offers, from the live page.
@@ -103,11 +104,12 @@ export function elementById(scope: Document | ShadowRoot, id: string): HTMLEleme
  * real trigger.
  */
 export function resolveTrigger(root: HTMLElement): HTMLElement {
-  if (root.matches('input,button,select,[role="combobox"]')) return root;
-  const inner = root.querySelector<HTMLElement>(
+  const logical = choiceOwnershipOf(root)?.owner ?? root;
+  if (logical.matches('input,button,select,[role="combobox"]')) return logical;
+  const inner = logical.querySelector<HTMLElement>(
     'input[role="combobox"], [role="combobox"], button[aria-haspopup], select, input:not([type="hidden"]), button',
   );
-  return inner ?? root;
+  return inner ?? logical;
 }
 
 /**

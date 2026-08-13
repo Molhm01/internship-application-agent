@@ -133,21 +133,40 @@ export async function decideWithChoiceFallback(
   onChoiceRequest?: (request: AgentChoiceRequest) => void,
 ): Promise<AgentDecision> {
   const deterministic = decideDeterministically(input);
+  if (!chooseChoice) return deterministic;
+
+  // A failed text strategy can be followed by a corrected observation of the
+  // same logical field as a choice control. Once that control is open and its
+  // real options are present, hand the sanitized failure and those options to
+  // the production choice provider even if exact matching could now decide.
+  // This is the actual recovery request the previous patch never made.
+  const recoveredChoice = input.failureFeedback
+    ? input.observation.elements.find(
+        (candidate) =>
+          candidate.label.trim().toLowerCase() ===
+            input.failureFeedback?.field.trim().toLowerCase() &&
+          (OPTION_INTERACTION_TYPES as readonly string[]).includes(candidate.interactionType) &&
+          candidate.policy === 'KNOWN_FACT' &&
+          candidate.options.length > 0,
+      )
+    : undefined;
   if (
-    !chooseChoice ||
-    deterministic.kind !== 'ASK_USER' ||
-    deterministic.errorCode !== 'DROPDOWN_TARGET_NOT_FOUND' ||
-    !deterministic.elementId
+    !recoveredChoice &&
+    (deterministic.kind !== 'ASK_USER' ||
+      deterministic.errorCode !== 'DROPDOWN_TARGET_NOT_FOUND' ||
+      !deterministic.elementId)
   ) {
     return deterministic;
   }
-  const element = input.observation.elements.find(
-    (candidate) => candidate.elementId === deterministic.elementId,
-  );
+  const element =
+    recoveredChoice ??
+    input.observation.elements.find(
+      (candidate) => candidate.elementId === deterministic.elementId,
+    );
   if (!element || element.policy !== 'KNOWN_FACT' || element.options.length === 0) {
     return deterministic;
   }
-  const request = choiceRequestFor(element);
+  const request = choiceRequestFor(element, input.failureFeedback);
   onChoiceRequest?.(request);
   const validation = validateModelChoiceDecision(request, await chooseChoice(request));
   if (!validation.valid) {
@@ -172,7 +191,8 @@ export async function decideWithChoiceFallback(
       errorCode: validation.errorCode,
     };
   }
-  const selectedIds = validation.decision.optionIds ??
+  const selectedIds =
+    validation.decision.optionIds ??
     (validation.decision.optionId ? [validation.decision.optionId] : []);
   if (validation.decision.decision === 'ASK_USER' || selectedIds.length === 0) {
     return {
@@ -508,14 +528,16 @@ function actionTraceFor(input: {
     toolRequested: call.tool,
     targetControlType: target?.interactionType ?? 'UNKNOWN',
     controlType: target?.interactionType ?? 'UNKNOWN',
+    ...(target?.controlClassificationTrace
+      ? { controlClassificationTrace: target.controlClassificationTrace }
+      : {}),
     fieldLabel: (target?.label ?? '').slice(0, 200),
     targetIntent: (target?.intent ?? '').slice(0, 80),
     fieldIntent: (target?.intent ?? '').slice(0, 80),
     currentStateCategory: currentStateCategory(target),
     logicalKey: target ? logicalFieldKey(target).slice(0, 300) : '',
     actionAccepted: input.accepted,
-    toolValidatorResult:
-      input.validatorResult ?? (input.accepted ? 'ALLOWED' : 'REJECTED'),
+    toolValidatorResult: input.validatorResult ?? (input.accepted ? 'ALLOWED' : 'REJECTED'),
     executionStarted: input.accepted,
     executionFinished: input.accepted && execution !== undefined,
     // The executor's own report, kept strictly separate from the verdict. A
@@ -523,11 +545,7 @@ function actionTraceFor(input: {
     executionSuccess: execution?.executed ?? false,
     toolExecuted: execution?.executed ?? false,
     executionResult:
-      execution === undefined
-        ? 'NOT_EXECUTED'
-        : execution.executed
-          ? 'SUCCEEDED'
-          : 'FAILED',
+      execution === undefined ? 'NOT_EXECUTED' : execution.executed ? 'SUCCEEDED' : 'FAILED',
     domChanged: execution?.pageChanged ?? false,
     observationBefore: input.observationBefore.slice(0, 60),
     observationAfter: input.observationAfter.slice(0, 60),
@@ -807,7 +825,13 @@ function verify(
       }
       const now = findLogicalField(after.elements, before);
       if (!now) {
-        return verdict('NOT_VERIFIED', 'OPTION_COMMITMENT', 'COMMITTED', 'NOT_FOUND', 'STALE_ELEMENT');
+        return verdict(
+          'NOT_VERIFIED',
+          'OPTION_COMMITMENT',
+          'COMMITTED',
+          'NOT_FOUND',
+          'STALE_ELEMENT',
+        );
       }
       if (now.validationError.trim().length > 0 || !now.selectionCommitted) {
         return verdict(
@@ -823,7 +847,9 @@ function verify(
           .map((id) => before.options.find((option) => option.optionId === id)?.label)
           .filter((label): label is string => Boolean(label)),
       );
-      const selected = now.options.filter((option) => option.selected).map((option) => option.label);
+      const selected = now.options
+        .filter((option) => option.selected)
+        .map((option) => option.label);
       const allCommitted = [...wanted].every((label) =>
         selected.some((actual) => displaysSelection(actual, label)),
       );
@@ -838,13 +864,27 @@ function verify(
           );
     }
     case 'set_checked': {
-      if (!before) return verdict('NOT_VERIFIED', 'TEXT_VALUE', 'UNKNOWN', 'UNKNOWN', 'STALE_ELEMENT');
+      if (!before)
+        return verdict('NOT_VERIFIED', 'TEXT_VALUE', 'UNKNOWN', 'UNKNOWN', 'STALE_ELEMENT');
       const now = findLogicalField(after.elements, before);
-      if (!now) return verdict('NOT_VERIFIED', 'TEXT_VALUE', 'HOLDS_EXPECTED', 'NOT_FOUND', 'STALE_ELEMENT');
+      if (!now)
+        return verdict(
+          'NOT_VERIFIED',
+          'TEXT_VALUE',
+          'HOLDS_EXPECTED',
+          'NOT_FOUND',
+          'STALE_ELEMENT',
+        );
       const checked = now.currentValue.trim().length > 0;
       return checked === call.checked
         ? verdict('VERIFIED', 'TEXT_VALUE', 'HOLDS_EXPECTED', 'HOLDS_EXPECTED')
-        : verdict('VERIFICATION_FAILED', 'TEXT_VALUE', 'HOLDS_EXPECTED', 'HOLDS_OTHER', 'SELECTION_NOT_COMMITTED');
+        : verdict(
+            'VERIFICATION_FAILED',
+            'TEXT_VALUE',
+            'HOLDS_EXPECTED',
+            'HOLDS_OTHER',
+            'SELECTION_NOT_COMMITTED',
+          );
     }
     case 'click_add': {
       // The page grew a block, or it did not. `pageChanged` here is the block
@@ -998,6 +1038,11 @@ function blockedReasonFrom(history: AgentHistory): ErrorCode {
   if (steps.some((entry) => entry.verification === 'VERIFICATION_FAILED')) {
     return 'ACTION_VERIFICATION_FAILED';
   }
+  const lastActionError = [...steps]
+    .reverse()
+    .find((entry) => entry.action?.errorCode ?? entry.errorCode);
+  if (lastActionError?.action?.errorCode) return lastActionError.action.errorCode;
+  if (lastActionError?.errorCode) return lastActionError.errorCode;
   return 'AGENT_NO_PROGRESS';
 }
 
@@ -1147,14 +1192,15 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     history.reconcileAnswers(observation);
 
     const trustedValues = await host.trustedValues(observation);
-    const input: DecisionInput = { observation, history, trustedValues, dayConvention };
-    const preview = !host.decide && host.chooseChoice ? decideDeterministically(input) : undefined;
-    const choiceLlmCalled = Boolean(
-      host.chooseChoice &&
-        preview?.kind === 'ASK_USER' &&
-        preview.errorCode === 'DROPDOWN_TARGET_NOT_FOUND' &&
-        preview.elementId,
-    );
+    const failureFeedback = history.failureFeedbackFor(observation);
+    const input: DecisionInput = {
+      observation,
+      history,
+      trustedValues,
+      dayConvention,
+      ...(failureFeedback ? { failureFeedback } : {}),
+    };
+    let choiceLlmCalled = false;
 
     // ---- Ask, and record that we asked. ------------------------------------
     //
@@ -1162,28 +1208,30 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     // a decision was ever requested. The live failure could not be diagnosed
     // because the run logged one summary line and nothing about the cycle that
     // produced it.
-    const provider: 'deterministic' | 'model' =
-      host.decide || host.chooseChoice ? 'model' : 'deterministic';
+    let provider: 'deterministic' | 'model' = host.decide ? 'model' : 'deterministic';
     const decisionStarted = Date.now();
     mark('AGENT_DECISION_REQUEST_STARTED', step, observation, { decisionProvider: provider });
     let decided: AgentDecision;
     let choiceOptionsPassedToDecisionProvider = false;
+    let modelReceivedFailureFeedback = false;
     try {
       decided = host.decide
         ? await host.decide(input)
         : await decideWithChoiceFallback(
             input,
-            host.chooseChoice
-              ? (request) => host.chooseChoice!(request)
-              : undefined,
+            host.chooseChoice ? (request) => host.chooseChoice!(request) : undefined,
             () => {
               // This callback runs at the exact point the current option list
               // is handed to the choice provider. It carries no option text
               // into the trace; only the fact that the handoff occurred.
               choiceOptionsPassedToDecisionProvider = true;
+              modelReceivedFailureFeedback = failureFeedback !== undefined;
+              choiceLlmCalled = true;
+              provider = 'model';
             },
           );
-      decisionProviderCalled = true;
+      if (host.decide && failureFeedback) modelReceivedFailureFeedback = true;
+      if (host.decide || choiceLlmCalled) decisionProviderCalled = true;
       mark('AGENT_DECISION_REQUEST_FINISHED', step, observation, {
         decisionProvider: provider,
         decisionType: decided.kind,
@@ -1209,6 +1257,36 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       decisionProvider: provider,
       decisionType: decided.kind,
     });
+
+    // A model that repeats the same failed choice action is corrected before it
+    // can touch the page again. Prefer the deterministic dropdown recovery
+    // (normally type -> open_dropdown); when that would itself repeat the same
+    // failed action against the same state, hand the control to the applicant.
+    if (
+      failureFeedback?.identicalActionAlreadyFailed &&
+      decided.kind === 'ACTION' &&
+      decided.action?.tool === failureFeedback.previousTool
+    ) {
+      const repeatedTarget = decided.action.elementId
+        ? observation.elements.find((element) => element.elementId === decided.action?.elementId)
+        : undefined;
+      const sameField =
+        repeatedTarget?.label.trim().toLowerCase() === failureFeedback.field.trim().toLowerCase();
+      if (sameField) {
+        const recovery = decideDeterministically(input);
+        if (recovery.kind === 'ACTION' && recovery.action?.tool !== failureFeedback.previousTool) {
+          decided = recovery;
+        } else {
+          decided = {
+            kind: 'ASK_USER',
+            reason: 'The same action already failed against unchanged page state.',
+            question: repeatedTarget?.label ?? failureFeedback.field,
+            elementId: repeatedTarget?.elementId,
+            errorCode: failureFeedback.result,
+          };
+        }
+      }
+    }
 
     // ---- READY is a predicate, not a claim. --------------------------------
     //
@@ -1276,87 +1354,86 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       rejectedActions += 1;
       const refusedLabel = (refusedTarget?.label ?? '').slice(0, 200);
       const refusedTool = decided.action?.tool;
-      const refusedRetryCount = refusedTool
-        ? history.nextRetryCount(refusedTool, refusedLabel)
-        : 1;
+      const refusedRetryCount = refusedTool ? history.nextRetryCount(refusedTool, refusedLabel) : 1;
       const refusedRetryFingerprint = refusedTool
         ? history.retryFingerprint(refusedTool, refusedLabel)
         : '';
       const refusedStep = agentStepTraceSchema.parse({
-          step,
-          observationId: observation.observationId,
-          observedElements: observation.elements.length,
-          requiredOutstanding: observation.requiredOutstanding,
-          decisionType: 'BLOCKED',
-          reason: verdict.reason.slice(0, 300),
-          tool: decided.action?.tool,
-          ...(refusedTarget ? { targetKind: refusedTarget.kind } : {}),
-          targetLabel: refusedLabel,
-          targetSection: refusedTarget?.section ?? '',
-          ...(refusedTarget?.blockIndex === undefined
-            ? {}
-            : { targetBlockIndex: refusedTarget.blockIndex }),
-          // Never executed, so never counted as a browser action.
-          executed: false,
-          verification: 'NOT_VERIFIED',
-          ...(verdict.code ? { errorCode: verdict.code } : {}),
-          decisionProvider: provider,
-          readyEvaluation: readiness,
-          // The refusal itself, on the record. A reader of the trace can see
-          // that a decider asked to type into a list control and was stopped —
-          // which is the evidence that the contract is doing anything at all.
-          ...(refusedTarget && isListControl(refusedTarget)
-            ? {
-                dropdown: dropdownTraceFor({
-                  before: refusedTarget,
-                  ...(decided.action?.tool ? { requestedTool: decided.action.tool } : {}),
-                  toolAllowed: false,
-                  ...(verdict.code ? { rejectionCode: verdict.code } : {}),
-                  llmCalled: choiceLlmCalled,
-                  optionsPassedToDecisionProvider:
-                    choiceOptionsPassedToDecisionProvider ||
-                    Boolean(host.decide && refusedTarget.options.length > 0),
-                }),
-              }
-            : {}),
-          // The date refusal, on the record — and this is the step the whole
-          // repair is measured by. A trace showing `requestedTool: 'type'`,
-          // `toolAllowed: false`, `rejectionCode: 'WRONG_TOOL_FOR_CONTROL_TYPE'`
-          // against a DATE_INPUT is the live Lincoln failure being stopped,
-          // written down in a form a test can read.
-          ...(refusedTarget && isDateControl(refusedTarget)
-            ? {
-                date: dateTraceFor({
-                  before: refusedTarget,
-                  ...(decided.action?.tool ? { requestedTool: decided.action.tool } : {}),
-                  toolAllowed: false,
-                  ...(verdict.code ? { rejectionCode: verdict.code } : {}),
-                  dayConvention,
-                }),
-              }
-            : {}),
-          // A refused action is still an action that was proposed, and it gets
-          // the same record as one that ran. `actionAccepted: false` beside
-          // `verified: false` is the honest reading: nothing reached the page,
-          // so nothing could be verified — as distinct from an action that ran
-          // and was not kept, which looks completely different here.
-          ...(decided.action
-            ? {
-                action: actionTraceFor({
-                  step,
-                  call: decided.action,
-                  target: refusedTarget,
-                  observationBefore: observation.observationId,
-                  observationAfter: '',
-                  accepted: false,
-                  validatorResult: 'REJECTED',
-                  retryCount: refusedRetryCount,
-                  retryFingerprint: refusedRetryFingerprint,
-                  ...(verdict.code ? { rejectionCode: verdict.code } : {}),
-                }),
-              }
-            : {}),
-        });
+        step,
+        observationId: observation.observationId,
+        observedElements: observation.elements.length,
+        requiredOutstanding: observation.requiredOutstanding,
+        decisionType: 'BLOCKED',
+        reason: verdict.reason.slice(0, 300),
+        tool: decided.action?.tool,
+        ...(refusedTarget ? { targetKind: refusedTarget.kind } : {}),
+        targetLabel: refusedLabel,
+        targetSection: refusedTarget?.section ?? '',
+        ...(refusedTarget?.blockIndex === undefined
+          ? {}
+          : { targetBlockIndex: refusedTarget.blockIndex }),
+        // Never executed, so never counted as a browser action.
+        executed: false,
+        verification: 'NOT_VERIFIED',
+        ...(verdict.code ? { errorCode: verdict.code } : {}),
+        decisionProvider: provider,
+        modelReceivedFailureFeedback,
+        readyEvaluation: readiness,
+        // The refusal itself, on the record. A reader of the trace can see
+        // that a decider asked to type into a list control and was stopped —
+        // which is the evidence that the contract is doing anything at all.
+        ...(refusedTarget && isListControl(refusedTarget)
+          ? {
+              dropdown: dropdownTraceFor({
+                before: refusedTarget,
+                ...(decided.action?.tool ? { requestedTool: decided.action.tool } : {}),
+                toolAllowed: false,
+                ...(verdict.code ? { rejectionCode: verdict.code } : {}),
+                llmCalled: choiceLlmCalled,
+                optionsPassedToDecisionProvider:
+                  choiceOptionsPassedToDecisionProvider ||
+                  Boolean(host.decide && refusedTarget.options.length > 0),
+              }),
+            }
+          : {}),
+        // The date refusal, on the record — and this is the step the whole
+        // repair is measured by. A trace showing `requestedTool: 'type'`,
+        // `toolAllowed: false`, `rejectionCode: 'WRONG_TOOL_FOR_CONTROL_TYPE'`
+        // against a DATE_INPUT is the live Lincoln failure being stopped,
+        // written down in a form a test can read.
+        ...(refusedTarget && isDateControl(refusedTarget)
+          ? {
+              date: dateTraceFor({
+                before: refusedTarget,
+                ...(decided.action?.tool ? { requestedTool: decided.action.tool } : {}),
+                toolAllowed: false,
+                ...(verdict.code ? { rejectionCode: verdict.code } : {}),
+                dayConvention,
+              }),
+            }
+          : {}),
+        // A refused action is still an action that was proposed, and it gets
+        // the same record as one that ran. `actionAccepted: false` beside
+        // `verified: false` is the honest reading: nothing reached the page,
+        // so nothing could be verified — as distinct from an action that ran
+        // and was not kept, which looks completely different here.
+        ...(decided.action
+          ? {
+              action: actionTraceFor({
+                step,
+                call: decided.action,
+                target: refusedTarget,
+                observationBefore: observation.observationId,
+                observationAfter: '',
+                accepted: false,
+                validatorResult: 'REJECTED',
+                retryCount: refusedRetryCount,
+                retryFingerprint: refusedRetryFingerprint,
+                ...(verdict.code ? { rejectionCode: verdict.code } : {}),
+              }),
+            }
+          : {}),
+      });
       history.record(
         refusedStep,
         // Recorded as an *action* decision so the history counts the failure
@@ -1366,15 +1443,12 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         undefined,
         refusedTool
           ? {
-              logicalField: refusedTarget
-                ? logicalFieldKey(refusedTarget)
-                : refusedLabel,
+              logicalField: refusedTarget ? logicalFieldKey(refusedTarget) : refusedLabel,
               controlType: refusedTarget?.interactionType ?? 'UNKNOWN',
               ...(verdict.code ? { errorCode: verdict.code } : {}),
               observationSignature: observationSignatureFor(refusedTarget),
               optionSetSignature: optionSetSignatureFor(refusedTarget),
-              // The production choice request has no failure-feedback member.
-              modelReceivedFailureFeedback: false,
+              modelReceivedFailureFeedback,
             }
           : undefined,
       );
@@ -1485,6 +1559,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
           requiredOutstanding: observation.requiredOutstanding,
           decisionType: 'ASK_USER',
           decisionProvider: provider,
+          modelReceivedFailureFeedback,
           readyEvaluation: readiness,
           reason: decision.reason.slice(0, 300),
           targetLabel: targetLabel.slice(0, 200),
@@ -1570,117 +1645,111 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     const freshObservation =
       observation.observationId.length > 0 && observation.observationId !== observationBefore;
     const actionStep = agentStepTraceSchema.parse({
+      step,
+      observationId: observation.observationId,
+      observedElements: observation.elements.length,
+      requiredOutstanding: observation.requiredOutstanding,
+      decisionType: 'ACTION',
+      reason: decision.reason.slice(0, 300),
+      decisionProvider: provider,
+      modelReceivedFailureFeedback,
+      readyEvaluation: readiness,
+      tool: call.tool,
+      ...(target ? { targetKind: target.kind } : {}),
+      targetLabel: targetLabel.slice(0, 200),
+      targetSection: target?.section ?? '',
+      ...(target?.blockIndex === undefined ? {} : { targetBlockIndex: target.blockIndex }),
+      executed: execution.executed,
+      wroteValue:
+        (call.value ?? '').length > 0 ||
+        Boolean(call.optionId) ||
+        (call.optionIds?.length ?? 0) > 0 ||
+        call.checked !== undefined,
+      optionsSeen: Math.max(execution.optionsSeen, execution.options.length),
+      pageChanged: execution.pageChanged,
+      verification,
+      // ---- The verifier's own code, not the executor's. -----------------
+      //
+      // The order used to be the other way round, and it hid the failure. The
+      // executor's `type` reports `VALUE_NOT_VERIFIED` whenever the box does
+      // not hold its literal argument, which a control that *reformats* what
+      // it keeps always triggers; and when the executor had no code at all, a
+      // failed text verification was filed under `SELECTION_NOT_COMMITTED` —
+      // a dropdown code, on a text field, which made the live failure
+      // unsearchable in its own trace.
+      //
+      // So the verdict from the page comes first. It is the reading taken
+      // last, against fresh evidence, and it is the one that decides whether
+      // the field counts.
+      //
+      // And a step that verified carries *no* code at all, whatever the
+      // executor thought. The executor's `type` reports `VALUE_NOT_VERIFIED`
+      // for any box that does not hold its literal argument, so a control
+      // that reformatted a phone number arrived at a verified step wearing an
+      // error — which is precisely the kind of contradiction that makes a
+      // trace unreadable.
+      ...(verification === 'VERIFIED'
+        ? {}
+        : outcome.errorCode
+          ? { errorCode: outcome.errorCode }
+          : execution.errorCode
+            ? { errorCode: execution.errorCode }
+            : {}),
+      durationMs: execution.durationMs,
+      action: actionTraceFor({
         step,
-        observationId: observation.observationId,
-        observedElements: observation.elements.length,
-        requiredOutstanding: observation.requiredOutstanding,
-        decisionType: 'ACTION',
-        reason: decision.reason.slice(0, 300),
-        decisionProvider: provider,
-        readyEvaluation: readiness,
-        tool: call.tool,
-        ...(target ? { targetKind: target.kind } : {}),
-        targetLabel: targetLabel.slice(0, 200),
-        targetSection: target?.section ?? '',
-        ...(target?.blockIndex === undefined ? {} : { targetBlockIndex: target.blockIndex }),
-        executed: execution.executed,
-        wroteValue:
-          (call.value ?? '').length > 0 ||
-          Boolean(call.optionId) ||
-          (call.optionIds?.length ?? 0) > 0 ||
-          call.checked !== undefined,
-        optionsSeen: Math.max(execution.optionsSeen, execution.options.length),
-        pageChanged: execution.pageChanged,
-        verification,
-        // ---- The verifier's own code, not the executor's. -----------------
-        //
-        // The order used to be the other way round, and it hid the failure. The
-        // executor's `type` reports `VALUE_NOT_VERIFIED` whenever the box does
-        // not hold its literal argument, which a control that *reformats* what
-        // it keeps always triggers; and when the executor had no code at all, a
-        // failed text verification was filed under `SELECTION_NOT_COMMITTED` —
-        // a dropdown code, on a text field, which made the live failure
-        // unsearchable in its own trace.
-        //
-        // So the verdict from the page comes first. It is the reading taken
-        // last, against fresh evidence, and it is the one that decides whether
-        // the field counts.
-        //
-        // And a step that verified carries *no* code at all, whatever the
-        // executor thought. The executor's `type` reports `VALUE_NOT_VERIFIED`
-        // for any box that does not hold its literal argument, so a control
-        // that reformatted a phone number arrived at a verified step wearing an
-        // error — which is precisely the kind of contradiction that makes a
-        // trace unreadable.
-        ...(verification === 'VERIFIED'
-          ? {}
-          : outcome.errorCode
-            ? { errorCode: outcome.errorCode }
-            : execution.errorCode
-              ? { errorCode: execution.errorCode }
-              : {}),
-        durationMs: execution.durationMs,
-        action: actionTraceFor({
-          step,
-          call,
-          target,
-          execution,
-          outcome,
-          observationBefore,
-          observationAfter: observation.observationId,
-          accepted: true,
-          validatorResult: 'ALLOWED',
-          retryCount: actionRetryCount,
-          retryFingerprint: actionRetryFingerprint,
-        }),
-        ...(target && isListControl(target)
-          ? {
-              dropdown: dropdownTraceFor({
-                before: target,
-                after: observation,
-                call,
-                execution,
-                verification,
-                requestedTool: call.tool,
-                toolAllowed: true,
-                llmCalled: choiceLlmCalled,
-                optionsPassedToDecisionProvider:
-                  choiceOptionsPassedToDecisionProvider ||
-                  Boolean(host.decide && target.options.length > 0),
-                freshObservation,
-              }),
-            }
-          : {}),
-        ...(target && isDateControl(target)
-          ? {
-              date: dateTraceFor({
-                before: target,
-                after: observation,
-                call,
-                execution,
-                verification,
-                requestedTool: call.tool,
-                toolAllowed: true,
-                dayConvention,
-              }),
-            }
-          : {}),
-      });
-    history.record(
-      actionStep,
-      decision,
-      execution,
-      {
-        logicalField: target ? logicalFieldKey(target) : targetLabel,
-        controlType: target?.interactionType ?? 'UNKNOWN',
-        ...(actionErrorCode ? { errorCode: actionErrorCode } : {}),
-        observationSignature: observationSignatureFor(target),
-        optionSetSignature: optionSetSignatureFor(target),
-        // Neither AgentChoiceRequest nor the production endpoint carries a
-        // previous executor/verifier failure. Record that absence explicitly.
-        modelReceivedFailureFeedback: false,
-      },
-    );
+        call,
+        target,
+        execution,
+        outcome,
+        observationBefore,
+        observationAfter: observation.observationId,
+        accepted: true,
+        validatorResult: 'ALLOWED',
+        retryCount: actionRetryCount,
+        retryFingerprint: actionRetryFingerprint,
+      }),
+      ...(target && isListControl(target)
+        ? {
+            dropdown: dropdownTraceFor({
+              before: target,
+              after: observation,
+              call,
+              execution,
+              verification,
+              requestedTool: call.tool,
+              toolAllowed: true,
+              llmCalled: choiceLlmCalled,
+              optionsPassedToDecisionProvider:
+                choiceOptionsPassedToDecisionProvider ||
+                Boolean(host.decide && target.options.length > 0),
+              freshObservation,
+            }),
+          }
+        : {}),
+      ...(target && isDateControl(target)
+        ? {
+            date: dateTraceFor({
+              before: target,
+              after: observation,
+              call,
+              execution,
+              verification,
+              requestedTool: call.tool,
+              toolAllowed: true,
+              dayConvention,
+            }),
+          }
+        : {}),
+    });
+    history.record(actionStep, decision, execution, {
+      logicalField: target ? logicalFieldKey(target) : targetLabel,
+      controlType: target?.interactionType ?? 'UNKNOWN',
+      ...(actionErrorCode ? { errorCode: actionErrorCode } : {}),
+      observationSignature: observationSignatureFor(target),
+      optionSetSignature: optionSetSignatureFor(target),
+      modelReceivedFailureFeedback,
+    });
 
     if (verification === 'VERIFIED' && targetLabel) {
       if (!completed.includes(targetLabel)) completed.push(targetLabel);
@@ -1824,7 +1893,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       verifiedCount: history.verifiedCount(),
       questionsAsked: history.allQuestions().length,
       submitActionCount: history.submitActionCount(),
-      decider: host.decide || host.chooseChoice ? 'model' : 'deterministic',
+      decider: decisionProviderCalled ? 'model' : 'deterministic',
       decisionProviderCalled,
       ...initial,
       ...(lastReadiness ? { finalReadyEvaluation: lastReadiness } : {}),

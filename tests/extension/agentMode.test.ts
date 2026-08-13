@@ -554,9 +554,9 @@ describe('the loop', () => {
         ),
     });
     const outcome = await runAgentLoop(subject);
-    // Bounded well below the budget: the history refuses a tool that has failed
-    // on the same control three times, so the loop gives up on that field
-    // instead of spending 150 actions on it.
+    // Recovery now intervenes after the first unchanged failure. The existing
+    // three-failure breaker remains in place as a final backstop, but the loop
+    // must not deliberately drive into it when it already has the evidence.
     expect(calls.length).toBeLessThanOrEqual(4);
     expect(calls.length).toBeLessThan(AGENT_ACTION_BUDGET);
     // And it reaches a terminal state rather than spinning.
@@ -564,7 +564,7 @@ describe('the loop', () => {
     expect(outcome.trace.verifiedCount).toBe(0);
 
     const attempts = outcome.trace.steps.flatMap((step) => (step.action ? [step.action] : []));
-    expect(attempts.map((attempt) => attempt.retryCount)).toEqual([1, 2, 3]);
+    expect(attempts.map((attempt) => attempt.retryCount)).toEqual([1]);
     expect(new Set(attempts.map((attempt) => attempt.retryFingerprint)).size).toBe(1);
     expect(attempts[0]).toMatchObject({
       step: 0,
@@ -582,20 +582,9 @@ describe('the loop', () => {
       durationMs: 1,
     });
 
-    expect(outcome.trace.failureCode).toBe('AGENT_REPEATED_ACTION_FAILURE');
-    expect(outcome.trace.repeatedActionFailureDetails).toEqual([
-      expect.objectContaining({
-        event: 'REPEATED_ACTION_FAILURE_DETAIL',
-        logicalField: expect.stringContaining('first name'),
-        repeatedTool: 'type',
-        retryCount: 3,
-        firstErrorCode: 'VALUE_NOT_VERIFIED',
-        latestErrorCode: 'VALUE_NOT_VERIFIED',
-        observationChangedBetweenRetries: false,
-        availableOptionsChangedBetweenRetries: false,
-        modelReceivedFailureFeedback: false,
-      }),
-    ]);
+    expect(outcome.trace.failureCode).not.toBe('AGENT_REPEATED_ACTION_FAILURE');
+    expect(outcome.trace.repeatedActionFailureDetails).toEqual([]);
+    expect(outcome.trace.openQuestions).toContain('First Name');
   });
 
   it('reports changed observations and option sets without exporting option text', () => {

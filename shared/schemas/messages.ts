@@ -233,6 +233,8 @@ export const agentObserveMessageSchema = z.object({
     .default({ experience: 0, education: 0 }),
   /** Which conditional children their parents currently activate, by field id. */
   dependencyActive: z.record(z.string().max(200), z.boolean()).default({}),
+  /** Enables the temporary, value-free live classifier signature. */
+  classificationDiagnostics: z.boolean().default(false),
 });
 
 export const agentExecuteToolMessageSchema = z.object({

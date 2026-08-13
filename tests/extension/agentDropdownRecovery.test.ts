@@ -150,6 +150,132 @@ async function run(
 }
 
 describe('a decider that types into a dropdown is corrected, and the run continues', () => {
+  it('sends a rejected text strategy to the actual next choice-model request', async () => {
+    const requests: Parameters<NonNullable<AgentLoopHost['chooseChoice']>>[0][] = [];
+    let reclassified = false;
+    let selected = false;
+    let observations = 0;
+    const educationOptions = [
+      { optionId: 'e1::option::0', label: 'No Selection', disabled: false, selected: false },
+      { optionId: 'e1::option::1', label: 'BS', disabled: false, selected: false },
+    ];
+    const observe = (): PageObservation => {
+      observations += 1;
+      return observation(
+        [
+          element({
+            label: 'Education Type',
+            section: 'Education',
+            kind: reclassified ? 'dropdown' : 'text',
+            interactionType: reclassified ? 'CUSTOM_SELECT' : 'TEXT_INPUT',
+            proposedValue: 'BS',
+            currentValue: selected ? 'BS' : '',
+            dropdownState: reclassified && !selected ? 'OPEN' : 'CLOSED',
+            options: reclassified && !selected ? educationOptions : [],
+            optionsKnown: reclassified && !selected,
+            selectionCommitted: selected,
+            validationError: reclassified && !selected ? 'Education Type is required' : '',
+          }),
+        ],
+        `obs-${observations}`,
+      );
+    };
+
+    const outcome = await runAgentLoop({
+      runId: '11111111-1111-4111-8111-111111111111',
+      buildId: 'test',
+      observe: () => Promise.resolve(observe()),
+      execute: (call) => {
+        if (call.tool === 'type') {
+          reclassified = true;
+          return Promise.resolve(
+            toolExecutionResultSchema.parse({
+              tool: 'type',
+              executed: true,
+              options: [],
+              optionsSeen: 0,
+              pageChanged: false,
+              durationMs: 1,
+            }),
+          );
+        }
+        if (call.tool === 'select_option' && call.optionId === 'e1::option::1') selected = true;
+        return Promise.resolve(
+          toolExecutionResultSchema.parse({
+            tool: call.tool,
+            executed: call.tool === 'select_option',
+            options: [],
+            optionsSeen: educationOptions.length,
+            pageChanged: call.tool === 'select_option',
+            durationMs: 1,
+          }),
+        );
+      },
+      trustedValues: () => Promise.resolve(new Map([['e1', 'BS']])),
+      chooseChoice: (request) => {
+        requests.push(request);
+        return Promise.resolve({
+          decision: 'SELECT',
+          optionId: 'e1::option::1',
+          confidence: 1,
+          reason: 'The observed option matches the trusted answer.',
+        });
+      },
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.previousFailure).toMatchObject({
+      previousTool: 'type',
+      field: 'Education Type',
+      result: 'ACTION_VERIFICATION_FAILED',
+      observedState: 'REJECTED_BY_FORM',
+      pageChanged: false,
+      previousControlType: 'TEXT_INPUT',
+      controlType: 'CUSTOM_SELECT',
+    });
+    expect(requests[0]?.previousFailure?.guidance).toContain(
+      'Typing into the parent is not allowed',
+    );
+    expect(requests[0]?.choices.map((choice) => choice.optionId)).toContain('e1::option::1');
+    expect(
+      outcome.trace.steps.find((step) => step.tool === 'select_option')
+        ?.modelReceivedFailureFeedback,
+    ).toBe(true);
+    expect(outcome.trace.decisionProviderCalled).toBe(true);
+    expect(selected).toBe(true);
+  });
+
+  it('delivers sanitized failure feedback to the next model decision', async () => {
+    const page = new FakePage();
+    const feedback: DecisionInput['failureFeedback'][] = [];
+    let first = true;
+    const outcome = await run(page, (input) => {
+      feedback.push(input.failureFeedback);
+      if (first) {
+        first = false;
+        return agentDecisionSchema.parse({
+          kind: 'ACTION',
+          action: { tool: 'type', elementId: 'e1', value: STATE },
+        });
+      }
+      return decideDeterministically(input);
+    });
+
+    expect(feedback[0]).toBeUndefined();
+    expect(feedback[1]).toMatchObject({
+      previousTool: 'type',
+      field: 'State/Province',
+      result: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+      observedState: 'PLACEHOLDER',
+      pageChanged: false,
+      controlType: 'CUSTOM_SELECT',
+      identicalActionAlreadyFailed: true,
+    });
+    expect(feedback[1]?.guidance).toContain('Typing into the parent is not allowed');
+    expect(outcome.trace.repeatedActionFailureDetails).toEqual([]);
+    expect(page.executions.map((call) => call.tool)).toEqual(['open_dropdown', 'select_option']);
+  });
+
   it('rejects the type, leaves the page untouched, then opens and selects', async () => {
     const page = new FakePage();
     let first = true;
@@ -302,20 +428,26 @@ describe('a decider that types into a dropdown is corrected, and the run continu
     });
   });
 
-  it('does not report ready while the dropdown is still on its placeholder', async () => {
-    // A decider that refuses to do anything but type. Every attempt is refused,
-    // the field is never answered, and the run must not call that finished.
+  it('does not repeat a model’s identical rejected type action blindly', async () => {
+    // The first type is refused. On the next cycle the model receives that
+    // failure, and the loop replaces its identical retry with the authoritative
+    // open -> inspect -> select recovery.
     const page = new FakePage();
     const outcome = await run(page, () =>
-      agentDecisionSchema.parse({
-        kind: 'ACTION',
-        action: { tool: 'type', elementId: 'e1', value: STATE },
-      }),
+      page.value
+        ? agentDecisionSchema.parse({ kind: 'READY_FOR_REVIEW', reason: 'The field is committed.' })
+        : agentDecisionSchema.parse({
+            kind: 'ACTION',
+            action: { tool: 'type', elementId: 'e1', value: STATE },
+          }),
     );
 
-    expect(page.value).toBe('');
-    expect(outcome.trace.status).not.toBe('READY_FOR_REVIEW');
-    expect(outcome.trace.failureCode).toBe('WRONG_TOOL_FOR_CONTROL_TYPE');
+    expect(page.value).toBe(STATE);
+    expect(page.executions.map((call) => call.tool)).toEqual(['open_dropdown', 'select_option']);
+    expect(outcome.trace.status).toBe('READY_FOR_REVIEW');
+    expect(
+      outcome.trace.steps.filter((step) => step.action?.toolRequested === 'type'),
+    ).toHaveLength(1);
   });
 
   it('overrides a decider that calls a placeholder-bearing page ready', async () => {

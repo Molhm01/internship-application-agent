@@ -1,18 +1,56 @@
 import {
   AGENT_ACTION_BUDGET,
   AGENT_MAX_REPEATED_FAILURES,
+  OPTION_INTERACTION_TYPES,
   agentPendingQuestionSchema,
   logicalFieldKey,
   type AgentDecision,
+  type AgentFailureFeedback,
   type AgentPendingQuestion,
   type AgentRepeatedActionFailureDetail,
   type AgentStepTrace,
   type AgentTool,
   type ErrorCode,
   type InteractionType,
+  type ObservedElement,
   type PageObservation,
   type ToolExecutionResult,
 } from '@internship-agent/shared';
+
+function transientSignature(parts: readonly string[]): string {
+  let hash = 0x811c9dc5;
+  const input = parts.join('\u001f');
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function observationSignatureFor(element: ObservedElement): string {
+  const list = (OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType);
+  const state =
+    element.validationError.trim().length > 0
+      ? 'REJECTED_BY_FORM'
+      : element.currentValue.trim().length === 0
+        ? list
+          ? 'PLACEHOLDER'
+          : 'EMPTY'
+        : list && !element.selectionCommitted
+          ? 'HOLDS_OTHER'
+          : 'HOLDS_EXPECTED';
+  return transientSignature([
+    element.interactionType,
+    state,
+    element.dropdownState,
+    String(element.required),
+    String(element.disabled),
+    String(element.visible),
+    String(element.selectionCommitted),
+    String(element.validationError.trim().length > 0),
+    String(element.options.length),
+  ]);
+}
 
 /**
  * What this run has already tried, and what it must therefore stop trying.
@@ -125,14 +163,16 @@ export class AgentHistory {
           tool: decision.action.tool,
           logicalField: diagnostics?.logicalField ?? step.action?.logicalKey ?? step.targetLabel,
           controlType:
-            diagnostics?.controlType ?? step.action?.controlType ?? step.action?.targetControlType ?? 'UNKNOWN',
-          ...(diagnostics?.errorCode ?? fallbackError
+            diagnostics?.controlType ??
+            step.action?.controlType ??
+            step.action?.targetControlType ??
+            'UNKNOWN',
+          ...((diagnostics?.errorCode ?? fallbackError)
             ? { errorCode: diagnostics?.errorCode ?? fallbackError }
             : {}),
           observationSignature: diagnostics?.observationSignature ?? '',
           optionSetSignature: diagnostics?.optionSetSignature ?? '',
-          modelReceivedFailureFeedback:
-            diagnostics?.modelReceivedFailureFeedback ?? false,
+          modelReceivedFailureFeedback: diagnostics?.modelReceivedFailureFeedback ?? false,
           retryFingerprint: this.retryFingerprint(decision.action.tool, step.targetLabel),
         };
         const attempts = this.failedAttemptDiagnostics.get(key) ?? [];
@@ -278,6 +318,83 @@ export class AgentHistory {
   /** Opaque export-safe form of the exact existing `tool + normalized label` key. */
   retryFingerprint(tool: string, label: string): string {
     return diagnosticFingerprint(this.key(tool, label));
+  }
+
+  /**
+   * The last failed action, reduced to non-value state for the next decision.
+   *
+   * The model previously received only the fresh page observation. A rejected
+   * action therefore looked exactly like a first attempt and was proposed
+   * again until the loop breaker fired.
+   */
+  failureFeedbackFor(observation: PageObservation): AgentFailureFeedback | undefined {
+    const resolvedFields = new Set<string>();
+    const newerChoiceEvidence = new Set<string>();
+    for (let index = this.steps.length - 1; index >= 0; index -= 1) {
+      const step = this.steps[index];
+      const action = step?.action;
+      if (!step) continue;
+      // A question or other non-action step does not erase an unresolved
+      // action failure. Keeping it is what prevents the loop from asking once
+      // and then blindly retrying the same unchanged write on the next cycle.
+      if (!action) continue;
+      // Feedback is about the immediately previous action. A later verified
+      // write on this field closes the older failure. A verified dropdown-open
+      // is only new option evidence, so its type/strategy correction remains
+      // relevant to the choice decision that follows.
+      if (action.verified) {
+        if (action.toolRequested === 'open_dropdown' || action.toolRequested === 'get_options') {
+          newerChoiceEvidence.add(action.logicalKey);
+        } else {
+          resolvedFields.add(action.logicalKey);
+        }
+        continue;
+      }
+      if (resolvedFields.has(action.logicalKey)) continue;
+      const current = observation.elements.find(
+        (element) =>
+          element.label.trim().toLowerCase() === step.targetLabel.trim().toLowerCase() &&
+          element.section.trim().toLowerCase() === step.targetSection.trim().toLowerCase() &&
+          element.blockIndex === step.targetBlockIndex,
+      );
+      const controlType = current?.interactionType ?? action.controlType;
+      const choice = ['NATIVE_SELECT', 'CUSTOM_SELECT', 'SEARCHABLE_COMBOBOX'].includes(
+        controlType,
+      );
+      const priorAttempt = this.failedAttemptDiagnostics
+        .get(this.key(action.toolRequested, step.targetLabel))
+        ?.at(-1);
+      const observedState =
+        action.verificationObservedState === 'UNKNOWN'
+          ? action.currentStateCategory
+          : action.verificationObservedState;
+      return {
+        previousTool: action.toolRequested,
+        field: step.targetLabel.slice(0, 200),
+        logicalField: action.logicalKey.slice(0, 300),
+        result:
+          action.executionSuccess && !action.verified
+            ? 'ACTION_VERIFICATION_FAILED'
+            : (action.errorCode ?? step.errorCode ?? 'ACTION_VERIFICATION_FAILED'),
+        ...((action.errorCode ?? step.errorCode)
+          ? { detailErrorCode: action.errorCode ?? step.errorCode }
+          : {}),
+        observedState,
+        pageChanged: action.domChanged,
+        previousControlType: action.controlType,
+        controlType,
+        identicalActionAlreadyFailed:
+          current !== undefined &&
+          priorAttempt !== undefined &&
+          ((action.toolRequested === 'type' && choice) ||
+            (!newerChoiceEvidence.has(action.logicalKey) &&
+              priorAttempt.observationSignature === observationSignatureFor(current))),
+        guidance: choice
+          ? 'The field is a choice control. Typing into the parent is not allowed. Use open_dropdown, inspect actual options, and select an observed optionId.'
+          : 'Do not repeat the identical action without new page evidence.',
+      };
+    }
+    return undefined;
   }
 
   /** Sanitized explanation for every key that reached the existing threshold. */

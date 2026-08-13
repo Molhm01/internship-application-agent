@@ -450,6 +450,7 @@ function handleMessage(
       proposedValues: message.proposedValues,
       recordCounts: message.recordCounts,
       dependencyActive: message.dependencyActive,
+      classificationDiagnostics: message.classificationDiagnostics,
     })
       .then((observation) => {
         sendResponse(observation);

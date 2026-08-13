@@ -342,6 +342,11 @@ describe('the loop, against the live Lincoln shape', () => {
       observe: () => Promise.resolve(build()),
       execute: (call) => {
         if (call.elementId && call.value) values.set(call.elementId, call.value);
+        if (call.elementId && call.optionId) {
+          const owner = base.find((entry) => entry.elementId === call.elementId);
+          const option = owner?.options.find((entry) => entry.optionId === call.optionId);
+          if (option) values.set(call.elementId, option.label);
+        }
         return Promise.resolve({
           tool: call.tool,
           executed: true,
@@ -387,9 +392,9 @@ describe('the loop, against the live Lincoln shape', () => {
     expect(outcome.trace.finalReadyEvaluation?.knownActionableRemaining).toBe(0);
   });
 
-  it('records that a decision provider was called', async () => {
+  it('does not report a model provider call for deterministic decisions', async () => {
     const outcome = await runAgentLoop(host());
-    expect(outcome.trace.decisionProviderCalled).toBe(true);
+    expect(outcome.trace.decisionProviderCalled).toBe(false);
     expect(outcome.trace.decider).toBe('deterministic');
   });
 

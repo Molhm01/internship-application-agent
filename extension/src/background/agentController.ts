@@ -41,6 +41,8 @@ export interface AgentRunInput {
   profile: Profile;
   approvedAnswers: readonly ApprovedAnswer[];
   companyName: string;
+  /** Developer-only, value-free structural classification capture. */
+  classificationDiagnostics?: boolean;
   /** Which tailored documents this run has available to attach. */
   documents?: { resume: boolean; coverLetter: boolean };
   onProgress?: (progress: AgentProgress) => void;
@@ -293,6 +295,7 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
           proposedValues: {},
           recordCounts,
           dependencyActive: {},
+          classificationDiagnostics: input.classificationDiagnostics ?? false,
         },
       );
       latestTrusted = trustedValuesFor(

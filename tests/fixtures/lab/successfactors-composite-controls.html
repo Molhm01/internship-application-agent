@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SuccessFactors composite choice ownership</title>
+  </head>
+  <body id="careerSiteApplication">
+    <form>
+      <div class="form-field"><label for="address">Address</label><input id="address" /></div>
+      <div class="form-field"><label for="city">City</label><input id="city" /></div>
+      <div class="form-field"><label for="postal">Postal Code</label><input id="postal" /></div>
+      <div class="form-field"><label for="phone">Phone</label><input id="phone" type="tel" /></div>
+      <div class="form-field"><label for="company">Company Name</label><input id="company" /></div>
+      <div class="form-field">
+        <label for="position">Position Title</label><input id="position" />
+      </div>
+
+      <div class="form-field">
+        <label id="state-label" for="state-display">State/Province *</label>
+        <div class="sf-composite-choice">
+          <input id="state-display" autocomplete="off" />
+          <button
+            id="state-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="state-menu"
+          >
+            <span data-selected-label>No Selection</span><input type="hidden" name="state" />
+          </button>
+        </div>
+        <ul id="state-menu" role="listbox" hidden>
+          <li role="option" data-value="NY">New York</li>
+          <li role="option" data-value="NJ">New Jersey</li>
+        </ul>
+      </div>
+
+      <div class="form-field">
+        <label id="education-type-label" for="education-type-display">Education Type *</label>
+        <div class="sf-composite-choice">
+          <input id="education-type-display" autocomplete="off" />
+          <button
+            id="education-type-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="education-type-menu"
+          >
+            <span data-selected-label>No Selection</span
+            ><input type="hidden" name="educationType" />
+          </button>
+        </div>
+        <ul id="education-type-menu" role="listbox" hidden>
+          <li role="option" data-value="hs">High School</li>
+          <li role="option" data-value="bs">BS</li>
+          <li role="option" data-value="ms">MS</li>
+        </ul>
+      </div>
+
+      <div class="form-field">
+        <label id="education-country-label" for="education-country-display"
+          >Education Country *</label
+        >
+        <div class="sf-composite-choice">
+          <input id="education-country-display" autocomplete="off" />
+          <button
+            id="education-country-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-controls="education-country-menu"
+            aria-labelledby="education-country-label"
+          >
+            <span data-selected-label>No Selection</span
+            ><input type="hidden" name="educationCountry" />
+          </button>
+        </div>
+        <ul id="education-country-menu" role="listbox" hidden>
+          <li role="option" data-value="US">United States</li>
+          <li role="option" data-value="CA">Canada</li>
+        </ul>
+      </div>
+
+      <div class="form-field">
+        <label id="area-label" for="area-display">Area of Study *</label>
+        <div class="sf-composite-choice">
+          <input id="area-display" autocomplete="off" />
+          <button
+            id="area-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="area-menu"
+            class="sf-dropdown-arrow"
+            data-menu-id="area-menu"
+          >
+            <span data-selected-label>No Selection</span><input type="hidden" name="areaOfStudy" />
+          </button>
+        </div>
+        <ul id="area-menu" role="listbox" hidden>
+          <li role="option" data-value="cs">Computer Science</li>
+          <li role="option" data-value="ee">Electrical Engineering</li>
+        </ul>
+      </div>
+
+      <div class="form-field">
+        <label id="graduated-label" for="graduated-display">Graduated? *</label>
+        <div class="sf-composite-choice">
+          <input id="graduated-display" autocomplete="off" />
+          <button
+            id="graduated-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="graduated-menu"
+            aria-labelledby="graduated-label"
+          >
+            <span data-selected-label>No Selection</span><input type="hidden" name="graduated" />
+          </button>
+        </div>
+        <ul id="graduated-menu" role="listbox" hidden>
+          <li role="option" data-value="yes">Yes</li>
+          <li role="option" data-value="no">No</li>
+        </ul>
+      </div>
+
+      <div class="form-field">
+        <label for="from-date">From Date</label>
+        <div class="sf-date-composite">
+          <input id="from-date" placeholder="MM/DD/YYYY" />
+          <button type="button" aria-haspopup="dialog" aria-expanded="false">Open calendar</button>
+        </div>
+      </div>
+
+      <label for="native-country">Native Country</label>
+      <select id="native-country">
+        <option value="">No Selection</option>
+        <option value="US">United States</option>
+      </select>
+    </form>
+    <script>
+      document
+        .querySelectorAll('.sf-composite-choice button')
+        .forEach((trigger) => {
+          const menu = document.getElementById(
+            trigger.getAttribute('aria-controls') || trigger.dataset.menuId,
+          );
+          const display = trigger.parentElement.querySelector('input:not([type="hidden"])');
+          trigger.addEventListener('click', () => {
+            menu.hidden = false;
+            trigger.setAttribute('aria-expanded', 'true');
+          });
+          menu.querySelectorAll('[role="option"]').forEach((option) => {
+            option.addEventListener('click', () => {
+              menu
+                .querySelectorAll('[role="option"]')
+                .forEach((entry) => entry.setAttribute('aria-selected', 'false'));
+              option.setAttribute('aria-selected', 'true');
+              trigger.querySelector('[data-selected-label]').textContent = option.textContent;
+              trigger.querySelector('input[type="hidden"]').value = option.dataset.value;
+              display.value = option.textContent;
+              menu.hidden = true;
+              trigger.setAttribute('aria-expanded', 'false');
+            });
+          });
+        });
+    </script>
+  </body>
+</html>

@@ -19,6 +19,11 @@ import {
   type SemanticType,
 } from '@internship-agent/shared';
 import { elementById, readSelectedText, scopeOf } from './optionDiscovery.js';
+import {
+  choiceOwnershipOf,
+  hasDirectChoiceSemantics,
+  logicalControlOwner,
+} from './controlOwnership.js';
 
 /**
  * An element's id-bound partner, looked for in the tree it actually lives in.
@@ -213,10 +218,12 @@ export function isExtensionOwned(element: Element): boolean {
  * only when the region it controls actually holds options.
  */
 export function opensOptionList(element: HTMLElement): boolean {
-  // `aria-haspopup` — of any kind, including `dialog` for a date picker — is
-  // the element declaring itself a widget trigger. That declaration is enough;
-  // it is the *absence* of one that leaves a bare `aria-expanded` ambiguous.
-  if (element.hasAttribute('aria-haspopup')) return true;
+  // Only list/menu popups are choice evidence. `aria-haspopup="dialog"` is
+  // commonly a calendar trigger and must not turn a date control into a
+  // dropdown merely because it opens a popup.
+  const popup = cleanText(element.getAttribute('aria-haspopup')).toLowerCase();
+  if (popup === 'listbox' || popup === 'menu') return true;
+  if (popup === 'true' && hasDirectChoiceSemantics(element)) return true;
   const controls = cleanText(element.getAttribute('aria-controls')).split(' ')[0];
   const region = controls ? relatedById(element, controls) : null;
   if (!region) return false;
@@ -250,6 +257,9 @@ function isPageFurniture(element: HTMLElement): boolean {
   // was simply absent from the report while sitting unanswered on the page.
   const role = element.getAttribute('role');
   if (role === 'combobox' || role === 'listbox') return false;
+  // A calendar trigger is a real field surface, not page furniture. It remains
+  // discoverable by the scanner while staying outside the dropdown contract.
+  if (element.getAttribute('aria-haspopup')?.toLowerCase() === 'dialog') return false;
   // A disclosure that opens no list is an accordion header. Its fields are
   // scanned in their own right once it is expanded.
   if (element.hasAttribute('aria-expanded') && !opensOptionList(element)) return true;
@@ -493,6 +503,8 @@ export function isCustomCombobox(element: HTMLElement): boolean {
   // `aria-expanded` + `aria-controls` pair is just as often an accordion, and
   // reading one as a combobox invents a question out of a section heading.
   if (element.tagName === 'BUTTON' && opensOptionList(element)) return true;
+  if (hasDirectChoiceSemantics(element)) return true;
+  if (choiceOwnershipOf(element) !== null) return true;
   // Emotion-hashed React Select roots: `css-1abcde-control`.
   return /(^|\s)css-[a-z0-9]+-control(\s|$)/.test(element.className || '');
 }
@@ -550,7 +562,7 @@ export function isTypedTextControl(element: HTMLElement): boolean {
 export function answersFromList(element: HTMLElement): boolean {
   const autocomplete = element.getAttribute('aria-autocomplete');
   if (autocomplete === 'list' || autocomplete === 'both') return true;
-  return opensOptionList(element);
+  return opensOptionList(element) || choiceOwnershipOf(element) !== null;
 }
 
 function inferType(element: HTMLElement, grouped = false): FieldType {
@@ -1408,7 +1420,9 @@ function scanOnce(document: Document, pageId: string): DomScanResult {
 
   for (const root of roots) {
     const matched = Array.from(root.querySelectorAll<HTMLElement>(CONTROL_SELECTOR));
-    const candidates = matched.filter((element) => !shouldIgnore(element));
+    const candidates = [...new Set(matched.map((element) => logicalControlOwner(element)))].filter(
+      (element) => !shouldIgnore(element),
+    );
     census.rawControls += matched.length;
     census.falseControlsRemoved += matched.length - candidates.length;
     const groups = new Map<string, HTMLElement[]>();

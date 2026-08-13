@@ -8,6 +8,7 @@ import {
   normalizeStoredDate,
   type AgentDecision,
   type DayConvention,
+  type AgentFailureFeedback,
   type ObservedElement,
   type PageObservation,
 } from '@internship-agent/shared';
@@ -46,6 +47,8 @@ export interface DecisionInput {
   history: AgentHistory;
   /** The values the extension trusts, by element handle. */
   trustedValues: ReadonlyMap<string, string>;
+  /** Sanitized result of the last failed action, for the next model decision. */
+  failureFeedback?: AgentFailureFeedback;
   /**
    * What the applicant approved doing when a form wants a day their record does
    * not hold.
@@ -297,6 +300,7 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
   for (const element of live) {
     if (!isOptionControl(element) && element.kind !== 'radio_group') continue;
     if (!outstanding(element) || !answerable(element)) continue;
+    if (history.askedAbout(element)) continue;
     if (history.exhausted('select_option', element.label)) continue;
 
     // Open before choosing, always.
@@ -323,7 +327,8 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     // The list is in hand. Choose one of *these* choices, by its handle.
     const multiMatches =
       element.interactionType === 'CHECKBOX_GROUP' ? matchActualChoices(element) : [];
-    const match = element.interactionType === 'CHECKBOX_GROUP' ? multiMatches[0] : chooseOffered(element);
+    const match =
+      element.interactionType === 'CHECKBOX_GROUP' ? multiMatches[0] : chooseOffered(element);
     if (!match) {
       // A searchable list that has not been searched yet.
       //
@@ -535,6 +540,7 @@ export function buildDecisionPrompt(input: DecisionInput): string {
     '',
     `PAGE (${observation.requiredOutstanding} required field(s) outstanding):`,
     JSON.stringify({
+      ...(input.failureFeedback ? { previousFailure: input.failureFeedback } : {}),
       elements,
       repeaters: observation.repeaters,
       navigation: observation.navigation,

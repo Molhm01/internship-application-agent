@@ -46,6 +46,7 @@ export async function observeAcrossFrames(
     proposedValues: Record<string, string>;
     recordCounts: { experience: number; education: number };
     dependencyActive: Record<string, boolean>;
+    classificationDiagnostics?: boolean;
   },
 ): Promise<PageObservation> {
   frameByHandle.clear();
@@ -66,6 +67,7 @@ export async function observeAcrossFrames(
         proposedValues: context.proposedValues,
         recordCounts: context.recordCounts,
         dependencyActive: context.dependencyActive,
+        classificationDiagnostics: context.classificationDiagnostics ?? false,
       });
     } catch {
       // A frame that cannot be reached contributes nothing rather than failing

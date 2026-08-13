@@ -9,6 +9,7 @@ import {
   observedElementSchema,
   pageObservationSchema,
   type AnswerPolicy,
+  type ControlClassificationTrace,
   type DetectedField,
   type ObservedControlKind,
   type ObservedElement,
@@ -17,7 +18,11 @@ import {
   type PageObservation,
 } from '@internship-agent/shared';
 import { scanDom } from '../scanner/domScanner.js';
-import { detectAtsByHostname, isFinalSubmitControl } from '../scanner/adapters.js';
+import {
+  detectAtsByHostname,
+  isFinalSubmitControl,
+  selectAdapter,
+} from '../scanner/adapters.js';
 import {
   elementById,
   findListbox,
@@ -31,6 +36,10 @@ import {
 } from '../scanner/optionDiscovery.js';
 import { answersFromList, isCustomCombobox, opensOptionList } from '../scanner/domScanner.js';
 import { dateRequirementOf, isDateControl, readDateValidation } from './dateControl.js';
+import {
+  choiceOwnershipOf,
+  logicalFieldContainerFor,
+} from '../scanner/controlOwnership.js';
 import { findControl } from '../dependencies/dependencyDetector.js';
 import { countBlocks, findAddControl, findSection } from '../repeaters/repeaterScanner.js';
 
@@ -177,7 +186,7 @@ function kindOf(field: DetectedField): ObservedControlKind {
  * `SEARCHABLE_COMBOBOX`: the search box takes characters, the control does not,
  * and typing a query is not the same as choosing an answer.
  */
-export function interactionTypeOf(element: HTMLElement | null): InteractionType {
+export function authoritativeAgentControlType(element: HTMLElement | null): InteractionType {
   if (!element) return 'UNKNOWN';
   if (element instanceof HTMLSelectElement) return 'NATIVE_SELECT';
   if (element instanceof HTMLTextAreaElement) return 'TEXTAREA';
@@ -193,6 +202,11 @@ export function interactionTypeOf(element: HTMLElement | null): InteractionType 
       return 'DATE_INPUT';
     }
     if (type === 'button' || type === 'submit') return 'BUTTON';
+    if (isDateControl(element)) return 'DATE_INPUT';
+    const ownership = choiceOwnershipOf(element);
+    if (ownership) {
+      return ownership.searchInput === element ? 'SEARCHABLE_COMBOBOX' : 'CUSTOM_SELECT';
+    }
     // An input that answers from a list is a dropdown that happens to be an
     // input. `readonly` is the other tell: a box a person cannot type into is
     // not a box the agent may type into either.
@@ -213,20 +227,22 @@ export function interactionTypeOf(element: HTMLElement | null): InteractionType 
     // format mask, a date `pattern`, a date-shaped value or bound. A text box
     // that says nothing about dates stays `TEXT_INPUT`, which is what keeps
     // Address, City and Postal Code on the ordinary `type` path.
-    if (isDateControl(element)) return 'DATE_INPUT';
     return 'TEXT_INPUT';
   }
 
   if (element instanceof HTMLAnchorElement) return 'LINK';
   if (element instanceof HTMLButtonElement) {
-    return opensOptionList(element) ? 'CUSTOM_SELECT' : 'BUTTON';
+    return choiceOwnershipOf(element) || isCustomCombobox(element) || opensOptionList(element)
+      ? 'CUSTOM_SELECT'
+      : 'BUTTON';
   }
   if (element.isContentEditable) return 'TEXT_INPUT';
 
   const role = element.getAttribute('role');
   if (role === 'radiogroup') return 'RADIO_GROUP';
   if (role === 'checkbox' || role === 'switch') return 'SINGLE_CHECKBOX';
-  if (isCustomCombobox(element) || opensOptionList(element)) {
+  const ownership = choiceOwnershipOf(element);
+  if (ownership || isCustomCombobox(element) || opensOptionList(element)) {
     // An editable trigger is searchable. A button/div trigger can still open a
     // popup that owns a separate search input (common on Workday-style portal
     // menus), so the opened menu is authoritative when it exists.
@@ -235,10 +251,120 @@ export function interactionTypeOf(element: HTMLElement | null): InteractionType 
       trigger instanceof HTMLInputElement && !trigger.readOnly && trigger.type !== 'hidden';
     const menu = findListbox(trigger);
     const hasInternalSearch = Boolean(menu && findSearchInput(trigger, menu));
-    return editable || hasInternalSearch ? 'SEARCHABLE_COMBOBOX' : 'CUSTOM_SELECT';
+    return ownership?.searchInput || editable || hasInternalSearch
+      ? 'SEARCHABLE_COMBOBOX'
+      : 'CUSTOM_SELECT';
   }
   if (role === 'textbox') return 'TEXT_INPUT';
   return 'UNKNOWN';
+}
+
+/** Backwards-compatible name used by focused classifier tests. */
+export const interactionTypeOf = authoritativeAgentControlType;
+
+const LIVE_CLASSIFICATION_DIAGNOSTIC_LABELS = new Set([
+  'state/province',
+  'education type',
+  'area of study',
+]);
+const DROPDOWN_AFFORDANCE_TOKEN =
+  /(?:drop.?down|select|picker|combo|arrow.?down|down.?arrow|chevron.?down|navigation-down|value.?help)/i;
+
+function isLiveClassificationDiagnosticTarget(field: DetectedField): boolean {
+  const label = (field.label || field.question)
+    .replace(/\s*\*+\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return LIVE_CLASSIFICATION_DIAGNOSTIC_LABELS.has(label);
+}
+
+function associatedLabelRelationType(
+  element: HTMLElement,
+): ControlClassificationTrace['associatedLabelRelationType'] {
+  if (element.getAttribute('aria-labelledby')?.trim()) return 'aria_labelledby';
+  if (element.getAttribute('aria-label')?.trim()) return 'aria_label';
+  if (element.closest('label')) return 'wrapped_label';
+  if (element.id) {
+    const escaped = globalThis.CSS?.escape
+      ? globalThis.CSS.escape(element.id)
+      : element.id.replace(/["\\]/g, '\\$&');
+    if (element.ownerDocument.querySelector(`label[for="${escaped}"]`)) return 'label_for';
+  }
+  return element.parentElement?.textContent?.trim() ? 'container_text' : 'none';
+}
+
+function sanitizedClassTokens(element: HTMLElement): string[] {
+  return [...element.classList]
+    .map((token) => token.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 60))
+    .filter(Boolean)
+    .slice(0, 16);
+}
+
+function classificationTraceFor(
+  field: DetectedField,
+  element: HTMLElement,
+  adapterType: string,
+  normalizedType: ObservedControlKind,
+  finalAgentControlType: InteractionType,
+): ControlClassificationTrace {
+  const parent = element.parentElement;
+  const container = logicalFieldContainerFor(element);
+  const affordanceNodes = Array.from(
+    container.querySelectorAll<HTMLElement>('svg, button, [role="button"], [class], [data-icon]'),
+  ).filter((node) => {
+    const signature = [
+      node.id,
+      typeof node.className === 'string' ? node.className : '',
+      node.getAttribute('aria-label'),
+      node.getAttribute('title'),
+      node.getAttribute('data-icon'),
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return node.tagName.toLowerCase() === 'svg' || DROPDOWN_AFFORDANCE_TOKEN.test(signature);
+  });
+  const disabled =
+    (element instanceof HTMLInputElement ||
+    element instanceof HTMLSelectElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLButtonElement
+      ? element.disabled
+      : false) || element.getAttribute('aria-disabled') === 'true';
+  return {
+    event: 'CONTROL_CLASSIFICATION_TRACE',
+    elementTagName: element.tagName.toLowerCase(),
+    elementTypeAttribute: element.getAttribute('type') ?? '',
+    elementRole: element.getAttribute('role') ?? '',
+    elementAriaHasPopup: element.getAttribute('aria-haspopup') ?? '',
+    elementAriaExpanded: element.getAttribute('aria-expanded') ?? '',
+    elementHasAriaControls:
+      element.hasAttribute('aria-controls') || element.hasAttribute('aria-owns'),
+    elementAriaAutocomplete: element.getAttribute('aria-autocomplete') ?? '',
+    elementReadonly: element.hasAttribute('readonly'),
+    elementDisabled: disabled,
+    parentTagName: parent?.tagName.toLowerCase() ?? '',
+    parentRole: parent?.getAttribute('role') ?? '',
+    parentAriaHasPopup: parent?.getAttribute('aria-haspopup') ?? '',
+    parentAriaExpanded: parent?.getAttribute('aria-expanded') ?? '',
+    closestRoleComboboxExists: element.closest('[role="combobox"]') !== null,
+    closestAriaHasPopupExists: element.closest('[aria-haspopup]') !== null,
+    closestButtonExists: element.closest('button, [role="button"]') !== null,
+    nearbyButtonCount: container.querySelectorAll('button, [role="button"]').length,
+    nearbyDropdownArrowCount: new Set(affordanceNodes).size,
+    associatedLabelRelationType: associatedLabelRelationType(element),
+    logicalFieldContainerTag: container.tagName.toLowerCase(),
+    logicalFieldContainerClassTokens: sanitizedClassTokens(container),
+    nativeSelectExistsInFieldContainer: container.querySelector('select') !== null,
+    inputExistsInFieldContainer: container.querySelector('input:not([type="hidden"])') !== null,
+    buttonExistsInFieldContainer: container.querySelector('button, [role="button"]') !== null,
+    roleComboboxExistsInFieldContainer: container.querySelector('[role="combobox"]') !== null,
+    ariaHasPopupExistsInFieldContainer: container.querySelector('[aria-haspopup]') !== null,
+    scannerTypeBeforeNormalization: field.fieldType,
+    adapterType,
+    normalizedType,
+    finalAgentControlType,
+  };
 }
 
 /**
@@ -250,10 +376,7 @@ export function interactionTypeOf(element: HTMLElement | null): InteractionType 
  * never a fact about the applicant however much its wording resembles one.
  */
 export function policyFor(field: DetectedField, proposed: string | undefined): AnswerPolicy {
-  if (
-    field.canonicalKey &&
-    SENSITIVE_CANONICAL_QUESTIONS.includes(field.canonicalKey)
-  ) {
+  if (field.canonicalKey && SENSITIVE_CANONICAL_QUESTIONS.includes(field.canonicalKey)) {
     return answerPolicySchema.parse('SENSITIVE');
   }
   // The relatives box. `full name` in the label is not a reason to write the
@@ -298,14 +421,14 @@ export function optionsOf(
           owner: element,
         });
         return {
-        // Minted from the handle that read them, so a choice can only ever be
-        // named by an observation that actually saw it offered.
-        optionId,
-        index,
-        label: (option.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300),
-        value: option.value.slice(0, 1000),
-        disabled: option.disabled,
-        selected: option.selected,
+          // Minted from the handle that read them, so a choice can only ever be
+          // named by an observation that actually saw it offered.
+          optionId,
+          index,
+          label: (option.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300),
+          value: option.value.slice(0, 1000),
+          disabled: option.disabled,
+          selected: option.selected,
         };
       }),
       known: true,
@@ -497,11 +620,10 @@ function currentValueOf(field: DetectedField): string {
     if (element.type === 'radio' || inputsInGroup(element).length > 1) {
       return inputsInGroup(element)
         .filter((input) => input.checked)
-        .map(
-          (input) =>
-            (input.labels?.[0]?.textContent ?? input.getAttribute('aria-label') ?? input.value)
-              .replace(/\s+/g, ' ')
-              .trim(),
+        .map((input) =>
+          (input.labels?.[0]?.textContent ?? input.getAttribute('aria-label') ?? input.value)
+            .replace(/\s+/g, ' ')
+            .trim(),
         )
         .join(', ')
         .slice(0, 300);
@@ -647,7 +769,10 @@ function holdsCommittedValue(element: HTMLElement): boolean {
   }
   const inner = element.querySelector('select');
   if (inner instanceof HTMLSelectElement) return holdsCommittedValue(inner);
-  if (element instanceof HTMLInputElement && (element.type === 'radio' || element.type === 'checkbox')) {
+  if (
+    element instanceof HTMLInputElement &&
+    (element.type === 'radio' || element.type === 'checkbox')
+  ) {
     return inputsInGroup(element).some((input) => input.checked);
   }
 
@@ -658,12 +783,14 @@ function holdsCommittedValue(element: HTMLElement): boolean {
 
   // A listbox that marks its chosen row, or a trigger still pointing at one
   // after the menu shut. Either is the widget having recorded a choice.
-  if (element.querySelector('[aria-selected="true"],[aria-checked="true"],[data-selected="true"]')) return true;
+  if (element.querySelector('[aria-selected="true"],[aria-checked="true"],[data-selected="true"]'))
+    return true;
   const trigger = resolveTrigger(element);
   if (
     (trigger.getAttribute('aria-activedescendant') ?? '').length > 0 &&
     trigger.getAttribute('aria-expanded') !== 'true'
-  ) return true;
+  )
+    return true;
   if (trigger instanceof HTMLInputElement && trigger.type !== 'hidden') {
     // While a searchable menu is open, this value is a query, not an answer.
     // It becomes evidence only after the popup has closed and the widget kept
@@ -792,6 +919,8 @@ export interface ObserveInput {
   recordCounts?: { experience: number; education: number };
   /** Which dependent controls their parents currently activate, by field id. */
   dependencyActive?: Record<string, boolean>;
+  /** Temporary developer-only structural capture for the three live misses. */
+  classificationDiagnostics?: boolean;
 }
 
 /**
@@ -815,7 +944,21 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
   const { fields } = await scanDom(document, 'agent-observation', new AbortController().signal);
   // An unrecognised host is 'generic', whose final-submit wording is the
   // universal backstop — the safe reading when nothing identifies the vendor.
-  const ats = detectAtsByHostname(window.location.hostname)?.id ?? 'generic';
+  const ats =
+    detectAtsByHostname(window.location.hostname)?.id ??
+    (() => {
+      try {
+        return selectAdapter({
+          url: window.location.href,
+          hostname: window.location.hostname,
+          title: document.title,
+          bodyText: document.body?.textContent?.slice(0, 4000) ?? '',
+          document,
+        }).adapter.id;
+      } catch {
+        return 'generic' as const;
+      }
+    })();
 
   const handleByFieldId = new Map<string, string>();
   const elements: ObservedElement[] = [];
@@ -844,7 +987,12 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
     // Computed once, because both readings below turn on it: only a control
     // that answers from a list can be caught displaying a choice the form did
     // not keep.
-    const interactionType = interactionTypeOf(element);
+    const interactionType = authoritativeAgentControlType(element);
+    const normalizedType = kindOf(field);
+    const controlClassificationTrace =
+      input.classificationDiagnostics && element && isLiveClassificationDiagnosticTarget(field)
+        ? classificationTraceFor(field, element, ats, normalizedType, interactionType)
+        : undefined;
     const listControl = (OPTION_INTERACTION_TYPES as readonly string[]).includes(interactionType);
     const commitment = commitmentOf(field, listControl);
     // Read here rather than at execution time so the *decision* can be made
@@ -870,6 +1018,7 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
       // vocabularies rather than only in the authoritative one.
       kind: interactionType === 'DATE_INPUT' ? 'date' : kindOf(field),
       interactionType,
+      ...(controlClassificationTrace ? { controlClassificationTrace } : {}),
       // A dropdown whose options this observation can already see is open (or
       // is a native select, which is always readable); anything else is shut.
       // An open menu whose search box already holds a query is SEARCHING — the

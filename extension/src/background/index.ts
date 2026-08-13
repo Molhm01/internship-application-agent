@@ -1744,6 +1744,7 @@ async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Pr
       profile,
       approvedAnswers: [...(bundle?.approvedAnswers ?? []), ...(answersResult.data?.answers ?? [])],
       companyName: bundle?.company ?? '',
+      classificationDiagnostics: settings.developerMode,
       ...(settings.aiGenerationEnabled
         ? {
             chooseChoice: async (request) => {
@@ -1785,6 +1786,12 @@ async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Pr
         ...step.action,
         ...(step.dropdown ? { dropdown: step.dropdown } : {}),
       });
+      if (step.action.controlClassificationTrace) {
+        console.info(
+          '[agent] CONTROL_CLASSIFICATION_TRACE',
+          step.action.controlClassificationTrace,
+        );
+      }
     }
     for (const detail of outcome.trace.repeatedActionFailureDetails) {
       console.info('[agent] REPEATED_ACTION_FAILURE_DETAIL', detail);

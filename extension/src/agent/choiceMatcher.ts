@@ -6,6 +6,7 @@ import {
   normalizeOptionText,
   type AgentChoiceDecision,
   type AgentChoiceRequest,
+  type AgentFailureFeedback,
   type ErrorCode,
   type ObservedElement,
 } from '@internship-agent/shared';
@@ -70,13 +71,14 @@ const groups: ReadonlyArray<{ intents: readonly string[]; values: readonly strin
 ];
 
 export function normalizeChoice(value: string): string {
-  return normalizeOptionText(value)
-    .replace(/[’']/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return normalizeOptionText(value).replace(/[’']/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function aliasEquivalent(element: Pick<ObservedElement, 'intent' | 'label'>, left: string, right: string): boolean {
+function aliasEquivalent(
+  element: Pick<ObservedElement, 'intent' | 'label'>,
+  left: string,
+  right: string,
+): boolean {
   const intent = element.intent ?? '';
   const a = normalizeChoice(left);
   const b = normalizeChoice(right);
@@ -148,7 +150,10 @@ export function matchActualChoices(element: ObservedElement): ChoiceMatch[] {
   return matches;
 }
 
-export function choiceRequestFor(element: ObservedElement): AgentChoiceRequest {
+export function choiceRequestFor(
+  element: ObservedElement,
+  previousFailure?: AgentFailureFeedback,
+): AgentChoiceRequest {
   return agentChoiceRequestSchema.parse({
     fieldType: element.interactionType,
     question: element.label,
@@ -160,6 +165,7 @@ export function choiceRequestFor(element: ObservedElement): AgentChoiceRequest {
     choices: element.options
       .filter((option) => !option.disabled && !isPlaceholderSelection(option.label))
       .map((option) => ({ optionId: option.optionId, label: option.label })),
+    ...(previousFailure ? { previousFailure } : {}),
   });
 }
 
@@ -180,13 +186,10 @@ export function validateModelChoiceDecision(
       reason: 'The model did not return the required multiple-choice decision shape.',
     };
   }
-  const selectedIds = parsed.data.optionIds ??
-    (parsed.data.optionId ? [parsed.data.optionId] : []);
+  const selectedIds = parsed.data.optionIds ?? (parsed.data.optionId ? [parsed.data.optionId] : []);
   if (
     parsed.data.decision === 'SELECT' &&
-    selectedIds.some(
-      (optionId) => !request.choices.some((choice) => choice.optionId === optionId),
-    )
+    selectedIds.some((optionId) => !request.choices.some((choice) => choice.optionId === optionId))
   ) {
     return {
       valid: false,
