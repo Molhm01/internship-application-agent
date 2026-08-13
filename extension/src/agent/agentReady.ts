@@ -39,7 +39,8 @@ import {
  * counts are exhaustive over them:
  *
  *     unresolvedRequired
- *       = knownActionableRemaining + askUserRemaining + blockedRequiredRemaining
+ *       = blockedDataMissing + userInputRequired
+ *         + userReviewRequired + blockedExecution
  *
  * `classifyRequired` is what makes that true, and a test asserts the
  * arithmetic. A required field cannot fall out of the accounting because there
@@ -175,37 +176,46 @@ export function evaluateReady(input: ReadyInput): AgentReadyEvaluation {
 
   // ---- Every unresolved required field, in exactly one bucket. -------------
   //
-  // The buckets sum to `unresolvedRequired`, and `agentReadyState.test.ts`
-  // asserts that they do. A field that reached none of them would be a field
+  // The explicit outcome buckets sum to `unresolvedRequired`, and the tests
+  // assert that they do. A field that reached none of them would be a field
   // blocking nothing, which is the live bug.
-  let knownActionableRemaining = 0;
-  let askUserRemaining = 0;
-  let blockedRequiredRemaining = 0;
+  let blockedDataMissing = 0;
+  let userInputRequired = 0;
+  let userReviewRequired = 0;
+  let blockedExecution = 0;
   for (const element of required) {
     if (!isBlank(element)) continue;
     const outcome = classifyRequired(element, { answeredQuestions, exhausted });
     switch (outcome) {
       case 'BLOCKED_DATA_MISSING':
         // A saved answer the agent has not applied yet: still its work to do.
-        knownActionableRemaining += 1;
+        blockedDataMissing += 1;
         break;
       case 'BLOCKED_EXECUTION':
-        blockedRequiredRemaining += 1;
+        blockedExecution += 1;
         break;
       case 'USER_INPUT_REQUIRED':
         // Counted whether or not it has been *asked*. Asking is not answering,
         // and the previous version's subtraction of the asked list here is
         // what let five outstanding questions report as zero.
-        askUserRemaining += 1;
+        userInputRequired += 1;
         break;
       case 'USER_REVIEW_REQUIRED':
-        // The applicant answered it; the value is theirs to enter. Not
-        // outstanding agent work and not a blocker.
+        // The applicant answered it, but the page is still blank. That is no
+        // longer an unanswered factual question, but it remains explicit
+        // required work until the value reaches the page.
+        userReviewRequired += 1;
         break;
       default:
         break;
     }
   }
+
+  // Compatibility names retained for existing trace consumers. The explicit
+  // outcome names above are the authoritative classification vocabulary.
+  const knownActionableRemaining = blockedDataMissing;
+  const askUserRemaining = userInputRequired;
+  const blockedRequiredRemaining = blockedExecution;
 
   // Optional actionable fields the agent has given up on are neither blocking
   // nor pending — they are simply blank, and reported as such.
@@ -225,6 +235,7 @@ export function evaluateReady(input: ReadyInput): AgentReadyEvaluation {
     unresolvedRequired === 0 &&
     knownActionableRemaining === 0 &&
     askUserRemaining === 0 &&
+    userReviewRequired === 0 &&
     blockedRequiredRemaining === 0 &&
     requiredDocumentsPending === 0 &&
     // Kept alongside the count, not replaced by it. A host that supplies only
@@ -237,6 +248,10 @@ export function evaluateReady(input: ReadyInput): AgentReadyEvaluation {
   return agentReadyEvaluationSchema.parse({
     unresolvedRequired,
     verifiedRequired,
+    userInputRequired,
+    userReviewRequired,
+    blockedExecution,
+    blockedDataMissing,
     knownActionableRemaining,
     askUserRemaining,
     blockedRequiredRemaining,
@@ -246,6 +261,7 @@ export function evaluateReady(input: ReadyInput): AgentReadyEvaluation {
     finalSubmitReached: input.finalSubmitReached,
     blockedRemaining,
     ready,
+    readyForReview: ready,
   });
 }
 
@@ -259,6 +275,9 @@ export function evaluateReady(input: ReadyInput): AgentReadyEvaluation {
 export function describeNotReady(evaluation: AgentReadyEvaluation): string {
   if (evaluation.askUserRemaining > 0) {
     return `${evaluation.askUserRemaining} question(s) need your answer.`;
+  }
+  if (evaluation.userReviewRequired > 0) {
+    return `${evaluation.userReviewRequired} answered required field(s) still need to be applied on the page.`;
   }
   if (evaluation.knownActionableRemaining > 0) {
     return `${evaluation.knownActionableRemaining} field(s) still have a saved answer that has not been applied.`;

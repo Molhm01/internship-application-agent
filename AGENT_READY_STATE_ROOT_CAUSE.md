@@ -100,6 +100,13 @@ there is deliberately no agent-side path to it. `evaluateReady` takes
 list; the asked list is retained only to distinguish "asked and waiting" from
 "not yet asked", both of which block.
 
+Fresh observations are also reconciled against that logical identity. If the
+applicant enters one answer on the preserved employer page, exactly that
+question receives `answeredAt`; four other pending questions remain four. No
+answer value is stored in the trace. An answered question whose page control is
+still blank is reported separately as `userReviewRequired` and still blocks
+readiness.
+
 ---
 
 ## Defect 3 — an available document that the form did not mark required
@@ -168,6 +175,12 @@ requiredDocumentsPending: 1                   ready: false
 ```
 
 and the bucket invariant `5 + 4 + 0 === 9` holds, so no field is unaccounted for.
+
+The final readiness trace also exposes the explicit outcome vocabulary beside
+the compatibility counters: `userInputRequired`, `userReviewRequired`,
+`blockedExecution`, `blockedDataMissing`, and `readyForReview`. Run status and
+`statusReason` remain on the enclosing trace, where terminal precedence is
+selected.
 
 ---
 

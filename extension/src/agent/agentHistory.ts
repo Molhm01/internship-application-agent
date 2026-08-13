@@ -6,6 +6,7 @@ import {
   type AgentDecision,
   type AgentPendingQuestion,
   type AgentStepTrace,
+  type PageObservation,
   type ToolExecutionResult,
 } from '@internship-agent/shared';
 
@@ -41,7 +42,6 @@ export class AgentHistory {
   private actions = 0;
   /** Actions proposed, refused ones included. What the budget is spent from. */
   private attempts = 0;
-  private questions: string[] = [];
   /** Which controls have been asked about, independent of the wording used. */
   private readonly asked = new Set<string>();
   /**
@@ -87,7 +87,6 @@ export class AgentHistory {
       }
     }
     if (decision.kind === 'ASK_USER' && decision.question) {
-      if (!this.questions.includes(decision.question)) this.questions.push(decision.question);
       // Recorded separately from the question text, and this separation is not
       // tidiness — it is a bug fix.
       //
@@ -161,6 +160,31 @@ export class AgentHistory {
   }
 
   /**
+   * Associate user-entered page values with the exact questions they answer.
+   *
+   * The page is the durable handoff between runs: the agent pauses, the user
+   * fills one control, and the next fresh observation proves which logical
+   * field changed without retaining the answer itself. Only that one queue
+   * entry is marked answered; every other question remains pending.
+   */
+  reconcileAnswers(observation: PageObservation): number {
+    const answeredOnPage = new Set(
+      observation.elements
+        .filter(
+          (element) =>
+            element.visible && !element.disabled && element.currentValue.trim().length > 0,
+        )
+        .map((element) => logicalFieldKey(element)),
+    );
+    let reconciled = 0;
+    for (const question of this.unansweredQuestions()) {
+      if (!answeredOnPage.has(question.logicalKey)) continue;
+      if (this.recordAnswer(question.logicalKey)) reconciled += 1;
+    }
+    return reconciled;
+  }
+
+  /**
    * Whether this run has already put a question to the applicant about this
    * control.
    *
@@ -225,7 +249,7 @@ export class AgentHistory {
   }
 
   openQuestions(): readonly string[] {
-    return this.questions;
+    return this.unansweredQuestions().map((entry) => entry.question);
   }
 
   all(): readonly AgentStepTrace[] {

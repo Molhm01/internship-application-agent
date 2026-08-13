@@ -667,6 +667,9 @@ function terminalStateFor(readiness: AgentReadyEvaluation): {
   if (readiness.askUserRemaining > 0) {
     return { status: 'WAITING_FOR_USER', reason: 'WAITING_FOR_USER_INPUT' };
   }
+  if (readiness.userReviewRequired > 0) {
+    return { status: 'READY_FOR_USER_REVIEW', reason: 'PARTIAL_COMPLETION' };
+  }
   if (readiness.blockedRequiredRemaining > 0) {
     return { status: 'READY_FOR_USER_REVIEW', reason: 'REQUIRED_FIELDS_BLOCKED' };
   }
@@ -702,6 +705,11 @@ function summaryFor(
   const parts: string[] = [];
   parts.push(`Agent completed ${history.verifiedCount()} field(s).`);
   if (pendingUserQuestions > 0) parts.push(`${pendingUserQuestions} question(s) need your input.`);
+  if (readiness.userReviewRequired > 0) {
+    parts.push(
+      `${readiness.userReviewRequired} answered required field(s) still need applying on the page.`,
+    );
+  }
   if (readiness.blockedRequiredRemaining > 0) {
     parts.push(`${readiness.blockedRequiredRemaining} required field(s) could not be completed.`);
   }
@@ -880,6 +888,12 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       status = 'BLOCKED';
       break;
     }
+
+    // A user can answer directly on the preserved employer page while the
+    // agent is paused or between observations. Associate only controls that
+    // now hold a value with their logical question keys; asking alone never
+    // reaches this path and cannot resolve anything.
+    history.reconcileAnswers(observation);
 
     const trustedValues = await host.trustedValues(observation);
     const input: DecisionInput = { observation, history, trustedValues, dayConvention };
@@ -1234,6 +1248,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     observation = await host.observe();
     observationCount += 1;
     mark('AGENT_OBSERVATION_CREATED', step, observation);
+    history.reconcileAnswers(observation);
     const outcome = verify(call, target, observation, execution);
     const verification = outcome.verification;
     mark('AGENT_VERIFICATION_FINISHED', step, observation, { tool: call.tool });
@@ -1468,7 +1483,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       observationCount,
       actionCount: history.actionCount(),
       verifiedCount: history.verifiedCount(),
-      questionsAsked: history.openQuestions().length,
+      questionsAsked: history.allQuestions().length,
       submitActionCount: history.submitActionCount(),
       decider: host.decide ? 'model' : 'deterministic',
       decisionProviderCalled,

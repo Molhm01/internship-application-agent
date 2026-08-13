@@ -629,9 +629,10 @@ export type AgentFieldOutcome = z.infer<typeof agentFieldOutcomeSchema>;
  *
  * Every count here now feeds the verdict, and the counts are exhaustive over
  * the required fields: an unresolved required control is *always* in one of
- * `knownActionableRemaining`, `askUserRemaining` or `blockedRequiredRemaining`,
- * and every one of those blocks readiness. A test asserts the arithmetic, so a
- * field cannot fall out of the accounting without something failing.
+ * `blockedDataMissing`, `userInputRequired`, `userReviewRequired` or
+ * `blockedExecution`, and every one of those blocks readiness. A test asserts
+ * the arithmetic, so a field cannot fall out of the accounting without
+ * something failing.
  */
 export const agentReadyEvaluationSchema = z
   .object({
@@ -639,6 +640,14 @@ export const agentReadyEvaluationSchema = z
     unresolvedRequired: z.number().int().nonnegative(),
     /** Required fields the agent filled and the page confirmed. */
     verifiedRequired: z.number().int().nonnegative().default(0),
+    /** Explicit terminal-outcome count: the applicant still owes an answer. */
+    userInputRequired: z.number().int().nonnegative().default(0),
+    /** Explicit terminal-outcome count: an answer exists but is not on the page yet. */
+    userReviewRequired: z.number().int().nonnegative().default(0),
+    /** Explicit terminal-outcome count: the page refused a known answer. */
+    blockedExecution: z.number().int().nonnegative().default(0),
+    /** Explicit terminal-outcome count: a known-answer action is still pending. */
+    blockedDataMissing: z.number().int().nonnegative().default(0),
     /** Fields with a saved answer that has not been applied. Blocks readiness. */
     knownActionableRemaining: z.number().int().nonnegative(),
     /**
@@ -668,6 +677,8 @@ export const agentReadyEvaluationSchema = z
      * it safely can" is a different question, answered by the run status.
      */
     ready: z.boolean(),
+    /** Trace-facing name for the same authoritative predicate. */
+    readyForReview: z.boolean(),
   })
   .strict();
 

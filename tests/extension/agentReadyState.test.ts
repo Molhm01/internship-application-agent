@@ -222,6 +222,21 @@ describe('MANDATORY: the ask-user queue', () => {
     expect(evaluation.askUserRemaining).toBe(4);
     expect(evaluation.ready).toBe(false);
   });
+
+  it('reports the explicit terminal-outcome counters in the final object', () => {
+    const evaluation = evaluate([logicalFieldKey(FIVE[0]!)]);
+    expect(evaluation.userInputRequired).toBe(4);
+    expect(evaluation.userReviewRequired).toBe(1);
+    expect(evaluation.blockedExecution).toBe(0);
+    expect(evaluation.blockedDataMissing).toBe(0);
+    expect(evaluation.readyForReview).toBe(false);
+    expect(
+      evaluation.userInputRequired +
+        evaluation.userReviewRequired +
+        evaluation.blockedExecution +
+        evaluation.blockedDataMissing,
+    ).toBe(evaluation.unresolvedRequired);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -292,6 +307,28 @@ describe('the history queue records answers, and only answers', () => {
     asked(history, 'Q1 *');
     expect(history.allQuestions()).toHaveLength(1);
   });
+
+  it('reconciles exactly one user-entered page answer and leaves the rest pending', () => {
+    const history = new AgentHistory();
+    ['Q1 *', 'Q2 *', 'Q3 *', 'Q4 *', 'Q5 *'].forEach((label) => asked(history, label));
+    const page = observation(
+      ['Q1 *', 'Q2 *', 'Q3 *', 'Q4 *', 'Q5 *'].map((label, index) =>
+        element({
+          label,
+          section: 'Profile',
+          required: true,
+          currentValue: index === 2 ? 'user-entered' : '',
+        }),
+      ),
+    );
+
+    expect(history.reconcileAnswers(page)).toBe(1);
+    expect(history.unansweredQuestions()).toHaveLength(4);
+    expect(history.answeredKeys()).toEqual([
+      logicalFieldKey({ label: 'Q3 *', section: 'Profile' }),
+    ]);
+    expect(history.openQuestions()).toHaveLength(4);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -354,6 +391,7 @@ describe('MANDATORY SUCCESS: readiness when everything really is done', () => {
     expect(evaluation.blockedRequiredRemaining).toBe(0);
     expect(evaluation.requiredDocumentsPending).toBe(0);
     expect(evaluation.ready).toBe(true);
+    expect(evaluation.readyForReview).toBe(true);
   });
 
   it('is refused by a required document alone', () => {
