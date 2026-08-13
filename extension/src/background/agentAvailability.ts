@@ -1,4 +1,5 @@
 import {
+  modelInstalled,
   DEFAULT_ERROR_GUIDANCE,
   type AgentError,
   type HealthResponse,
@@ -55,6 +56,18 @@ function agentError(code: AgentError['code'], message: string): AgentError {
 export function interpretHealth(
   result: { health?: HealthResponse; error?: AgentError },
   now: () => number = Date.now,
+  /**
+   * The model this extension will actually ask for — `settings.ai.generationModel`.
+   *
+   * Load-bearing, and the reason this parameter exists. The health payload's
+   * own `selectedModel` is the *server's* default (`OLLAMA_MODEL`, falling back
+   * to `DEFAULT_OLLAMA_MODEL`), which is a different setting that no request
+   * ever uses. Gating on it meant a live run refused to analyze a page because
+   * `qwen3.5:9b` was missing, while the model the request would have sent was
+   * installed the whole time. Availability is decided about the model that will
+   * be called, or it is not availability.
+   */
+  configuredModel?: string,
 ): AgentAvailability {
   // The clock is injectable so the cache window is testable, and so a probe
   // and its cache entry are always stamped from the same source.
@@ -86,13 +99,29 @@ export function interpretHealth(
       checkedAt,
     };
   }
-  if (ollama.selectedModel && ollama.selectedModelInstalled === false) {
+  // The model this extension will actually send, judged against what the daemon
+  // actually has. Only when neither is known does the server's own default get
+  // to speak, and then only about itself.
+  const wanted = configuredModel?.trim() ?? '';
+  const installed = ollama.installedModels;
+  const missing = wanted
+    ? installed
+      ? !modelInstalled(installed, wanted)
+      : // An older server that does not report its inventory cannot answer the
+        // question that matters, and its answer about a *different* model is
+        // not evidence about this one. The run proceeds and a genuinely absent
+        // model surfaces as MODEL_NOT_FOUND from the request itself, which is
+        // the honest place for it.
+        false
+    : Boolean(ollama.selectedModel) && ollama.selectedModelInstalled === false;
+  if (missing) {
+    const named = wanted || ollama.selectedModel;
     return {
       state: 'model_unavailable',
       health: result.health,
       error: agentError(
         'MODEL_NOT_FOUND',
-        `The selected model "${ollama.selectedModel}" is not installed, so questions cannot be analyzed.`,
+        `The selected model "${named}" is not installed, so questions cannot be analyzed.`,
       ),
       checkedAt,
     };
@@ -109,12 +138,14 @@ export function interpretHealth(
 export async function agentAvailability(
   probe: () => Promise<{ health?: HealthResponse; error?: AgentError }>,
   now: () => number = Date.now,
+  /** The model the caller will actually send. See `interpretHealth`. */
+  configuredModel?: string,
 ): Promise<AgentAvailability> {
   if (cached && now() - cached.checkedAt < HEALTH_CACHE_MS) return cached;
   if (inFlight) return inFlight;
   inFlight = probe()
     .then((result) => {
-      cached = interpretHealth(result, now);
+      cached = interpretHealth(result, now, configuredModel);
       return cached;
     })
     .finally(() => {

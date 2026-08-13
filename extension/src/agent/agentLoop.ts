@@ -24,6 +24,7 @@ import {
   type AgentDecision,
   type AgentDropdownTrace,
   type AgentTool,
+  ERROR_CODES,
   type ErrorCode,
   type AgentMarker,
   type AgentMarkerRecord,
@@ -127,6 +128,82 @@ export interface AgentLoopHost {
   profileContext?: AgentRunTrace['profileContext'];
 }
 
+/**
+ * The choice control a deterministic decision is *really* about, when its real
+ * options are in hand and none of them matched.
+ *
+ * This is the handoff the live SuccessFactors run never made. The escalation
+ * used to be keyed on one error code — `DROPDOWN_TARGET_NOT_FOUND` — and a
+ * searchable dropdown never produces it: the deterministic policy reaches its
+ * search branch first and returns an `ACTION` that types the query into the
+ * menu's own search box. So State opened, 58 real options were read, and the
+ * gate returned before the options were offered to any chooser. `optionCount:
+ * 58` beside `optionsPassedToDecisionProvider: false` is that gate, exactly.
+ *
+ * Two ways in, and both name a control the *page is currently offering options
+ * for* rather than a control the agent would like to answer:
+ *
+ *  - the policy gave up on a dropdown by name, which is the original case; and
+ *  - the policy is about to type into a dropdown's own search box *again*,
+ *    over a list that has already been narrowed once. Typing is a step inside
+ *    the dropdown's lifecycle, not an answer to a question of its own, and a
+ *    run that keeps re-typing spends every cycle without ever choosing.
+ *
+ * A control whose saved answer matched is never here: that decision is already
+ * a `select_option`, and it never reaches this function's gate.
+ */
+/**
+ * Why the choice provider could not answer, as a code rather than as prose.
+ *
+ * An `AgentError` thrown by the host already knows what went wrong — a model
+ * that is not installed is `MODEL_NOT_FOUND`, not a timeout and not a parse
+ * failure — so its own code is kept. Only an unlabelled throw is classified
+ * from its message.
+ */
+function choiceProviderErrorFor(cause: unknown): ErrorCode {
+  const code =
+    typeof cause === 'object' && cause !== null && 'code' in cause
+      ? (cause as { code?: unknown }).code
+      : undefined;
+  if (typeof code === 'string' && (ERROR_CODES as readonly string[]).includes(code)) {
+    return code as ErrorCode;
+  }
+  // `decisionErrorFor` is typed against the trace, where the code is optional.
+  // A blocked decision must always name one, and "the decision failed" is the
+  // honest floor rather than a silent absence.
+  return decisionErrorFor(cause) ?? 'AGENT_DECISION_FAILED';
+}
+
+function unmatchedChoiceTarget(
+  input: DecisionInput,
+  deterministic: AgentDecision,
+): ObservedElement | undefined {
+  const byId = (id: string | undefined): ObservedElement | undefined =>
+    id === undefined
+      ? undefined
+      : input.observation.elements.find((candidate) => candidate.elementId === id);
+
+  if (
+    deterministic.kind === 'ASK_USER' &&
+    deterministic.errorCode === 'DROPDOWN_TARGET_NOT_FOUND'
+  ) {
+    return byId(deterministic.elementId);
+  }
+
+  if (deterministic.kind === 'ACTION' && deterministic.action?.tool === 'type') {
+    const search = byId(deterministic.action.elementId);
+    const owner = byId(search?.searchInputFor);
+    // Only once the query is actually in the box. While the menu is merely
+    // OPEN the list on screen is the control's unsearched first page, and
+    // "the saved answer is not offered" is unproven rather than true — so the
+    // narrowing is allowed to happen first, and the chooser sees the filtered
+    // list on the next cycle.
+    if (owner && owner.dropdownState === 'SEARCHING') return owner;
+  }
+
+  return undefined;
+}
+
 export async function decideWithChoiceFallback(
   input: DecisionInput,
   chooseChoice?: AgentLoopHost['chooseChoice'],
@@ -150,25 +227,35 @@ export async function decideWithChoiceFallback(
           candidate.options.length > 0,
       )
     : undefined;
-  if (
-    !recoveredChoice &&
-    (deterministic.kind !== 'ASK_USER' ||
-      deterministic.errorCode !== 'DROPDOWN_TARGET_NOT_FOUND' ||
-      !deterministic.elementId)
-  ) {
-    return deterministic;
-  }
-  const element =
-    recoveredChoice ??
-    input.observation.elements.find(
-      (candidate) => candidate.elementId === deterministic.elementId,
-    );
+  const element = recoveredChoice ?? unmatchedChoiceTarget(input, deterministic);
+  // The chooser is only ever offered a control the page is *currently* showing
+  // options for. Without real options in hand there is nothing to choose from,
+  // and asking a model to answer from an empty list is how an invented answer
+  // gets into a form.
   if (!element || element.policy !== 'KNOWN_FACT' || element.options.length === 0) {
     return deterministic;
   }
   const request = choiceRequestFor(element, input.failureFeedback);
   onChoiceRequest?.(request);
-  const validation = validateModelChoiceDecision(request, await chooseChoice(request));
+  // A provider that cannot run is an infrastructure failure, and it is reported
+  // as one. The live run turned "the configured model is not installed" into a
+  // question asking the applicant which US state they live in — a fact the
+  // profile already holds. A missing model is never evidence about a fact, so
+  // it can never become a question about one.
+  let raw: unknown;
+  try {
+    raw = await chooseChoice(request);
+  } catch (cause) {
+    return {
+      kind: 'BLOCKED',
+      reason:
+        cause instanceof Error && cause.message
+          ? cause.message.slice(0, 600)
+          : 'The local choice model is unavailable, so this choice was not made.',
+      errorCode: choiceProviderErrorFor(cause),
+    };
+  }
+  const validation = validateModelChoiceDecision(request, raw);
   if (!validation.valid) {
     if (validation.errorCode === 'INVALID_OPTION_ID') {
       return {
@@ -1502,6 +1589,11 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
           requiredOutstanding: observation.requiredOutstanding,
           decisionType: decision.kind,
           reason: decision.reason.slice(0, 300),
+          // A decision that named its own cause keeps it. An unusable choice
+          // model is `MODEL_NOT_FOUND`, and a trace that dropped the code left
+          // "the run stopped getting anywhere" as the only account of an
+          // infrastructure failure with an exact name.
+          ...(decision.errorCode ? { errorCode: decision.errorCode } : {}),
         }),
         decision,
       );
@@ -1531,7 +1623,10 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         // refused to keep, and only failing both the generic "it stopped
         // getting anywhere".
         status = 'BLOCKED';
-        failure = failure ?? blockedReasonFrom(history);
+        // The decision's own code first: it is direct evidence of what went
+        // wrong, where `blockedReasonFrom` infers a reason from the shape of
+        // the history. A choice provider that could not run knows exactly why.
+        failure = failure ?? decision.errorCode ?? blockedReasonFrom(history);
       }
       break;
     }

@@ -5,6 +5,7 @@ import {
   type OllamaStatus,
   DEFAULT_ERROR_GUIDANCE,
 } from '@internship-agent/shared';
+import { matchesModelName } from '@internship-agent/shared';
 import type { Logger } from '../logging/logger.js';
 
 /** Shape of `GET /api/tags` as served by Ollama. Unknown keys are ignored. */
@@ -278,6 +279,9 @@ export function createOllamaClient(options: OllamaClientOptions): OllamaClient {
           modelCount: tags.models.length,
           selectedModel: defaultModel,
           selectedModelInstalled: tags.selectedModelInstalled,
+          // The names as well as the count, so a caller can ask about the model
+          // *it* has configured instead of trusting this server's default.
+          installedModels: tags.models.map((model) => model.name),
           checkedAt,
           latencyMs: Date.now() - startedAt,
         };
@@ -311,13 +315,5 @@ export function createOllamaClient(options: OllamaClientOptions): OllamaClient {
 }
 
 /** `llama3.1:8b` and `llama3.1` refer to the same model family for our purposes. */
-function matchesModel(installed: string, wanted: string): boolean {
-  const normalize = (name: string): string => name.trim().toLowerCase();
-  const normalizedInstalled = normalize(installed);
-  const normalizedWanted = normalize(wanted);
-  if (normalizedInstalled === normalizedWanted) return true;
-  const base = (name: string): string => name.split(':')[0] ?? name;
-  return (
-    base(normalizedInstalled) === base(normalizedWanted) && normalizedWanted.includes(':') === false
-  );
-}
+/** One rule for "is this the model that was asked for", shared with the extension. */
+const matchesModel = matchesModelName;

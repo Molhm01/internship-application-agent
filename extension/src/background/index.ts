@@ -577,7 +577,13 @@ async function analyzePage(
   // fails: everything the deterministic pass filled stays filled, and the
   // questions that needed interpreting are reported as pending rather than as
   // analyzed-and-empty.
-  const availability = await agentAvailability(() => fetchAgentStatus());
+  // Checked against the model this request is about to send, not the server's
+  // own default — they are two different settings and only one of them is used.
+  const availability = await agentAvailability(
+    () => fetchAgentStatus(),
+    Date.now,
+    settings.ai.generationModel,
+  );
   if (!canAnalyze(availability)) {
     return { warnings: [availabilityMessage(availability)] };
   }
@@ -814,6 +820,28 @@ async function storeApplicationBundle(transfer: unknown): Promise<unknown> {
       },
     };
   }
+}
+
+/**
+ * An `AgentError` in a shape that can be thrown.
+ *
+ * The agent loop reads `code` off whatever it catches and turns it into the
+ * blocked decision's `errorCode`, so the code has to survive the throw. A bare
+ * object would carry it too, but throwing a non-Error loses the stack and
+ * anything that logs it prints `[object Object]`.
+ */
+class ChoiceProviderError extends Error {
+  constructor(readonly error: AgentError) {
+    super(error.message);
+    this.name = 'ChoiceProviderError';
+  }
+  get code(): AgentError['code'] {
+    return this.error.code;
+  }
+}
+
+function choiceProviderFailure(error: AgentError): ChoiceProviderError {
+  return new ChoiceProviderError(error);
 }
 
 function answerFailure(code: AgentError['code'], message: string, fieldId?: string): AgentError {
@@ -1749,14 +1777,21 @@ async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Pr
         ? {
             chooseChoice: async (request) => {
               const result = await chooseAgentOption(request, state.controller.signal);
-              return (
-                result.data ?? {
-                  decision: 'ASK_USER' as const,
-                  confidence: 0,
-                  reason:
-                    result.error?.message ??
-                    'The local choice model was unavailable, so this answer was not guessed.',
-                }
+              if (result.data) return result.data;
+              // Thrown, not answered.
+              //
+              // This used to return `ASK_USER`, which turned every failure of
+              // the local model into a factual question put to the applicant —
+              // and on the live run a misconfigured model asked them which
+              // state they live in, a fact the profile already held. A provider
+              // that could not run has said nothing about the answer, so it
+              // must not be allowed to say "ask them".
+              throw choiceProviderFailure(
+                result.error ??
+                  answerFailure(
+                    'AGENT_MODEL_UNAVAILABLE',
+                    'The local choice model did not answer, so this choice was not made.',
+                  ),
               );
             },
           }

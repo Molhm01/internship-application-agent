@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SuccessFactors portalled dropdowns with internal search</title>
+  </head>
+  <body id="careerSiteApplication">
+    <form>
+      <div class="form-field"><label for="address">Address</label><input id="address" /></div>
+      <div class="form-field"><label for="city">City</label><input id="city" /></div>
+      <div class="form-field"><label for="postal">Postal Code</label><input id="postal" /></div>
+      <div class="form-field"><label for="phone">Phone</label><input id="phone" type="tel" /></div>
+      <div class="form-field"><label for="company">Company Name</label><input id="company" /></div>
+      <div class="form-field">
+        <label for="position">Position Title</label><input id="position" />
+      </div>
+
+      <div class="form-field">
+        <label id="state-label" for="state-display">State/Province *</label>
+        <div class="sf-composite-choice">
+          <input id="state-display" autocomplete="off" />
+          <button
+            id="state-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-labelledby="state-label"
+            data-menu="state"
+            data-search="true"
+          >
+            <span data-selected-label>No Selection</span><input type="hidden" name="state" />
+          </button>
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label id="education-type-label" for="education-type-display">Education Type *</label>
+        <div class="sf-composite-choice">
+          <input id="education-type-display" autocomplete="off" />
+          <button
+            id="education-type-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-labelledby="education-type-label"
+            data-menu="educationType"
+          >
+            <span data-selected-label>No Selection</span
+            ><input type="hidden" name="educationType" />
+          </button>
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label id="area-label" for="area-display">Area of Study *</label>
+        <div class="sf-composite-choice">
+          <input id="area-display" autocomplete="off" />
+          <button
+            id="area-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-labelledby="area-label"
+            data-menu="areaOfStudy"
+          >
+            <span data-selected-label>No Selection</span><input type="hidden" name="areaOfStudy" />
+          </button>
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label id="school-label" for="school-display">School *</label>
+        <div class="sf-composite-choice">
+          <input id="school-display" autocomplete="off" />
+          <button
+            id="school-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-labelledby="school-label"
+            data-menu="school"
+            data-search="true"
+            data-paged="true"
+          >
+            <span data-selected-label>No Selection</span><input type="hidden" name="school" />
+          </button>
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label for="from-date">From Date</label>
+        <div class="sf-date-composite">
+          <input id="from-date" placeholder="MM/DD/YYYY" />
+          <button type="button" aria-haspopup="dialog" aria-expanded="false">Open calendar</button>
+        </div>
+      </div>
+    </form>
+
+    <!-- Where every menu mounts. No ancestor relationship to a trigger survives. -->
+    <div id="sf-portal-root"></div>
+
+    <script>
+      var STATES = [
+        'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut',
+        'Delaware', 'District of Columbia', 'Florida', 'Georgia', 'Hawaii', 'Idaho', 'Illinois',
+        'Indiana', 'Iowa', 'Kansas', 'Kentucky', 'Louisiana', 'Maine', 'Maryland', 'Massachusetts',
+        'Michigan', 'Minnesota', 'Mississippi', 'Missouri', 'Montana', 'Nebraska', 'Nevada',
+        'New Hampshire', 'New Jersey', 'New Mexico', 'New York', 'North Carolina', 'North Dakota',
+        'Ohio', 'Oklahoma', 'Oregon', 'Pennsylvania', 'Rhode Island', 'South Carolina',
+        'South Dakota', 'Tennessee', 'Texas', 'Utah', 'Vermont', 'Virginia', 'Washington',
+        'West Virginia', 'Wisconsin', 'Wyoming', 'Puerto Rico', 'Guam', 'American Samoa',
+        'Northern Mariana Islands', 'U.S. Virgin Islands', 'Palau', 'Armed Forces Americas'
+      ];
+      var EDUCATION_TYPES = [
+        'High School Diploma', 'Associate Degree', 'Bachelor of Science', 'Master of Science',
+        'Doctorate', 'Professional Certification', 'Trade School', 'Some College'
+      ];
+      var AREAS = [
+        'Accounting', 'Biology', 'Business Administration', 'Chemistry', 'Civil Engineering',
+        'Computer Science', 'Economics', 'Electrical Engineering', 'Finance', 'Marketing',
+        'Mechanical Engineering', 'Nursing', 'Physics', 'Psychology'
+      ];
+      // Long enough that the first rendered page cannot contain the saved answer,
+      // which is what makes searching the only way to reach it.
+      var SCHOOLS = [];
+      for (var i = 1; i <= 240; i += 1) SCHOOLS.push('Community College ' + i);
+      SCHOOLS.push('Rutgers University');
+
+      var DATA = {
+        state: STATES,
+        educationType: EDUCATION_TYPES,
+        areaOfStudy: AREAS,
+        school: SCHOOLS
+      };
+      var PAGE_SIZE = 25;
+      var portal = document.getElementById('sf-portal-root');
+      var triggers = document.querySelectorAll('.sf-composite-choice button');
+
+      function closeAll() {
+        portal.innerHTML = '';
+        Array.prototype.forEach.call(triggers, function (button) {
+          button.setAttribute('aria-expanded', 'false');
+        });
+      }
+
+      function render(trigger, menu, query) {
+        var all = DATA[trigger.getAttribute('data-menu')];
+        var text = (query || '').trim().toLowerCase();
+        var matched = text
+          ? all.filter(function (entry) {
+              return entry.toLowerCase().indexOf(text) !== -1;
+            })
+          : all;
+        // A paged control renders only its first page until a query narrows it.
+        if (trigger.getAttribute('data-paged') === 'true' && !text) {
+          matched = matched.slice(0, PAGE_SIZE);
+        }
+        var list = menu.querySelector('[data-options]');
+        list.innerHTML = '';
+        matched.forEach(function (label) {
+          var item = document.createElement('li');
+          item.setAttribute('role', 'option');
+          item.setAttribute('data-value', label);
+          item.textContent = label;
+          item.addEventListener('click', function () {
+            trigger.querySelector('[data-selected-label]').textContent = label;
+            trigger.querySelector('input[type="hidden"]').value = label;
+            trigger.parentElement.querySelector('input:not([type="hidden"])').value = label;
+            closeAll();
+          });
+          list.appendChild(item);
+        });
+      }
+
+      Array.prototype.forEach.call(triggers, function (trigger) {
+        trigger.addEventListener('click', function () {
+          var alreadyOpen = trigger.getAttribute('aria-expanded') === 'true';
+          closeAll();
+          if (alreadyOpen) return;
+          var menu = document.createElement('div');
+          menu.setAttribute('data-portal-menu', '');
+          menu.setAttribute('role', 'listbox');
+          if (trigger.getAttribute('data-search') === 'true') {
+            var search = document.createElement('input');
+            search.type = 'text';
+            search.setAttribute('data-dropdown-search', '');
+            search.addEventListener('input', function () {
+              render(trigger, menu, search.value);
+            });
+            menu.appendChild(search);
+          }
+          var list = document.createElement('ul');
+          list.setAttribute('data-options', '');
+          menu.appendChild(list);
+          portal.appendChild(menu);
+          trigger.setAttribute('aria-expanded', 'true');
+          render(trigger, menu, '');
+        });
+      });
+    </script>
+  </body>
+</html>

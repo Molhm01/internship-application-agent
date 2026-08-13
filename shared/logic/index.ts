@@ -47,3 +47,4 @@ export * from './degreeLevel.js';
 export * from './discoverySource.js';
 export * from './buildProvenance.js';
 export * from './documentFieldMatch.js';
+export * from './modelIdentity.js';

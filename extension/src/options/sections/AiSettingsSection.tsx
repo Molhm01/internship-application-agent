@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
   aiGenerationSettingsSchema,
+  matchesModelName,
   type AiGenerationSettings,
   type ModelsResponse,
 } from '@internship-agent/shared';
 import { sendMessage } from '../../messaging/messages.js';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from '../../storage/settings.js';
 
-function matchesInstalledModel(installed: string, configured: string): boolean {
-  const actual = installed.trim().toLowerCase();
-  const wanted = configured.trim().toLowerCase();
-  return actual === wanted || (!wanted.includes(':') && actual.split(':')[0] === wanted);
-}
+/** One rule for "is this the configured model", shared with the server. */
+const matchesInstalledModel = matchesModelName;
 
 export function AiSettingsSection(): JSX.Element {
   const [settings, setSettings] = useState<AiGenerationSettings>(DEFAULT_SETTINGS.ai);

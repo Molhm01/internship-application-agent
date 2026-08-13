@@ -276,6 +276,21 @@ export function findListbox(trigger: HTMLElement): HTMLElement | null {
       ...Array.from(document.querySelectorAll<HTMLElement>(OPTION_CONTAINER_SELECTOR)),
     ]),
   ].filter((candidate) => isVisible(candidate) && readOptions(candidate).length > 0);
+  // A portalled menu has no ancestor relationship to anything, so proximity
+  // cannot establish ownership and *being the only one open* does not either.
+  //
+  // This is the cross-dropdown leak the live SuccessFactors trace recorded:
+  // Education Type and Area of Study reported `triggerFound: false`,
+  // `openAttempted: false`, `menuFound: true`, `optionCount: 118` — options
+  // read out of a menu belonging to a control that had actually been opened,
+  // handed to controls that had never been touched. A question answered from
+  // another question's list is a wrong answer that looks exactly like a right
+  // one, so the trigger has to say the popup is its own.
+  //
+  // `rememberedMenu` above already covers every menu this module opened
+  // itself; this branch is only for a menu that was already open, and there
+  // the trigger's own `aria-expanded` is the evidence.
+  if (!reportsExpanded(trigger)) return null;
   // More than one open list is ambiguous evidence, so none of them is used: a
   // dropdown left open elsewhere on the page must never answer this question.
   return portals.length === 1 ? (portals[0] ?? null) : null;

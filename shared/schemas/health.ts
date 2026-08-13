@@ -13,6 +13,16 @@ export const ollamaStatusSchema = z.object({
   /** Configured default model, and whether the daemon actually has it pulled. */
   selectedModel: z.string().optional(),
   selectedModelInstalled: z.boolean().optional(),
+  /**
+   * Every model the daemon actually has, by name.
+   *
+   * Reported so availability can be decided against the model the *caller* has
+   * configured rather than against the server's own default. Those are two
+   * different settings, and a live run refused to analyze a page because the
+   * server's default was missing while the model the request would actually
+   * have used was installed all along.
+   */
+  installedModels: z.array(z.string()).max(500).optional(),
   /** Present whenever `state` is not `connected`. Always actionable. */
   error: z
     .object({
