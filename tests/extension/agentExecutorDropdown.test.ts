@@ -57,13 +57,24 @@ async function handleFor(label: RegExp): Promise<string> {
   return element.elementId;
 }
 
+async function optionIdFor(
+  control: RegExp,
+  option: RegExp,
+): Promise<{ elementId: string; optionId: string }> {
+  const observed = await observePage();
+  const element = observed.elements.find((entry) => control.test(entry.label));
+  const choice = element?.options.find((entry) => option.test(entry.label));
+  if (!element || !choice) throw new Error(`no observed option matching ${String(option)}`);
+  return { elementId: element.elementId, optionId: choice.optionId };
+}
+
 const call = (patch: Record<string, unknown>) => agentToolCallSchema.parse(patch);
 
 // ---------------------------------------------------------------------------
 describe('the executor refuses to type into anything that answers from a list', () => {
   it('refuses a native select, and leaves it on its placeholder', async () => {
     document.body.innerHTML = STATE_SELECT;
-    const elementId = await handleFor(/state/i);
+    const { elementId } = await optionIdFor(/state/i, /^New Jersey$/i);
 
     const outcome = await executeAgentTool(call({ tool: 'type', elementId, value: 'New Jersey' }));
 
@@ -109,14 +120,13 @@ describe('the executor refuses to type into anything that answers from a list', 
 describe('a choice is resolved against the live menu and actually taken', () => {
   it('selects the option the handle names, and the form holds it', async () => {
     document.body.innerHTML = STATE_SELECT;
-    const elementId = await handleFor(/state/i);
+    const { elementId, optionId } = await optionIdFor(/state/i, /^New Jersey$/i);
 
     const outcome = await executeAgentTool(
       call({
         tool: 'select_option',
         elementId,
-        optionId: `${elementId}::option::2`,
-        value: 'New Jersey',
+        optionId,
       }),
     );
 
@@ -136,24 +146,24 @@ describe('a choice is resolved against the live menu and actually taken', () => 
 
   it('refuses a handle naming a row the list no longer has', async () => {
     document.body.innerHTML = STATE_SELECT;
-    const elementId = await handleFor(/state/i);
+    const { elementId, optionId } = await optionIdFor(/state/i, /^New Jersey$/i);
+    document.querySelector('option[value="NJ"]')?.remove();
 
     const outcome = await executeAgentTool(
       call({
         tool: 'select_option',
         elementId,
-        optionId: `${elementId}::option::9`,
-        value: 'New Jersey',
+        optionId,
       }),
     );
 
     expect(outcome.executed).toBe(false);
-    expect(outcome.errorCode).toBe('OPTION_HANDLE_UNKNOWN');
+    expect(outcome.errorCode).toBe('STALE_OPTION_REFERENCE');
     // Nothing was chosen in its place, which is the whole point of refusing.
     expect((document.getElementById('state') as HTMLSelectElement).value).toBe('');
   });
 
-  it('follows the value when the list has shifted under the handle', async () => {
+  it('rejects the stale option when the list has shifted under the handle', async () => {
     // The rows moved between the observation and the click — a region list
     // rebuilt after Country was answered. Row 2 is now New York, and the
     // decision meant New Jersey. The answer is followed; the index is not.
@@ -164,19 +174,22 @@ describe('a choice is resolved against the live menu and actually taken', () => 
         <option value="NJ">New Jersey</option>
         <option value="NY">New York</option>
       </select>`;
-    const elementId = await handleFor(/state/i);
+    const { elementId, optionId } = await optionIdFor(/state/i, /^New Jersey$/i);
+    const select = document.getElementById('state') as HTMLSelectElement;
+    select.insertBefore(select.options[2]!, select.options[1]!);
 
     const outcome = await executeAgentTool(
       call({
         tool: 'select_option',
         elementId,
-        optionId: `${elementId}::option::2`,
+        optionId,
         value: 'New Jersey',
       }),
     );
 
-    expect(outcome.executed).toBe(true);
-    expect((document.getElementById('state') as HTMLSelectElement).value).toBe('NJ');
+    expect(outcome.executed).toBe(false);
+    expect(outcome.errorCode).toBe('STALE_OPTION_REFERENCE');
+    expect((document.getElementById('state') as HTMLSelectElement).value).toBe('');
   });
 
   it('refuses when neither the handle nor the value names a live choice', async () => {
@@ -193,7 +206,7 @@ describe('a choice is resolved against the live menu and actually taken', () => 
     );
 
     expect(outcome.executed).toBe(false);
-    expect(outcome.errorCode).toBe('OPTION_HANDLE_UNKNOWN');
+    expect(outcome.errorCode).toBe('INVALID_OPTION_ID');
     expect((document.getElementById('state') as HTMLSelectElement).value).toBe('');
   });
 

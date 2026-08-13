@@ -1,6 +1,7 @@
 import {
   AGENT_TOOLS,
   DATE_INTERACTION_TYPES,
+  DROPDOWN_INTERACTION_TYPES,
   MUTATING_TOOLS,
   OPTION_INTERACTION_TYPES,
   agentDecisionSchema,
@@ -158,7 +159,12 @@ export function checkDecision(
       return {
         allowed: false,
         code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
-        suggestedTool: element.dropdownState === 'OPEN' ? 'select_option' : 'open_dropdown',
+        suggestedTool:
+          element.interactionType === 'CHECKBOX_GROUP'
+            ? 'select_options'
+            : element.interactionType === 'RADIO_GROUP' || element.dropdownState === 'OPEN'
+              ? 'select_option'
+              : 'open_dropdown',
         reason: `"${element.label}" answers from a list, so it cannot be typed into. Open it and choose one of the choices it offers.`,
       };
     }
@@ -249,6 +255,19 @@ export function checkDecision(
   // observation has never seen cannot be selected from, because the choice
   // would be one the agent imagined rather than one the page offered.
   if (element && action.tool === 'select_option') {
+    if (
+      !['NATIVE_SELECT', 'CUSTOM_SELECT', 'SEARCHABLE_COMBOBOX', 'RADIO_GROUP'].includes(
+        element.interactionType,
+      )
+    ) {
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        suggestedTool:
+          element.interactionType === 'CHECKBOX_GROUP' ? 'select_options' : 'set_checked',
+        reason: `select_option is not legal for "${element.label}" (${element.interactionType}).`,
+      };
+    }
     if (element.options.length === 0) {
       return {
         allowed: false,
@@ -259,18 +278,91 @@ export function checkDecision(
     }
     // Named by a handle this observation minted, when one was given. A handle
     // from an earlier observation, or an invented one, names nothing.
-    if (action.optionId && !element.options.some((option) => option.optionId === action.optionId)) {
+    if (!action.optionId) {
       return {
         allowed: false,
-        code: 'OPTION_HANDLE_UNKNOWN',
+        code: 'INVALID_OPTION_ID',
+        reason: `select_option must name one of "${element.label}"'s current optionIds.`,
+      };
+    }
+    if (!element.options.some((option) => option.optionId === action.optionId)) {
+      return {
+        allowed: false,
+        code: 'INVALID_OPTION_ID',
         reason: `That choice is not one "${element.label}" is currently offering.`,
       };
     }
   }
 
+  if (element && action.tool === 'select_options') {
+    if (element.interactionType !== 'CHECKBOX_GROUP') {
+      return {
+        allowed: false,
+        code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+        suggestedTool: 'select_option',
+        reason: `select_options is only legal for a checkbox group.`,
+      };
+    }
+    const optionIds = action.optionIds ?? [];
+    if (optionIds.length === 0 || optionIds.some((id) => !element.options.some((option) => option.optionId === id))) {
+      return {
+        allowed: false,
+        code: 'INVALID_OPTION_ID',
+        reason: `Every checkbox choice must be an optionId from "${element.label}"'s current choices.`,
+      };
+    }
+  }
+
+  if (element && action.tool === 'set_checked' && element.interactionType !== 'SINGLE_CHECKBOX') {
+    return {
+      allowed: false,
+      code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+      suggestedTool: element.interactionType === 'CHECKBOX_GROUP' ? 'select_options' : undefined,
+      reason: 'set_checked is only legal for one independent checkbox.',
+    };
+  }
+
+  if (
+    element &&
+    action.tool === 'click' &&
+    [...OPTION_INTERACTION_TYPES].includes(element.interactionType)
+  ) {
+    return {
+      allowed: false,
+      code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+      suggestedTool:
+        element.interactionType === 'CHECKBOX_GROUP' ? 'select_options' : 'select_option',
+      reason: 'A choice group must be operated through its observed optionIds.',
+    };
+  }
+
+  if (
+    element &&
+    action.tool === 'get_options' &&
+    !(OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType)
+  ) {
+    return {
+      allowed: false,
+      code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+      reason: 'get_options is only legal for a choice control.',
+    };
+  }
+
+  if (
+    element &&
+    action.tool === 'clear' &&
+    (OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType)
+  ) {
+    return {
+      allowed: false,
+      code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+      reason: 'A choice control is changed only through its actual option nodes.',
+    };
+  }
+
   // Opening is only meaningful for something that opens.
   if (element && action.tool === 'open_dropdown') {
-    if (!(OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType)) {
+    if (!(DROPDOWN_INTERACTION_TYPES as readonly string[]).includes(element.interactionType)) {
       return {
         allowed: false,
         code: 'WRONG_TOOL_FOR_CONTROL_TYPE',
@@ -324,11 +416,20 @@ export function checkDecision(
   // allowed to compose rather than restate, and it is grounded elsewhere.
   if (element && element.policy === 'KNOWN_FACT' && isValueBearing(action)) {
     const trusted = trustedValues.get(element.elementId);
-    const offered = element.options.map((option) => option.label);
-    const value = action.value ?? '';
-    const acceptable =
-      (trusted !== undefined && sameAnswer(value, trusted)) ||
-      offered.some((option) => sameAnswer(option, value));
+    const selected = action.optionId
+      ? element.options.filter((option) => option.optionId === action.optionId)
+      : action.optionIds
+        ? element.options.filter((option) => action.optionIds?.includes(option.optionId))
+        : [];
+    const value =
+      action.tool === 'set_checked' && action.checked !== undefined
+        ? action.checked
+          ? 'Yes'
+          : 'No'
+        : (action.value ?? '');
+    const acceptable = selected.length > 0
+      ? trusted !== undefined
+      : trusted !== undefined && sameAnswer(value, trusted);
     if (!acceptable) {
       return {
         allowed: false,
@@ -336,7 +437,12 @@ export function checkDecision(
       };
     }
   }
-  if (element && element.policy === 'UNKNOWN_FACT' && isValueBearing(action)) {
+  if (
+    element &&
+    element.policy === 'UNKNOWN_FACT' &&
+    (isValueBearing(action) ||
+      (element.interactionType === 'SINGLE_CHECKBOX' && action.tool === 'click'))
+  ) {
     return {
       allowed: false,
       reason: `Nothing saved answers "${element.label}", so the agent must ask rather than write.`,
@@ -561,8 +667,10 @@ function chronologyConflict(
 /** Whether this call writes a value the applicant would be stating as fact. */
 function isValueBearing(action: AgentToolCall): boolean {
   return (
-    (action.tool === 'type' || action.tool === 'select_option') &&
-    (action.value ?? '').trim().length > 0
+    ((action.tool === 'type' && (action.value ?? '').trim().length > 0) ||
+      (action.tool === 'select_option' && Boolean(action.optionId)) ||
+      (action.tool === 'select_options' && (action.optionIds?.length ?? 0) > 0) ||
+      (action.tool === 'set_checked' && action.checked !== undefined))
   );
 }
 
@@ -598,7 +706,7 @@ function sameAnswer(left: string, right: string): boolean {
   const a = reduce(left);
   const b = reduce(right);
   if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
+  return a === b;
 }
 
 function findElement(observation: PageObservation, handle: string): ObservedElement | undefined {

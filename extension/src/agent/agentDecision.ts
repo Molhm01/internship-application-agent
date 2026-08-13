@@ -4,9 +4,7 @@ import {
   applyDayConvention,
   dateQuestionFor,
   describeShape,
-  displaysSelection,
   formatNormalizedDate,
-  isPlaceholderSelection,
   normalizeStoredDate,
   type AgentDecision,
   type DayConvention,
@@ -14,6 +12,7 @@ import {
   type PageObservation,
 } from '@internship-agent/shared';
 import type { AgentHistory } from './agentHistory.js';
+import { matchActualChoice, matchActualChoices } from './choiceMatcher.js';
 
 /**
  * Choosing the one next thing to do.
@@ -84,16 +83,10 @@ function isOptionControl(element: ObservedElement): boolean {
  * similarity score — a near miss on a dropdown silently submits a wrong answer.
  */
 function chooseOffered(element: ObservedElement): { optionId: string; label: string } | undefined {
-  const wanted = element.proposedValue ?? '';
-  if (!wanted.trim()) return undefined;
-  const choices = element.options.filter(
-    (option) => !option.disabled && !isPlaceholderSelection(option.label),
-  );
-  const match =
-    choices.find((option) => displaysSelection(option.label, wanted)) ??
-    choices.find((option) => displaysSelection(wanted, option.label));
-  if (!match?.optionId) return undefined;
-  return { optionId: match.optionId, label: match.label };
+  const match = matchActualChoice(element);
+  return match.optionId && match.label
+    ? { optionId: match.optionId, label: match.label }
+    : undefined;
 }
 
 /** A control the agent may write to without asking anybody. */
@@ -284,14 +277,14 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
   // applicant not having said, and an unticked box is already the right
   // rendering of that.
   for (const element of live) {
-    if (element.kind !== 'checkbox') continue;
+    if (element.interactionType !== 'SINGLE_CHECKBOX') continue;
     if (!outstanding(element) || !answerable(element)) continue;
     if (!isAffirmative(element.proposedValue ?? '')) continue;
     if (history.exhausted('click', element.label)) continue;
     return agentDecisionSchema.parse({
       kind: 'ACTION',
       reason: `"${element.label}" is stated by the saved record.`,
-      action: { tool: 'click', elementId: element.elementId },
+      action: { tool: 'set_checked', elementId: element.elementId, checked: true },
     });
   }
 
@@ -315,16 +308,22 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
     // the menu actually contained. That is the whole interaction contract, and
     // it is why an answer can never be typed in instead.
     if (element.options.length === 0) {
-      if (history.exhausted('open_dropdown', element.label)) continue;
+      const readTool =
+        element.interactionType === 'RADIO_GROUP' || element.interactionType === 'CHECKBOX_GROUP'
+          ? 'get_options'
+          : 'open_dropdown';
+      if (history.exhausted(readTool, element.label)) continue;
       return agentDecisionSchema.parse({
         kind: 'ACTION',
         reason: `"${element.label}" is unanswered; its choices have to be read before one can be chosen.`,
-        action: { tool: 'open_dropdown', elementId: element.elementId },
+        action: { tool: readTool, elementId: element.elementId },
       });
     }
 
     // The list is in hand. Choose one of *these* choices, by its handle.
-    const match = chooseOffered(element);
+    const multiMatches =
+      element.interactionType === 'CHECKBOX_GROUP' ? matchActualChoices(element) : [];
+    const match = element.interactionType === 'CHECKBOX_GROUP' ? multiMatches[0] : chooseOffered(element);
     if (!match) {
       // A searchable list that has not been searched yet.
       //
@@ -366,10 +365,11 @@ export function decideDeterministically(input: DecisionInput): AgentDecision {
       kind: 'ACTION',
       reason: `"${element.label}" offers a choice matching the saved answer.`,
       action: {
-        tool: 'select_option',
+        tool: element.interactionType === 'CHECKBOX_GROUP' ? 'select_options' : 'select_option',
         elementId: element.elementId,
-        optionId: match.optionId,
-        value: match.label,
+        ...(element.interactionType === 'CHECKBOX_GROUP'
+          ? { optionIds: multiMatches.map((choice) => choice.optionId!) }
+          : { optionId: match.optionId }),
       },
     });
   }
@@ -456,6 +456,10 @@ export function buildDecisionPrompt(input: DecisionInput): string {
       required: element.required,
       policy: element.policy,
       hasSavedAnswer: (element.proposedValue ?? '').length > 0,
+      candidateContext:
+        (element.proposedValue ?? '').length > 0
+          ? { trustedAnswer: element.proposedValue }
+          : { trustedAnswerAvailable: false },
       // The control's stated format, and how precisely the record knows this
       // date. Both are needed for the model to tell "write it" from "ask", and
       // neither reveals the date itself.
@@ -466,7 +470,12 @@ export function buildDecisionPrompt(input: DecisionInput): string {
       optionsKnown: element.optionsKnown,
       optionCount: element.options.length,
       // The handles a select_option may name. Nothing else is selectable.
-      optionIds: element.options.slice(0, 60).map((option) => option.optionId),
+      choices: element.options.slice(0, 60).map((option) => ({
+        optionId: option.optionId,
+        label: option.label,
+        disabled: option.disabled,
+        selected: option.selected,
+      })),
       // The only element a query may be typed into for this control.
       searchInputId: element.searchInputId,
       searchInputFor: element.searchInputFor,
@@ -489,7 +498,7 @@ export function buildDecisionPrompt(input: DecisionInput): string {
     '- Ask the user when a required fact is not available.',
     '',
     'DROPDOWNS — these are enforced in code, not merely requested:',
-    '- For interactionType NATIVE_SELECT or CUSTOM_SELECT: NEVER call type.',
+    '- For interactionType NATIVE_SELECT, CUSTOM_SELECT, RADIO_GROUP, or CHECKBOX_GROUP: NEVER call type.',
     '  Call open_dropdown first, look at the options the next observation',
     '  reports, then call select_option with one of their optionIds.',
     '- For SEARCHABLE_COMBOBOX: open first. The opened menu reports its own',
@@ -499,6 +508,8 @@ export function buildDecisionPrompt(input: DecisionInput): string {
     '  an option is selected and verified.',
     '- dropdownState tells you where a control is: CLOSED (open it), OPEN (read',
     '  its options and choose), SEARCHING (a query is already narrowing it).',
+    '- RADIO_GROUP uses get_options/select_option. CHECKBOX_GROUP uses get_options/select_options.',
+    '- SINGLE_CHECKBOX uses set_checked or click.',
     '- Never invent an option. select_option takes an optionId from the current',
     '  observation; anything else names nothing and will be refused.',
     '- If the opened list offers no match, ask the user. Do not type the answer.',
@@ -516,7 +527,7 @@ export function buildDecisionPrompt(input: DecisionInput): string {
     '  form’s own "I currently work here" control instead.',
     '',
     'TOOLS: observe_page, click, type, set_date, clear, focus, open_dropdown,',
-    'get_options, select_option, scroll_page, scroll_element, wait_for_change,',
+    'get_options, select_option, select_options, set_checked, scroll_page, scroll_element, wait_for_change,',
     'click_add, upload_document, click_next, ask_user, finish_for_review',
     '',
     'Answer with one JSON object: {"kind","reason","action":{"tool","elementId","value"}}',

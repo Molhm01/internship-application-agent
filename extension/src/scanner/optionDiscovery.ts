@@ -154,7 +154,9 @@ export function readSelectedText(root: HTMLElement): string {
   );
   if (display?.textContent) return display.textContent.replace(/\s+/g, ' ').trim();
 
-  const chosen = root.querySelector<HTMLElement>('[aria-selected="true"],[data-selected="true"]');
+  const chosen = root.querySelector<HTMLElement>(
+    '[aria-selected="true"],[aria-checked="true"],[data-selected="true"]',
+  );
   if (chosen?.textContent) return chosen.textContent.replace(/\s+/g, ' ').trim();
 
   const hidden = root.querySelector<HTMLInputElement>('input[type="hidden"]');

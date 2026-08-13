@@ -13,6 +13,8 @@ import {
   generationCancelResponseSchema,
   formAnalysisRequestSchema,
   formAnalysisResponseSchema,
+  agentChoiceDecisionSchema,
+  agentChoiceRequestSchema,
 } from '@internship-agent/shared';
 import { z } from 'zod';
 import { OllamaGenerationError } from '../ollama/client.js';
@@ -21,6 +23,49 @@ import { fail, sendValidated } from './responses.js';
 import { parseBody } from '../validation/request.js';
 
 export function registerAiRoutes(app: FastifyInstance, ctx: ServerContext): void {
+  app.post('/ai/choose-agent-option', async (request, reply) => {
+    const parsed = parseBody(agentChoiceRequestSchema, request.body);
+    if (!parsed.ok) return reply.status(422).send({ ok: false, error: parsed.error });
+    try {
+      const response = await ctx.ollama.generateStructured({
+        model: ctx.ollama.defaultModel,
+        system: [
+          'You choose answers for job-application multiple-choice controls.',
+          'Use only the trusted candidate context and the actual webpage choices.',
+          'Never invent personal facts. If the context does not answer the question, return ASK_USER.',
+          'For SELECT, copy exactly one optionId from the supplied choices, or optionIds for a checkbox group. Return JSON only.',
+        ].join(' '),
+        prompt: JSON.stringify(parsed.data),
+        temperature: 0,
+        maximumTokens: 300,
+        timeoutMs: 30_000,
+      });
+      const start = response.content.indexOf('{');
+      const end = response.content.lastIndexOf('}');
+      const raw: unknown = JSON.parse(
+        start >= 0 && end > start ? response.content.slice(start, end + 1) : response.content,
+      );
+      const decision = agentChoiceDecisionSchema.parse(raw);
+      const selectedIds = decision.optionIds ?? (decision.optionId ? [decision.optionId] : []);
+      if (
+        decision.decision === 'SELECT' &&
+        selectedIds.some(
+          (optionId) => !parsed.data.choices.some((choice) => choice.optionId === optionId),
+        )
+      ) {
+        return fail(reply, {
+          code: 'INVALID_OPTION_ID',
+          message: 'The model named an optionId outside the choices it received.',
+        });
+      }
+      return sendValidated(reply, agentChoiceDecisionSchema, decision);
+    } catch (cause) {
+      return fail(reply, {
+        code: 'INVALID_MODEL_OUTPUT',
+        message: cause instanceof Error ? cause.message : 'The option decision was invalid.',
+      });
+    }
+  });
   app.post('/ai/test-generation', async (request, reply) => {
     const parsed = parseBody(aiGenerationTestRequestSchema, request.body);
     if ('error' in parsed) return fail(reply, parsed.error);

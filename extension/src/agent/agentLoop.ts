@@ -18,6 +18,7 @@ import {
   logicalFieldKey,
   OPTION_INTERACTION_TYPES,
   type AgentActionTrace,
+  type AgentChoiceRequest,
   type ObservedFieldStateName,
   type AgentDecision,
   type AgentDropdownTrace,
@@ -39,6 +40,11 @@ import { decideDeterministically, type DecisionInput } from './agentDecision.js'
 import { evaluateReady, isActionable, isLive, needsUser, describeNotReady } from './agentReady.js';
 import { checkDecision } from './agentSafety.js';
 import { AgentHistory } from './agentHistory.js';
+import {
+  choiceRequestFor,
+  matchActualChoice,
+  validateModelChoiceDecision,
+} from './choiceMatcher.js';
 
 /**
  * Observe → decide → act → observe → verify → repeat.
@@ -79,6 +85,8 @@ export interface AgentLoopHost {
   execute(call: AgentToolCall): Promise<ToolExecutionResult>;
   /** Chooses one action. Deterministic policy unless a model is configured. */
   decide?(input: DecisionInput): Promise<AgentDecision>;
+  /** Level-4 reasoning for one unresolved known multiple-choice question. */
+  chooseChoice?(request: AgentChoiceRequest): Promise<unknown>;
   /** Values the extension trusts for this observation, by element handle. */
   trustedValues(observation: PageObservation): Promise<ReadonlyMap<string, string>>;
   /**
@@ -118,6 +126,72 @@ export interface AgentLoopHost {
   profileContext?: AgentRunTrace['profileContext'];
 }
 
+export async function decideWithChoiceFallback(
+  input: DecisionInput,
+  chooseChoice?: AgentLoopHost['chooseChoice'],
+): Promise<AgentDecision> {
+  const deterministic = decideDeterministically(input);
+  if (
+    !chooseChoice ||
+    deterministic.kind !== 'ASK_USER' ||
+    deterministic.errorCode !== 'DROPDOWN_TARGET_NOT_FOUND' ||
+    !deterministic.elementId
+  ) {
+    return deterministic;
+  }
+  const element = input.observation.elements.find(
+    (candidate) => candidate.elementId === deterministic.elementId,
+  );
+  if (!element || element.policy !== 'KNOWN_FACT' || element.options.length === 0) {
+    return deterministic;
+  }
+  const request = choiceRequestFor(element);
+  const validation = validateModelChoiceDecision(request, await chooseChoice(request));
+  if (!validation.valid) {
+    if (validation.errorCode === 'INVALID_OPTION_ID') {
+      return {
+        kind: 'ACTION',
+        reason: validation.reason,
+        action: {
+          tool: element.interactionType === 'CHECKBOX_GROUP' ? 'select_options' : 'select_option',
+          elementId: element.elementId,
+          ...(element.interactionType === 'CHECKBOX_GROUP'
+            ? { optionIds: ['invalid-option-id'] }
+            : { optionId: 'invalid-option-id' }),
+        },
+      };
+    }
+    return {
+      kind: 'ASK_USER',
+      reason: validation.reason,
+      question: element.label,
+      elementId: element.elementId,
+      errorCode: validation.errorCode,
+    };
+  }
+  const selectedIds = validation.decision.optionIds ??
+    (validation.decision.optionId ? [validation.decision.optionId] : []);
+  if (validation.decision.decision === 'ASK_USER' || selectedIds.length === 0) {
+    return {
+      kind: 'ASK_USER',
+      reason: validation.decision.reason,
+      question: element.label,
+      elementId: element.elementId,
+    };
+  }
+  return {
+    kind: 'ACTION',
+    reason: validation.decision.reason,
+    action: {
+      tool: element.interactionType === 'CHECKBOX_GROUP' ? 'select_options' : 'select_option',
+      elementId: element.elementId,
+      ...(element.interactionType === 'CHECKBOX_GROUP'
+        ? { optionIds: selectedIds }
+        : { optionId: selectedIds[0] }),
+    },
+  };
+}
+
 /**
  * Did the action do what it claimed?
  *
@@ -149,6 +223,7 @@ function dropdownTraceFor(input: {
   requestedTool?: AgentTool;
   toolAllowed?: boolean;
   rejectionCode?: ErrorCode;
+  llmCalled?: boolean;
 }): AgentDropdownTrace {
   const { before, after, call, execution } = input;
   const now = after?.elements.find(
@@ -163,9 +238,15 @@ function dropdownTraceFor(input: {
     execution?.options.length ?? 0,
   );
   const chosen = call?.optionId;
+  const chosenIds = call?.optionIds ?? (chosen ? [chosen] : []);
+  const deterministicMatch = matchActualChoice(before).strategy;
   return agentDropdownTraceSchema.parse({
     elementId: before.elementId,
     controlType: before.interactionType,
+    fieldIntent: before.intent ?? '',
+    question: before.label,
+    required: before.required,
+    knownAnswerAvailable: before.policy === 'KNOWN_FACT' && Boolean(before.proposedValue?.trim()),
     currentDisplayState: before.currentValue.trim().length > 0 ? 'HAS_SELECTION' : 'PLACEHOLDER',
     ...(input.requestedTool ? { requestedTool: input.requestedTool } : {}),
     toolAllowed: input.toolAllowed ?? true,
@@ -173,6 +254,7 @@ function dropdownTraceFor(input: {
     // The tool resolved something to press, which is the only sense in which a
     // trigger is "found" from out here.
     triggerFound: execution?.executed ?? false,
+    openAttempted: call?.tool === 'open_dropdown',
     opened: (execution?.optionsSeen ?? 0) > 0 || (execution?.options.length ?? 0) > 0,
     menuFound: optionCount > 0,
     optionCount,
@@ -181,8 +263,25 @@ function dropdownTraceFor(input: {
     // can honestly assert without measuring the page.
     scrollable: optionCount > 10,
     ...(chosen ? { optionIdChosen: chosen } : {}),
+    optionIdsChosen: chosenIds,
+    matchingStrategy: input.llmCalled
+      ? 'LLM'
+      : deterministicMatch === 'UNKNOWN'
+        ? 'UNKNOWN'
+        : deterministicMatch,
+    llmCalled: input.llmCalled ?? false,
     semanticMatchType: matchTypeOf(before, chosen),
-    optionClicked: call?.tool === 'select_option' && (execution?.executed ?? false),
+    optionClicked:
+      (call?.tool === 'select_option' || call?.tool === 'select_options') &&
+      (execution?.executed ?? false),
+    actualOptionNodeFound:
+      (call?.tool === 'select_option' || call?.tool === 'select_options') &&
+      Boolean(execution) &&
+      (execution?.errorCode !== 'INVALID_OPTION_ID' &&
+        execution?.errorCode !== 'STALE_OPTION_REFERENCE'),
+    clickExecuted:
+      (call?.tool === 'select_option' || call?.tool === 'select_options') &&
+      (execution?.executed ?? false),
     frameworkEventsDispatched: execution?.executed ?? false,
     displayedSelectionChanged: now !== undefined && now.currentValue !== before.currentValue,
     // The pair that makes the live failure legible in an exported trace. A
@@ -190,8 +289,10 @@ function dropdownTraceFor(input: {
     // `displayedSelectionChanged: true, selectionCommitted: false`, which is
     // the whole defect in two booleans.
     selectionCommitted: now?.selectionCommitted ?? false,
+    committedValueDetected: now?.selectionCommitted ?? false,
     validationErrorPresent: (now?.validationError ?? '').trim().length > 0,
     verified: input.verification === 'VERIFIED',
+    reobservationPerformed: Boolean(after),
     finalStatus: input.verification ?? 'NOT_APPLICABLE',
   });
 }
@@ -505,7 +606,12 @@ function verify(
           'STALE_ELEMENT',
         );
       }
-      const wanted = call.value ?? '';
+      const wanted =
+        call.value ??
+        (call.optionId
+          ? before.options.find((option) => option.optionId === call.optionId)?.label
+          : '') ??
+        '';
       if (!wanted.trim()) return verdict('NOT_APPLICABLE', 'NONE', 'UNKNOWN', 'UNKNOWN');
 
       // ---- A list control is verified against the form, not the label. -----
@@ -594,6 +700,51 @@ function verify(
           ? 'ACTION_VERIFICATION_FAILED'
           : 'TEXT_VALUE_NOT_COMMITTED',
       );
+    }
+    case 'select_options': {
+      if (!before) {
+        return verdict('NOT_VERIFIED', 'OPTION_COMMITMENT', 'UNKNOWN', 'UNKNOWN', 'STALE_ELEMENT');
+      }
+      const now = findLogicalField(after.elements, before);
+      if (!now) {
+        return verdict('NOT_VERIFIED', 'OPTION_COMMITMENT', 'COMMITTED', 'NOT_FOUND', 'STALE_ELEMENT');
+      }
+      if (now.validationError.trim().length > 0 || !now.selectionCommitted) {
+        return verdict(
+          'VERIFICATION_FAILED',
+          'OPTION_COMMITMENT',
+          'COMMITTED',
+          now.validationError ? 'REJECTED_BY_FORM' : 'PLACEHOLDER',
+          'OPTION_SELECTION_NOT_COMMITTED',
+        );
+      }
+      const wanted = new Set(
+        (call.optionIds ?? [])
+          .map((id) => before.options.find((option) => option.optionId === id)?.label)
+          .filter((label): label is string => Boolean(label)),
+      );
+      const selected = now.options.filter((option) => option.selected).map((option) => option.label);
+      const allCommitted = [...wanted].every((label) =>
+        selected.some((actual) => displaysSelection(actual, label)),
+      );
+      return allCommitted
+        ? verdict('VERIFIED', 'OPTION_COMMITMENT', 'COMMITTED', 'COMMITTED')
+        : verdict(
+            'VERIFICATION_FAILED',
+            'OPTION_COMMITMENT',
+            'COMMITTED',
+            'HOLDS_OTHER',
+            'OPTION_SELECTION_NOT_COMMITTED',
+          );
+    }
+    case 'set_checked': {
+      if (!before) return verdict('NOT_VERIFIED', 'TEXT_VALUE', 'UNKNOWN', 'UNKNOWN', 'STALE_ELEMENT');
+      const now = findLogicalField(after.elements, before);
+      if (!now) return verdict('NOT_VERIFIED', 'TEXT_VALUE', 'HOLDS_EXPECTED', 'NOT_FOUND', 'STALE_ELEMENT');
+      const checked = now.currentValue.trim().length > 0;
+      return checked === call.checked
+        ? verdict('VERIFIED', 'TEXT_VALUE', 'HOLDS_EXPECTED', 'HOLDS_EXPECTED')
+        : verdict('VERIFICATION_FAILED', 'TEXT_VALUE', 'HOLDS_EXPECTED', 'HOLDS_OTHER', 'SELECTION_NOT_COMMITTED');
     }
     case 'click_add': {
       // The page grew a block, or it did not. `pageChanged` here is the block
@@ -897,6 +1048,13 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
 
     const trustedValues = await host.trustedValues(observation);
     const input: DecisionInput = { observation, history, trustedValues, dayConvention };
+    const preview = !host.decide && host.chooseChoice ? decideDeterministically(input) : undefined;
+    const choiceLlmCalled = Boolean(
+      host.chooseChoice &&
+        preview?.kind === 'ASK_USER' &&
+        preview.errorCode === 'DROPDOWN_TARGET_NOT_FOUND' &&
+        preview.elementId,
+    );
 
     // ---- Ask, and record that we asked. ------------------------------------
     //
@@ -904,12 +1062,20 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     // a decision was ever requested. The live failure could not be diagnosed
     // because the run logged one summary line and nothing about the cycle that
     // produced it.
-    const provider: 'deterministic' | 'model' = host.decide ? 'model' : 'deterministic';
+    const provider: 'deterministic' | 'model' =
+      host.decide || host.chooseChoice ? 'model' : 'deterministic';
     const decisionStarted = Date.now();
     mark('AGENT_DECISION_REQUEST_STARTED', step, observation, { decisionProvider: provider });
     let decided: AgentDecision;
     try {
-      decided = host.decide ? await host.decide(input) : decideDeterministically(input);
+      decided = host.decide
+        ? await host.decide(input)
+        : await decideWithChoiceFallback(
+            input,
+            host.chooseChoice
+              ? (request) => host.chooseChoice!(request)
+              : undefined,
+          );
       decisionProviderCalled = true;
       mark('AGENT_DECISION_REQUEST_FINISHED', step, observation, {
         decisionProvider: provider,
@@ -1032,6 +1198,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
                   ...(decided.action?.tool ? { requestedTool: decided.action.tool } : {}),
                   toolAllowed: false,
                   ...(verdict.code ? { rejectionCode: verdict.code } : {}),
+                  llmCalled: choiceLlmCalled,
                 }),
               }
             : {}),
@@ -1276,7 +1443,11 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         targetSection: target?.section ?? '',
         ...(target?.blockIndex === undefined ? {} : { targetBlockIndex: target.blockIndex }),
         executed: execution.executed,
-        wroteValue: (call.value ?? '').length > 0,
+        wroteValue:
+          (call.value ?? '').length > 0 ||
+          Boolean(call.optionId) ||
+          (call.optionIds?.length ?? 0) > 0 ||
+          call.checked !== undefined,
         optionsSeen: Math.max(execution.optionsSeen, execution.options.length),
         pageChanged: execution.pageChanged,
         verification,
@@ -1328,6 +1499,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
                 verification,
                 requestedTool: call.tool,
                 toolAllowed: true,
+                llmCalled: choiceLlmCalled,
               }),
             }
           : {}),
@@ -1485,7 +1657,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       verifiedCount: history.verifiedCount(),
       questionsAsked: history.allQuestions().length,
       submitActionCount: history.submitActionCount(),
-      decider: host.decide ? 'model' : 'deterministic',
+      decider: host.decide || host.chooseChoice ? 'model' : 'deterministic',
       decisionProviderCalled,
       ...initial,
       ...(lastReadiness ? { finalReadyEvaluation: lastReadiness } : {}),

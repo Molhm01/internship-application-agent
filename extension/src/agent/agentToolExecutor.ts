@@ -1,6 +1,6 @@
 import {
   DATE_INTERACTION_TYPES,
-  dropdownDirectiveSchema,
+  DROPDOWN_INTERACTION_TYPES,
   formatNormalizedDate,
   holdsWrittenValue,
   OPTION_INTERACTION_TYPES,
@@ -13,25 +13,26 @@ import { dateAccepted, dateRequirementOf, readDateValidation } from './dateContr
 import {
   closeControl,
   isVisible,
+  pressPointer,
   readSelectedText,
   resolveTrigger,
   waitFor,
 } from '../scanner/optionDiscovery.js';
 import { collectCustomOptions, collectNativeOptions } from '../dropdown/dropdownOptionCollector.js';
-import { runOneDropdown } from '../dropdown/dropdownEngine.js';
-import { scanDropdowns, resetDropdownRegistry } from '../dropdown/dropdownScanner.js';
 import { setNativeValue, dispatchValueEvents } from '../executor/domExecutor.js';
 import { findControl } from '../dependencies/dependencyDetector.js';
 import { countBlocks, findSection } from '../repeaters/repeaterScanner.js';
 import { createBlock } from '../repeaters/repeaterCreator.js';
 import {
   commitmentOf,
+  currentObservationId,
   elementForHandle,
   optionsOf,
   interactionTypeOf,
   SEARCH_HANDLE_SUFFIX,
   fieldForHandle,
   optionHandle,
+  optionReferenceForHandle,
   parseOptionHandle,
   repeaterKindForHandle,
 } from './pageObserver.js';
@@ -64,23 +65,6 @@ import {
  * of writing into a detached element.
  */
 
-/**
- * Questions where the form's own "Other" entry is the *true* answer when the
- * saved value is not listed, rather than a way to get something selected.
- *
- * Deliberately short. On Country, "Other" is a lie; on Area of Study it is what
- * an applicant would honestly pick for a subject the form does not enumerate,
- * and the free-text box beside it carries the real answer.
- */
-const OTHER_IS_AN_HONEST_ANSWER = new Set([
-  'field_of_study',
-  'area_of_study',
-  'major',
-  'school',
-  'institution',
-  'how_did_you_hear',
-]);
-
 /** How long a tool waits for the page to react before reporting what it saw. */
 const CHANGE_WAIT_MS = 1200;
 
@@ -111,146 +95,36 @@ function resolve(call: AgentToolCall): {
   };
 }
 
-/**
- * Registers one control with the dropdown engine and drives it to an answer.
- *
- * The engine addresses controls through its own frame-local registry, so the
- * element is registered immediately before it is driven rather than carried
- * over from an earlier pass — the same reason the observation is rebuilt each
- * cycle, applied to the engine's own handles.
- */
-async function driveDropdown(
-  field: DetectedField,
-  intendedAnswer: string,
-): Promise<ReturnType<typeof runOneDropdown>> {
-  resetDropdownRegistry();
-  const scanned = scanDropdowns(document, [
-    {
-      fieldId: field.id,
-      selector: field.selector,
-      label: field.label,
-      sectionContext: field.section ?? '',
-      ...(field.canonicalKey ? { canonicalQuestion: field.canonicalKey } : {}),
-      required: field.required,
-      knownOptions: [],
-    },
-  ]);
-  const target = scanned.find((entry) => entry.descriptor.scanFieldId === field.id) ?? scanned[0];
-  if (!target) throw new Error('CONTROL_NOT_FOUND');
-  return runOneDropdown(
-    dropdownDirectiveSchema.parse({
-      dropdownId: target.descriptor.dropdownId,
-      canonicalQuestion: field.canonicalKey ?? 'other_custom',
-      intendedAnswer,
-      intendedAnswerSource: 'profile_fact',
-      alternativeValues: [],
-      // The form's own "Other" entry is the honest answer for a subject or a
-      // school the list does not enumerate — and a lie on Country. The same
-      // closed list the old executor used, for the same reason.
-      allowOtherFallback: OTHER_IS_AN_HONEST_ANSWER.has(field.canonicalKey ?? ''),
-      requiresUserConfirmation: false,
-      sensitive: false,
-    }),
-  );
-}
-
-/**
- * The choices the control is offering at this instant, in the handle space the
- * call's handle was minted in.
- *
- * The subtlety that matters, and it is not cosmetic. Two things enumerate a
- * dropdown in this extension: the observer, which numbers every row including
- * the placeholder, and the engine's collector, which drops rows nobody may
- * choose. Their indices therefore disagree — `::option::2` is the third row to
- * one and the fourth to the other — and a handle resolved in the wrong space
- * selects the wrong answer while every log says it worked.
- *
- * Decisions are made against the *observation*, so the observation's reading is
- * the authority. The control is opened here with the collector — that is what
- * physically opens a menu — and then read back through `optionsOf`, the very
- * function that minted the handle being resolved.
- */
-async function liveChoices(
-  element: HTMLElement,
-  field: DetectedField,
-  handle: string,
-): Promise<{ labels: string[] }> {
-  // A `<select>` carries its list already; anything else has to be open before
-  // there is a list to read, and this is the "options actually enumerated"
-  // step of the contract.
-  if (!(element instanceof HTMLSelectElement)) await collectCustomOptions(element);
-  return { labels: optionsOf(field, handle).options.map((option) => option.label) };
-}
-
-/**
- * Which of those choices this call named.
- *
- * The handle is authoritative and is checked first: `e12::option::3` is the
- * fourth row, and if that row's text no longer agrees with the value the
- * decision carried, the list has moved and the handle is refused rather than
- * guessed around. A call carrying only a value is allowed, but only when the
- * live list actually contains it — the point being that in every path, the
- * string driven into the control is one the menu is offering right now.
- */
-function resolveChoice(
-  call: AgentToolCall,
-  labels: readonly string[],
-): { label: string; errorCode?: 'OPTION_HANDLE_UNKNOWN' | 'ANSWER_UNKNOWN'; reason: string } {
-  const same = (left: string, right: string): boolean =>
-    left
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim() ===
-    right
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim();
-
-  if (labels.length === 0) {
-    return {
-      label: '',
-      errorCode: 'OPTION_HANDLE_UNKNOWN',
-      reason: 'The control was opened and offered nothing to choose.',
-    };
-  }
-
-  const named = (call.value ?? '').trim();
+function staleOption(call: AgentToolCall): boolean {
   const parsed = call.optionId ? parseOptionHandle(call.optionId) : null;
-  if (parsed) {
-    const atIndex = labels[parsed.index];
-    if (atIndex === undefined) {
-      return {
-        label: '',
-        errorCode: 'OPTION_HANDLE_UNKNOWN',
-        reason: `The list now offers ${labels.length} choice(s) and that handle names row ${parsed.index}.`,
-      };
-    }
-    // The row is still the row the decision meant. Its *current* text is what
-    // gets driven, so a relabelled row is followed rather than fought.
-    if (!named || same(atIndex, named)) return { label: atIndex, reason: '' };
-    // The handle and the value disagree, which means the list changed under
-    // the observation. Fall back to the value only if the live list still
-    // offers it; otherwise refuse, because clicking row 3 regardless is how a
-    // run selects something nobody chose.
-    const byText = labels.find((label) => same(label, named));
-    if (byText !== undefined) return { label: byText, reason: '' };
-    return {
-      label: '',
-      errorCode: 'OPTION_HANDLE_UNKNOWN',
-      reason:
-        'The list changed since it was read, and neither the handle nor the value names a choice it is offering now.',
-    };
-  }
+  return parsed?.observationId !== undefined && parsed.observationId !== currentObservationId();
+}
 
-  if (!named) {
-    return { label: '', errorCode: 'ANSWER_UNKNOWN', reason: 'No option was named.' };
+function currentOption(call: AgentToolCall) {
+  if (!call.optionId || staleOption(call)) return null;
+  const reference = optionReferenceForHandle(call.optionId);
+  if (!reference || reference.elementId !== call.elementId) return null;
+  if (!reference.node.isConnected || !reference.owner.isConnected) return null;
+  if (
+    reference.node instanceof HTMLOptionElement &&
+    reference.node.index !== reference.index
+  ) {
+    return null;
   }
-  const byText = labels.find((label) => same(label, named));
-  if (byText !== undefined) return { label: byText, reason: '' };
-  // Not an exact row, but the engine's own matching is cleverer than this
-  // comparison — "NJ" for "New Jersey", a code beside a label — so the value is
-  // passed through for it to resolve against the same live list.
-  return { label: named, reason: '' };
+  const currentLabel =
+    reference.node instanceof HTMLInputElement
+      ? (reference.node.labels?.[0]?.textContent ??
+          reference.node.getAttribute('aria-label') ??
+          reference.node.value)
+      : (reference.node.textContent ?? '');
+  if (currentLabel.replace(/\s+/g, ' ').trim() !== reference.label) return null;
+  return reference;
+}
+
+function clickActualOption(node: HTMLElement): void {
+  node.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  if (!(node instanceof HTMLOptionElement)) node.focus?.();
+  pressPointer(node);
 }
 
 /**
@@ -283,8 +157,42 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
             begun,
           );
         }
-        const collected =
-          element instanceof HTMLSelectElement
+        const behaviour = interactionTypeOf(element);
+        if (
+          call.tool === 'open_dropdown' &&
+          !(DROPDOWN_INTERACTION_TYPES as readonly string[]).includes(behaviour)
+        ) {
+          return result(
+            call,
+            { errorCode: 'WRONG_TOOL_FOR_CONTROL_TYPE', reason: 'That choice control does not open a popup.' },
+            begun,
+          );
+        }
+        if (
+          call.tool === 'get_options' &&
+          !(OPTION_INTERACTION_TYPES as readonly string[]).includes(behaviour)
+        ) {
+          return result(
+            call,
+            { errorCode: 'WRONG_TOOL_FOR_CONTROL_TYPE', reason: 'That control does not expose choices.' },
+            begun,
+          );
+        }
+        const observedGroup =
+          behaviour === 'RADIO_GROUP' || behaviour === 'CHECKBOX_GROUP'
+            ? optionsOf(field, call.elementId ?? '').options
+            : null;
+        const collected = observedGroup
+          ? {
+              opened: true,
+              choices: observedGroup.map((option) => ({
+                displayedText: option.label,
+                value: option.value,
+                disabled: option.disabled,
+                selected: option.selected,
+              })),
+            }
+          : element instanceof HTMLSelectElement
             ? collectNativeOptions(element)
             : await collectCustomOptions(element);
         // Left open on purpose for `open_dropdown`: the next decision is
@@ -301,7 +209,9 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
               // Named by the handle of the control that offered them, so the
               // next decision selects a choice this read actually saw.
               optionId: optionHandle(call.elementId ?? '', index),
+              index,
               label: option.displayedText,
+              value: option.value,
               disabled: option.disabled,
               selected: option.selected,
             })),
@@ -384,7 +294,12 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
         const value = call.value ?? '';
         element.focus();
         setNativeValue(element, value);
-        dispatchValueEvents(element);
+        if (searchBox) {
+          element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        } else {
+          dispatchValueEvents(element);
+        }
         // Read back from the control's own state, here and not later.
         //
         // `holdsWrittenValue` rather than `===`, because a control that
@@ -584,28 +499,84 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
         // reading. What is driven is a string this run has just watched the
         // control offer — never one carried over from a previous cycle, and
         // never one composed from the profile.
-        const live = await liveChoices(element, field, call.elementId ?? '');
-        const resolved = resolveChoice(call, live.labels);
-        if (resolved.errorCode) {
+        if (!call.optionId) {
           return result(
             call,
             {
-              options: live.labels.map((label, index) => ({
-                optionId: optionHandle(call.elementId ?? '', index),
-                label,
-                disabled: false,
-                selected: false,
-              })),
-              optionsSeen: live.labels.length,
-              errorCode: resolved.errorCode,
-              reason: resolved.reason,
+              errorCode: 'INVALID_OPTION_ID',
+              reason: 'select_option requires an optionId from the current observation.',
             },
             begun,
           );
         }
-        const wanted = resolved.label;
+        if (staleOption(call)) {
+          return result(
+            call,
+            {
+              errorCode: 'STALE_OPTION_REFERENCE',
+              reason: 'That optionId belongs to an earlier menu observation.',
+            },
+            begun,
+          );
+        }
+        const registered = optionReferenceForHandle(call.optionId);
+        if (!registered) {
+          return result(
+            call,
+            {
+              errorCode: 'INVALID_OPTION_ID',
+              reason: 'That optionId was not minted by the current option observation.',
+            },
+            begun,
+          );
+        }
+        const reference = currentOption(call);
+        if (!reference) {
+          return result(
+            call,
+            {
+              errorCode: 'STALE_OPTION_REFERENCE',
+              reason: 'The exact option node changed or disappeared after it was observed.',
+            },
+            begun,
+          );
+        }
+        const behaviour = interactionTypeOf(element);
+        if (
+          ![
+            'NATIVE_SELECT',
+            'CUSTOM_SELECT',
+            'SEARCHABLE_COMBOBOX',
+            'RADIO_GROUP',
+          ].includes(behaviour)
+        ) {
+          return result(
+            call,
+            {
+              errorCode: 'WRONG_TOOL_FOR_CONTROL_TYPE',
+              reason: 'select_option is not legal for that control type.',
+            },
+            begun,
+          );
+        }
 
-        const outcome = await driveDropdown(field, wanted);
+        if (element instanceof HTMLSelectElement && reference.node instanceof HTMLOptionElement) {
+          element.scrollIntoView?.({ block: 'center' });
+          element.focus();
+          element.selectedIndex = reference.node.index;
+          dispatchValueEvents(element);
+          element.blur();
+        } else {
+          clickActualOption(reference.node);
+        }
+        await waitFor(
+          () => {
+            if (reference.node instanceof HTMLInputElement) return reference.node.checked || null;
+            const committed = commitmentOf(field, true);
+            return committed.committed && !committed.saysUnanswered ? true : null;
+          },
+          CHANGE_WAIT_MS,
+        );
 
         // ---- And then checked against what the form kept. ------------------
         //
@@ -617,36 +588,112 @@ export async function executeAgentTool(call: AgentToolCall): Promise<ToolExecuti
         // answer it did not keep is a failure at the moment it happens rather
         // than a success the next observation has to catch.
         const commitment = commitmentOf(field, true);
-        const held = outcome.verified && commitment.committed && !commitment.saysUnanswered;
-        const failureCode = outcome.errorCode
-          ? ('OPTION_NOT_FOUND' as const)
-          : outcome.verified && !held
-            ? ('SELECTION_NOT_COMMITTED' as const)
-            : undefined;
+        const selected =
+          reference.node instanceof HTMLOptionElement
+            ? reference.node.selected
+            : reference.node instanceof HTMLInputElement
+              ? reference.node.checked
+              : reference.node.getAttribute('aria-selected') === 'true' ||
+                reference.node.getAttribute('aria-checked') === 'true' ||
+                commitment.committed;
+        const held = selected && commitment.committed && !commitment.saysUnanswered;
+        const failureCode = held ? undefined : ('SELECTION_NOT_COMMITTED' as const);
         return result(
           call,
           {
-            executed: (outcome.selected || outcome.finalStatus === 'SKIPPED_ALREADY_VALID') && held,
+            executed: held,
             observedValue: readSelectedText(element).slice(0, 600),
-            // The count the engine actually read while choosing. The list
-            // itself is dropped on success; this is what proves the selection
-            // came from options that were there.
-            optionsSeen: Math.max(outcome.optionsFound, live.labels.length),
-            options: outcome.availableOptions.map((option, index) => ({
-              optionId: optionHandle(call.elementId ?? '', index),
-              label: option.displayedText,
-              disabled: option.disabled,
-              selected: option.selected,
-            })),
+            optionsSeen: 1,
             pageChanged: held,
             ...(failureCode ? { errorCode: failureCode } : {}),
             reason: held
-              ? outcome.reason
-              : failureCode === 'SELECTION_NOT_COMMITTED'
-                ? `The control shows the choice and the form has not kept it${
-                    commitment.validationError ? `: "${commitment.validationError}"` : '.'
-                  }`
-                : outcome.reason,
+              ? 'The exact observed DOM option was clicked and the control committed it.'
+              : `The exact option was clicked but the form has not kept it${
+                  commitment.validationError ? `: "${commitment.validationError}"` : '.'
+                }`,
+          },
+          begun,
+        );
+      }
+
+      case 'select_options': {
+        const { element, field } = resolve(call);
+        if (!element || !field || interactionTypeOf(element) !== 'CHECKBOX_GROUP') {
+          return result(
+            call,
+            { errorCode: 'WRONG_TOOL_FOR_CONTROL_TYPE', reason: 'select_options requires a checkbox group.' },
+            begun,
+          );
+        }
+        const optionIds = call.optionIds ?? [];
+        if (optionIds.length === 0) {
+          return result(call, { errorCode: 'INVALID_OPTION_ID', reason: 'No choices were provided.' }, begun);
+        }
+        const references = optionIds.map((optionId) => currentOption({ ...call, optionId }));
+        if (references.some((reference) => reference === null)) {
+          const hasUnregistered = optionIds.some(
+            (optionId) => !optionReferenceForHandle(optionId),
+          );
+          return result(
+            call,
+            {
+              errorCode: hasUnregistered
+                ? 'INVALID_OPTION_ID'
+                : 'STALE_OPTION_REFERENCE',
+              reason: 'At least one checkbox choice is not part of the current option observation.',
+            },
+            begun,
+          );
+        }
+        for (const reference of references) {
+          if (!(reference!.node instanceof HTMLInputElement) || reference!.node.type !== 'checkbox') {
+            return result(call, { errorCode: 'INVALID_OPTION_ID', reason: 'A named choice is not a checkbox.' }, begun);
+          }
+        }
+        for (const reference of references) {
+          const checkbox = reference!.node as HTMLInputElement;
+          if (!checkbox.checked) clickActualOption(checkbox);
+        }
+        const held = references.every(
+          (reference) => reference!.node instanceof HTMLInputElement && reference!.node.checked,
+        );
+        return result(
+          call,
+          {
+            executed: held,
+            optionsSeen: references.length,
+            pageChanged: held,
+            ...(held ? {} : { errorCode: 'SELECTION_NOT_COMMITTED' as const }),
+            reason: held
+              ? 'Every exact observed checkbox choice is checked.'
+              : 'At least one checkbox choice did not remain checked.',
+          },
+          begun,
+        );
+      }
+
+      case 'set_checked': {
+        const { element } = resolve(call);
+        if (!(element instanceof HTMLInputElement) || interactionTypeOf(element) !== 'SINGLE_CHECKBOX') {
+          return result(
+            call,
+            { errorCode: 'WRONG_TOOL_FOR_CONTROL_TYPE', reason: 'set_checked requires one checkbox.' },
+            begun,
+          );
+        }
+        const wanted = call.checked;
+        if (wanted === undefined) {
+          return result(call, { errorCode: 'ANSWER_UNKNOWN', reason: 'No checked state was provided.' }, begun);
+        }
+        if (element.checked !== wanted) clickActualOption(element);
+        return result(
+          call,
+          {
+            executed: element.checked === wanted,
+            pageChanged: element.checked === wanted,
+            observedValue: element.checked ? 'checked' : 'unchecked',
+            ...(element.checked === wanted ? {} : { errorCode: 'SELECTION_NOT_COMMITTED' as const }),
+            reason: element.checked === wanted ? 'The checkbox holds the requested state.' : 'The checkbox did not keep the requested state.',
           },
           begun,
         );

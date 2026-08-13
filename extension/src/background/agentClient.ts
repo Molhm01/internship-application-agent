@@ -29,6 +29,10 @@ import {
   type LatestDocumentListResponse,
   type LatestDocumentContentResponse,
   formAnalysisResponseSchema,
+  agentChoiceDecisionSchema,
+  agentChoiceRequestSchema,
+  type AgentChoiceDecision,
+  type AgentChoiceRequest,
   type AgentError,
   type ApprovedAnswer,
   type ApprovedAnswerInput,
@@ -281,6 +285,21 @@ export function analyzeForm(
     schema: formAnalysisResponseSchema,
     body,
     timeoutMs: body.timeoutMs + 5_000,
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/** One level-4 multiple-choice judgement over real webpage choices. */
+export function chooseAgentOption(
+  input: AgentChoiceRequest,
+  signal?: AbortSignal,
+): Promise<AgentResult<AgentChoiceDecision>> {
+  return request({
+    method: 'POST',
+    path: '/ai/choose-agent-option',
+    schema: agentChoiceDecisionSchema,
+    body: agentChoiceRequestSchema.parse(input),
+    timeoutMs: 35_000,
     ...(signal ? { signal } : {}),
   });
 }

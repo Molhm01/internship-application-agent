@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lincoln-style Agent choice controls</title>
+    <style>
+      body { font-family: sans-serif; margin: 24px; }
+      fieldset, .field { display: block; margin: 16px 0; padding: 10px; }
+      button[role="combobox"] { min-width: 260px; text-align: left; }
+      [role="listbox"] { background: white; border: 1px solid #777; padding: 4px; }
+      [role="option"] { cursor: pointer; list-style: none; padding: 6px; }
+      .error { color: #a00; }
+    </style>
+  </head>
+  <body>
+    <h1>Candidate Profile</h1>
+    <div class="field">
+      <label for="address">Address *</label><input id="address" name="address" required />
+      <label for="city">City *</label><input id="city" name="city" required />
+      <label for="postalCode">Postal Code *</label><input id="postalCode" name="postalCode" required />
+      <label for="phone">Phone *</label><input id="phone" name="phone" type="tel" required />
+    </div>
+    <div class="field">
+      <label for="country">Country *</label>
+      <select id="country" name="country" required>
+        <option value="">No Selection</option><option value="US">United States of America</option>
+      </select>
+      <label for="state">State/Province *</label>
+      <select id="state" name="state" required>
+        <option value="">No Selection</option><option value="NY">New York</option><option value="NJ">New Jersey</option>
+      </select>
+    </div>
+    <fieldset>
+      <legend>Are you willing to relocate?</legend>
+      <label><input type="radio" name="relocate" value="yes" required /> Yes</label>
+      <label><input type="radio" name="relocate" value="no" /> No</label>
+    </fieldset>
+    <div class="field">
+      <label for="previouslyEmployed">Have you previously worked for Lincoln Electric? *</label>
+      <select id="previouslyEmployed" name="previouslyEmployed" required><option value="">No Selection</option><option value="yes">Yes</option><option value="no">No</option></select>
+      <label for="restriction">Are you under an employment restriction? *</label>
+      <select id="restriction" name="restriction" required><option value="">No Selection</option><option value="yes">Yes</option><option value="no">No</option></select>
+      <label for="relatives">Do you have relatives employed by this company? *</label>
+      <select id="relatives" name="relatives" required><option value="">No Selection</option><option value="yes">Yes</option><option value="no">No</option></select>
+      <label for="relativeDetails">If yes, provide their name, location, and relationship</label>
+      <input id="relativeDetails" name="relativeDetails" data-depends-on="relatives" />
+    </div>
+
+    <h2>Work Experience</h2>
+    <label for="companyName">Company Name *</label><input id="companyName" name="companyName" required />
+    <label for="positionTitle">Position Title *</label><input id="positionTitle" name="positionTitle" required />
+    <div class="field" data-choice="employmentType"></div>
+    <div class="field" data-choice="reasonForLeaving"></div>
+
+    <h2>Education</h2>
+    <div class="field" data-choice="educationType"></div>
+    <label for="educationCountry">Education Country *</label>
+    <select id="educationCountry" name="educationCountry" required><option value="">No Selection</option><option value="US">United States</option><option value="CA">Canada</option></select>
+    <label for="educationState">Education State/Province *</label>
+    <select id="educationState" name="educationState" required><option value="">No Selection</option><option value="NJ">NJ</option><option value="NY">New York</option></select>
+    <div class="field" id="schoolField">
+      <label id="schoolLabel">School *</label>
+      <div id="school" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="schoolLabel">
+        <span data-selected-label>No Selection</span><input type="hidden" name="school" value="" />
+      </div>
+    </div>
+    <div class="field" data-choice="areaOfStudy"></div>
+    <label for="graduated">Graduated? *</label>
+    <select id="graduated" name="graduated" required><option value="">No Selection</option><option value="yes">Yes</option><option value="no">No</option></select>
+
+    <fieldset>
+      <legend>Which work arrangements can you accept?</legend>
+      <label><input type="checkbox" name="arrangements" value="remote" /> Remote</label>
+      <label><input type="checkbox" name="arrangements" value="hybrid" /> Hybrid</label>
+      <label><input type="checkbox" name="arrangements" value="onsite" /> On-site</label>
+    </fieldset>
+
+    <script>
+      const custom = {
+        employmentType: { label: 'Employment Type *', options: [['ft', 'Full Time'], ['self', 'Self Employed'], ['part', 'Part Time']] },
+        reasonForLeaving: { label: 'Reason for Leaving *', options: [['career', 'Career Growth'], ['school', 'Returned to School'], ['contract', 'Contract Ended']] },
+        educationType: { label: 'Education Type *', options: [['hs', 'High School'], ['bs', 'BS'], ['ms', 'MS']] },
+        areaOfStudy: { label: 'Area of Study *', options: [['cs', 'Computer Science'], ['ee', 'Electrical Engineering'], ['me', 'Mechanical Engineering']] },
+      };
+
+      function mountCustom(name, config) {
+        const host = document.querySelector(`[data-choice="${name}"]`);
+        host.innerHTML = `<label id="${name}Label">${config.label}</label><button id="${name}" type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="${name}Label"><span data-selected-label>No Selection</span><input type="hidden" name="${name}" value="" /></button><span id="${name}Error" class="error">${config.label.replace(' *', '')} is required</span>`;
+        const trigger = host.querySelector('button');
+        trigger.addEventListener('click', () => {
+          let menu = document.getElementById(`${name}Menu`);
+          if (menu) { menu.remove(); trigger.setAttribute('aria-expanded', 'false'); return; }
+          menu = document.createElement('ul');
+          menu.id = `${name}Menu`; menu.setAttribute('role', 'listbox'); menu.dataset.portalMenu = name;
+          trigger.setAttribute('aria-controls', menu.id); trigger.setAttribute('aria-expanded', 'true');
+          config.options.forEach(([value, label]) => {
+            const option = document.createElement('li'); option.setAttribute('role', 'option'); option.dataset.value = value; option.textContent = label;
+            option.addEventListener('click', () => {
+              trigger.querySelector('[data-selected-label]').textContent = label;
+              trigger.querySelector('input[type="hidden"]').value = value;
+              option.setAttribute('aria-selected', 'true');
+              document.getElementById(`${name}Error`).remove();
+              menu.remove(); trigger.setAttribute('aria-expanded', 'false');
+            });
+            menu.appendChild(option);
+          });
+          document.body.appendChild(menu);
+        });
+      }
+      Object.entries(custom).forEach(([name, config]) => mountCustom(name, config));
+
+      const school = document.getElementById('school');
+      school.addEventListener('click', () => {
+        if (document.getElementById('schoolMenu')) return;
+        const portal = document.createElement('div'); portal.id = 'schoolMenu'; portal.setAttribute('role', 'listbox'); portal.dataset.portalMenu = 'school';
+        const search = document.createElement('input'); search.type = 'search'; search.setAttribute('aria-label', 'Search schools'); portal.appendChild(search);
+        const schools = [['rutgers', 'Rutgers University'], ['njit', 'New Jersey Institute of Technology'], ['princeton', 'Princeton University']];
+        const render = () => {
+          portal.querySelectorAll('[role="option"]').forEach((node) => node.remove());
+          schools.filter(([, label]) => label.toLowerCase().includes(search.value.toLowerCase())).forEach(([value, label]) => {
+            const option = document.createElement('button'); option.type = 'button'; option.setAttribute('role', 'option'); option.dataset.value = value; option.textContent = label;
+            option.addEventListener('click', () => { school.querySelector('[data-selected-label]').textContent = label; school.querySelector('input[type="hidden"]').value = value; portal.remove(); school.setAttribute('aria-expanded', 'false'); });
+            portal.appendChild(option);
+          });
+        };
+        search.addEventListener('input', render); render(); document.body.appendChild(portal);
+        school.setAttribute('aria-controls', portal.id); school.setAttribute('aria-expanded', 'true');
+      });
+    </script>
+  </body>
+</html>

@@ -179,6 +179,7 @@ function observation(elements: ObservedElement[], id: string): PageObservation {
 const OPTIONS = [
   { optionId: 'e1::option::0', label: 'No Selection', disabled: false, selected: true },
   { optionId: 'e1::option::1', label: 'BS', disabled: false, selected: false },
+  { optionId: 'e1::option::2', label: 'No', disabled: false, selected: false },
 ];
 
 /**
@@ -375,7 +376,7 @@ describe('a placeholder never verifies as an answer', () => {
             durationMs: 1,
           }),
         ),
-      trustedValues: () => Promise.resolve(new Map([['e1', DEGREE]])),
+      trustedValues: () => Promise.resolve(new Map([['e1', chosen.value]])),
       decide: () =>
         Promise.resolve(
           agentDecisionSchema.parse({
@@ -399,7 +400,7 @@ describe('a placeholder never verifies as an answer', () => {
     // untouched dropdowns once reported as filled. "No" is inside "No
     // Selection" and is not what the control is holding.
     const step = await verifyOnce(
-      { optionId: 'e1::option::0', value: 'No' },
+      { optionId: 'e1::option::2', value: 'No' },
       { currentValue: 'No Selection', selectionCommitted: true },
     );
     expect(step?.verification).toBe('VERIFICATION_FAILED');

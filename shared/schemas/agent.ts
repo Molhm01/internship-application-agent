@@ -93,8 +93,12 @@ export const interactionTypeSchema = z.enum([
   'CUSTOM_SELECT',
   /** Opens a menu that contains its own search box. See the rules below. */
   'SEARCHABLE_COMBOBOX',
-  'CHECKBOX',
-  'RADIO',
+  /** A question answered by exactly one of several radio choices. */
+  'RADIO_GROUP',
+  /** A question answered by one or more checkbox choices. */
+  'CHECKBOX_GROUP',
+  /** One independent boolean checkbox or switch. */
+  'SINGLE_CHECKBOX',
   'DATE_INPUT',
   'FILE_UPLOAD',
   'BUTTON',
@@ -113,6 +117,15 @@ export type InteractionType = z.infer<typeof interactionTypeSchema>;
  * treated it as one would leave the field unanswered while reporting success.
  */
 export const OPTION_INTERACTION_TYPES: readonly InteractionType[] = [
+  'NATIVE_SELECT',
+  'CUSTOM_SELECT',
+  'SEARCHABLE_COMBOBOX',
+  'RADIO_GROUP',
+  'CHECKBOX_GROUP',
+];
+
+/** Choice controls that reveal their options by opening a popup. */
+export const DROPDOWN_INTERACTION_TYPES: readonly InteractionType[] = [
   'NATIVE_SELECT',
   'CUSTOM_SELECT',
   'SEARCHABLE_COMBOBOX',
@@ -173,7 +186,11 @@ export const observedOptionSchema = z
      * never by text, so it cannot name a choice the control is not offering.
      */
     optionId: z.string().max(80).default(''),
+    /** Position in the exact option observation that minted optionId. */
+    index: z.number().int().nonnegative().max(5000).optional(),
     label: z.string().max(300),
+    /** The live DOM value, when the control exposes one. */
+    value: z.string().max(1000).optional(),
     disabled: z.boolean().default(false),
     selected: z.boolean().default(false),
   })
@@ -273,6 +290,7 @@ export const observedElementSchema = z
      */
     dependsOnElementId: z.string().max(40).optional(),
     dependencyActive: z.boolean().optional(),
+    dependencyStatus: z.enum(['WAITING_FOR_DEPENDENCY', 'NOT_APPLICABLE', 'ACTIVE']).optional(),
     frameId: z.number().int().nonnegative().default(0),
   })
   .strict();
@@ -332,6 +350,68 @@ export const pageObservationSchema = z
 export type PageObservation = z.infer<typeof pageObservationSchema>;
 
 // ---------------------------------------------------------------------------
+// Multiple-choice model contract
+// ---------------------------------------------------------------------------
+
+export const agentChoiceRequestSchema = z
+  .object({
+    fieldType: interactionTypeSchema,
+    question: z.string().min(1).max(500),
+    candidateContext: z
+      .record(z.union([z.string().max(2000), z.boolean(), z.number().finite()]))
+      .default({}),
+    choices: z
+      .array(
+        z
+          .object({
+            optionId: z.string().min(1).max(80),
+            label: z.string().min(1).max(300),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(400),
+  })
+  .strict();
+
+export type AgentChoiceRequest = z.infer<typeof agentChoiceRequestSchema>;
+
+export const agentChoiceDecisionSchema = z
+  .object({
+    decision: z.enum(['SELECT', 'ASK_USER']),
+    optionId: z.string().max(80).optional(),
+    optionIds: z.array(z.string().min(1).max(80)).min(1).max(100).optional(),
+    confidence: z.number().min(0).max(1),
+    reason: z.string().min(1).max(600),
+  })
+  .strict()
+  .superRefine((decision, ctx) => {
+    if (decision.decision === 'SELECT' && !decision.optionId && !decision.optionIds) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['optionId'],
+        message: 'SELECT requires optionId or optionIds',
+      });
+    }
+    if (decision.optionId && decision.optionIds) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['optionIds'],
+        message: 'SELECT must use optionId or optionIds, not both',
+      });
+    }
+    if (decision.decision === 'ASK_USER' && (decision.optionId || decision.optionIds)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['optionId'],
+        message: 'ASK_USER must not carry option IDs',
+      });
+    }
+  });
+
+export type AgentChoiceDecision = z.infer<typeof agentChoiceDecisionSchema>;
+
+// ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
 
@@ -362,6 +442,8 @@ export const AGENT_TOOLS = [
   'open_dropdown',
   'get_options',
   'select_option',
+  'select_options',
+  'set_checked',
   'scroll_page',
   'scroll_element',
   'wait_for_change',
@@ -382,6 +464,8 @@ export const MUTATING_TOOLS: readonly AgentTool[] = [
   'set_date',
   'clear',
   'select_option',
+  'select_options',
+  'set_checked',
   'click_add',
   'upload_document',
   'click_next',
@@ -415,6 +499,10 @@ export const agentToolCallSchema = z
      * exists" from being expressible.
      */
     optionId: z.string().max(80).optional(),
+    /** The actual offered choices to select for a multi-answer control. */
+    optionIds: z.array(z.string().max(80)).max(100).optional(),
+    /** The state requested from one independent checkbox. */
+    checked: z.boolean().optional(),
     /**
      * The date to write, for `set_date`. Parts, never a rendered string.
      *
@@ -871,6 +959,10 @@ export const agentDropdownTraceSchema = z
   .object({
     elementId: z.string().max(40),
     controlType: interactionTypeSchema,
+    fieldIntent: z.string().max(80).default(''),
+    question: z.string().max(300).default(''),
+    required: z.boolean().default(false),
+    knownAnswerAvailable: z.boolean().default(false),
     /** The state the control displayed, never the value it displayed. */
     currentDisplayState: z.enum(['PLACEHOLDER', 'HAS_SELECTION']).default('PLACEHOLDER'),
     /** What the decider asked for, before the validator had a view. */
@@ -878,6 +970,7 @@ export const agentDropdownTraceSchema = z
     toolAllowed: z.boolean().default(true),
     rejectionCode: errorCodeSchema.optional(),
     triggerFound: z.boolean().default(false),
+    openAttempted: z.boolean().default(false),
     opened: z.boolean().default(false),
     menuFound: z.boolean().default(false),
     optionCount: z.number().int().nonnegative().default(0),
@@ -885,10 +978,17 @@ export const agentDropdownTraceSchema = z
     scrollable: z.boolean().default(false),
     /** The handle of the option taken. Never its text. */
     optionIdChosen: z.string().max(80).optional(),
+    optionIdsChosen: z.array(z.string().max(80)).max(100).default([]),
+    matchingStrategy: z
+      .enum(['EXACT', 'ALIAS', 'SEMANTIC', 'LLM', 'UNKNOWN'])
+      .default('UNKNOWN'),
+    llmCalled: z.boolean().default(false),
     semanticMatchType: z
       .enum(['EXACT', 'CASE_INSENSITIVE', 'ABBREVIATION', 'CONTAINS', 'SEMANTIC', 'NONE'])
       .default('NONE'),
     optionClicked: z.boolean().default(false),
+    actualOptionNodeFound: z.boolean().default(false),
+    clickExecuted: z.boolean().default(false),
     frameworkEventsDispatched: z.boolean().default(false),
     displayedSelectionChanged: z.boolean().default(false),
     /**
@@ -899,9 +999,11 @@ export const agentDropdownTraceSchema = z
      * down: the control changed what it showed and the form kept nothing.
      */
     selectionCommitted: z.boolean().default(false),
+    committedValueDetected: z.boolean().default(false),
     /** True when the form still shows a validation complaint afterwards. */
     validationErrorPresent: z.boolean().default(false),
     verified: z.boolean().default(false),
+    reobservationPerformed: z.boolean().default(false),
     finalStatus: agentVerificationSchema.default('NOT_APPLICABLE'),
   })
   .strict();

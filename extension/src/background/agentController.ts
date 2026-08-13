@@ -47,6 +47,8 @@ export interface AgentRunInput {
   isCancelled?: () => boolean;
   /** Supplied when a model is configured; the deterministic policy runs otherwise. */
   decide?: AgentLoopHost['decide'];
+  /** Local-model fallback after exact, alias and safe semantic matching fail. */
+  chooseChoice?: AgentLoopHost['chooseChoice'];
 }
 
 export interface AgentRunResult {
@@ -70,6 +72,8 @@ export interface AgentRunResult {
 export function trustedValuesFor(
   observation: PageObservation,
   profile: Profile,
+  approvedAnswers: readonly ApprovedAnswer[] = [],
+  companyName = '',
 ): Map<string, string> {
   const trusted = new Map<string, string>();
   const personal = profile.personal;
@@ -81,7 +85,7 @@ export function trustedValuesFor(
     const job = profile.experience[block];
     const education = profile.education[block];
 
-    const value = ((): string | undefined => {
+    const profileValue = ((): string | undefined => {
       switch (intent) {
         case 'first_name':
           return personal.legalFirstName;
@@ -105,6 +109,24 @@ export function trustedValuesFor(
           return address?.postalCode;
         case 'country':
           return element.section === 'education' ? undefined : address?.country;
+        case 'willing_to_relocate':
+          return typeof profile.eligibility.willingToRelocate === 'boolean'
+            ? profile.eligibility.willingToRelocate
+              ? 'Yes'
+              : 'No'
+            : undefined;
+        case 'drivers_license':
+          return typeof profile.eligibility.hasDriversLicense === 'boolean'
+            ? profile.eligibility.hasDriversLicense
+              ? 'Yes'
+              : 'No'
+            : undefined;
+        case 'minimum_age':
+          return typeof profile.eligibility.meetsMinimumAge === 'boolean'
+            ? profile.eligibility.meetsMinimumAge
+              ? 'Yes'
+              : 'No'
+            : undefined;
         case 'employer':
           return job?.employer;
         case 'job_title':
@@ -155,6 +177,27 @@ export function trustedValuesFor(
           return undefined;
       }
     })();
+
+    const normalizedQuestion = element.label.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const approved = approvedAnswers.find((answer) => {
+      if (!answer.approved || !answer.autoFillAllowed) return false;
+      if (answer.scope === 'company' && answer.scopeReference !== companyName) return false;
+      if (answer.scope === 'job') return false;
+      const questions = [answer.canonicalQuestion, ...answer.aliases].map((question) =>
+        question.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(),
+      );
+      return questions.includes(normalizedQuestion);
+    });
+    const approvedValue = approved
+      ? Array.isArray(approved.answer)
+        ? approved.answer.join(' || ')
+        : typeof approved.answer === 'boolean'
+          ? approved.answer
+            ? 'Yes'
+            : 'No'
+          : String(approved.answer)
+      : undefined;
+    const value = profileValue ?? approvedValue;
 
     if (value && value.trim().length > 0) trusted.set(element.elementId, value.trim());
   }
@@ -239,6 +282,7 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
     ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     ...(input.isCancelled ? { isCancelled: input.isCancelled } : {}),
     ...(input.decide ? { decide: input.decide } : {}),
+    ...(input.chooseChoice ? { chooseChoice: input.chooseChoice } : {}),
     observe: async () => {
       // The proposed values sent down are keyed by *scan field id*, which the
       // frame knows; the map the loop reasons with is keyed by observation
@@ -251,7 +295,12 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
           dependencyActive: {},
         },
       );
-      latestTrusted = trustedValuesFor(observation, input.profile);
+      latestTrusted = trustedValuesFor(
+        observation,
+        input.profile,
+        input.approvedAnswers,
+        input.companyName,
+      );
       // ---- Documents, counted per control and per requiredness. -------------
       //
       // The live contradiction this replaces: `resumeVerified: false` beside
@@ -299,7 +348,11 @@ export async function runAgentApplication(input: AgentRunInput): Promise<AgentRu
           // observer already ruled otherwise, which it does for protected
           // characteristics and for questions about somebody else. Those
           // rulings are never overturned by having found a value.
-          if (element.policy === 'SENSITIVE' || element.policy === 'LEGAL_ACKNOWLEDGMENT') {
+          if (
+            element.policy === 'LEGAL_ACKNOWLEDGMENT' ||
+            (element.policy === 'SENSITIVE' &&
+              !/decline|prefer not|do not wish|not to disclose/i.test(value))
+          ) {
             return element;
           }
           return { ...element, policy: 'KNOWN_FACT' as const, proposedValue: value };

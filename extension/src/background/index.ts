@@ -65,6 +65,7 @@ import {
   listOllamaModels,
   testAiGeneration,
   analyzeForm,
+  chooseAgentOption,
   workerFailure,
 } from './agentClient.js';
 import { clearLastScan, loadLastScan, saveLastScan } from '../storage/scans.js';
@@ -1718,10 +1719,11 @@ async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Pr
   const state = { runId, cancelled: false, controller: new AbortController() };
   activeAutofill = state;
   try {
-    const [tab, profileResult, answersResult] = await Promise.all([
+    const [tab, profileResult, answersResult, settings] = await Promise.all([
       activeApplicationTab(targetUrl).catch(() => null),
       getProfile(),
       listAnswers(),
+      loadSettings(),
     ]);
     const bundle = tab?.url ? await bundleForUrl(tab.url).catch(() => null) : null;
     const profile = bundle?.profile ?? profileResult.data?.profile;
@@ -1742,6 +1744,22 @@ async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Pr
       profile,
       approvedAnswers: [...(bundle?.approvedAnswers ?? []), ...(answersResult.data?.answers ?? [])],
       companyName: bundle?.company ?? '',
+      ...(settings.aiGenerationEnabled
+        ? {
+            chooseChoice: async (request) => {
+              const result = await chooseAgentOption(request, state.controller.signal);
+              return (
+                result.data ?? {
+                  decision: 'ASK_USER' as const,
+                  confidence: 0,
+                  reason:
+                    result.error?.message ??
+                    'The local choice model was unavailable, so this answer was not guessed.',
+                }
+              );
+            },
+          }
+        : {}),
       // Whether a tailored document exists for this application at all. The
       // attachment path is unchanged; this only stops the run calling an
       // application finished while a required upload is still empty.

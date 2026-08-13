@@ -142,6 +142,11 @@ export const ERROR_CODES = [
   'DROPDOWN_TARGET_NOT_FOUND',
   // A choice was named that the control is not currently offering.
   'OPTION_HANDLE_UNKNOWN',
+  // A choice handle belonged to an earlier menu observation or its DOM node
+  // was replaced before the click. The menu must be read again.
+  'STALE_OPTION_REFERENCE',
+  // The model returned a handle that was not present in the choices it saw.
+  'INVALID_OPTION_ID',
   // An option was clicked and the control did not keep it. The visible text may
   // even read correctly — "BS" on Education Type — while the value behind it is
   // empty or the form still shows the question as required. Changing what a
@@ -485,6 +490,10 @@ export const DEFAULT_ERROR_GUIDANCE: Record<ErrorCode, string> = {
     'This list was opened and read, and your saved answer is not one of the choices it offers. Choose one yourself.',
   OPTION_HANDLE_UNKNOWN:
     'That choice is not one this control is currently offering. The list is read again before anything is selected.',
+  STALE_OPTION_REFERENCE:
+    'That choice belonged to an earlier version of this menu. The agent will read the current choices and decide again.',
+  INVALID_OPTION_ID:
+    'The decision named a choice the webpage did not offer. It was rejected without clicking anything.',
   SELECTION_NOT_COMMITTED:
     'This control shows a choice the form has not accepted, so it still counts as unanswered. Select it yourself.',
   WAITING_FOR_USER_INPUT:

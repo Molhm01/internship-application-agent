@@ -4,6 +4,7 @@ import {
   isNeverGuessedQuestion,
   isPlaceholderSelection,
   OPTION_INTERACTION_TYPES,
+  SENSITIVE_CANONICAL_QUESTIONS,
   observedControlKindSchema,
   observedElementSchema,
   pageObservationSchema,
@@ -22,6 +23,7 @@ import {
   findListbox,
   findSearchInput,
   isVisible,
+  optionItemsIn,
   readOptions,
   readSelectedText,
   resolveTrigger,
@@ -68,6 +70,18 @@ interface Registry {
   elements: Map<string, HTMLElement>;
   /** Which section a repeater handle grows. */
   repeaterKinds: Map<string, RepeaterKind>;
+  /** Exact live choice nodes named by this observation's option handles. */
+  options: Map<string, OptionReference>;
+}
+
+export interface OptionReference {
+  observationId: string;
+  elementId: string;
+  index: number;
+  label: string;
+  value: string;
+  node: HTMLElement;
+  owner: HTMLElement;
 }
 
 let registry: Registry = {
@@ -75,6 +89,7 @@ let registry: Registry = {
   fields: new Map(),
   elements: new Map(),
   repeaterKinds: new Map(),
+  options: new Map(),
 };
 
 /** The field a handle names, or null once the observation has been replaced. */
@@ -95,6 +110,24 @@ export function elementForHandle(handle: string): HTMLElement | null {
 
 export function repeaterKindForHandle(handle: string): RepeaterKind | null {
   return registry.repeaterKinds.get(handle) ?? null;
+}
+
+/** The exact option node a current observation minted this handle for. */
+export function optionReferenceForHandle(optionId: string): OptionReference | null {
+  return registry.options.get(optionId) ?? null;
+}
+
+/** Used to distinguish an invented handle from one belonging to an old menu. */
+export function currentObservationId(): string {
+  return registry.observationId;
+}
+
+function inputsInGroup(element: HTMLInputElement): HTMLInputElement[] {
+  if (!element.name) return [element];
+  const root = scopeOf(element);
+  return Array.from(root.querySelectorAll<HTMLInputElement>('input')).filter(
+    (candidate) => candidate.type === element.type && candidate.name === element.name,
+  );
 }
 
 /** Coarsens the scanner's field type into what the agent decides about. */
@@ -151,8 +184,10 @@ export function interactionTypeOf(element: HTMLElement | null): InteractionType 
 
   if (element instanceof HTMLInputElement) {
     const type = element.type.toLowerCase();
-    if (type === 'checkbox') return 'CHECKBOX';
-    if (type === 'radio') return 'RADIO';
+    if (type === 'checkbox') {
+      return inputsInGroup(element).length > 1 ? 'CHECKBOX_GROUP' : 'SINGLE_CHECKBOX';
+    }
+    if (type === 'radio') return 'RADIO_GROUP';
     if (type === 'file') return 'FILE_UPLOAD';
     if (type === 'date' || type === 'month' || type === 'week' || type === 'datetime-local') {
       return 'DATE_INPUT';
@@ -189,15 +224,18 @@ export function interactionTypeOf(element: HTMLElement | null): InteractionType 
   if (element.isContentEditable) return 'TEXT_INPUT';
 
   const role = element.getAttribute('role');
-  if (role === 'radiogroup') return 'RADIO';
-  if (role === 'checkbox' || role === 'switch') return 'CHECKBOX';
+  if (role === 'radiogroup') return 'RADIO_GROUP';
+  if (role === 'checkbox' || role === 'switch') return 'SINGLE_CHECKBOX';
   if (isCustomCombobox(element) || opensOptionList(element)) {
-    // A menu whose trigger is an editable input is searchable; one whose
-    // trigger is a div or a button is not.
+    // An editable trigger is searchable. A button/div trigger can still open a
+    // popup that owns a separate search input (common on Workday-style portal
+    // menus), so the opened menu is authoritative when it exists.
     const trigger = resolveTrigger(element);
     const editable =
       trigger instanceof HTMLInputElement && !trigger.readOnly && trigger.type !== 'hidden';
-    return editable ? 'SEARCHABLE_COMBOBOX' : 'CUSTOM_SELECT';
+    const menu = findListbox(trigger);
+    const hasInternalSearch = Boolean(menu && findSearchInput(trigger, menu));
+    return editable || hasInternalSearch ? 'SEARCHABLE_COMBOBOX' : 'CUSTOM_SELECT';
   }
   if (role === 'textbox') return 'TEXT_INPUT';
   return 'UNKNOWN';
@@ -212,7 +250,10 @@ export function interactionTypeOf(element: HTMLElement | null): InteractionType 
  * never a fact about the applicant however much its wording resembles one.
  */
 export function policyFor(field: DetectedField, proposed: string | undefined): AnswerPolicy {
-  if (field.canonicalKey && isNeverGuessedQuestion(field.canonicalKey)) {
+  if (
+    field.canonicalKey &&
+    SENSITIVE_CANONICAL_QUESTIONS.includes(field.canonicalKey)
+  ) {
     return answerPolicySchema.parse('SENSITIVE');
   }
   // The relatives box. `full name` in the label is not a reason to write the
@@ -221,6 +262,9 @@ export function policyFor(field: DetectedField, proposed: string | undefined): A
     return answerPolicySchema.parse('UNKNOWN_FACT');
   }
   if (proposed && proposed.trim().length > 0) return answerPolicySchema.parse('KNOWN_FACT');
+  if (field.canonicalKey && isNeverGuessedQuestion(field.canonicalKey)) {
+    return answerPolicySchema.parse('UNKNOWN_FACT');
+  }
   if (field.fieldType === 'textarea') return answerPolicySchema.parse('SUBJECTIVE');
   return answerPolicySchema.parse('UNKNOWN_FACT');
 }
@@ -242,16 +286,96 @@ export function optionsOf(
   if (element instanceof HTMLSelectElement) {
     return {
       searchInput: null,
-      options: Array.from(element.options).map((option, index) => ({
+      options: Array.from(element.options).map((option, index) => {
+        const optionId = optionHandle(handle, index);
+        registry.options.set(optionId, {
+          observationId: registry.observationId,
+          elementId: handle,
+          index,
+          label: (option.textContent ?? '').replace(/\s+/g, ' ').trim(),
+          value: option.value,
+          node: option,
+          owner: element,
+        });
+        return {
         // Minted from the handle that read them, so a choice can only ever be
         // named by an observation that actually saw it offered.
-        optionId: optionHandle(handle, index),
+        optionId,
+        index,
         label: (option.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300),
+        value: option.value.slice(0, 1000),
         disabled: option.disabled,
         selected: option.selected,
-      })),
+        };
+      }),
       known: true,
     };
+  }
+
+  // Radio and checkbox groups carry all of their real choices in the DOM.
+  // They never need opening, but they still require optionIds: the model names
+  // an offered choice and the executor clicks that exact input or its label.
+  if (
+    element instanceof HTMLInputElement &&
+    (element.type === 'radio' || (element.type === 'checkbox' && inputsInGroup(element).length > 1))
+  ) {
+    const inputs = inputsInGroup(element);
+    const options = inputs.map((input, index) => {
+      const label = (
+        input.labels?.[0]?.textContent ??
+        input.getAttribute('aria-label') ??
+        input.value
+      )
+        .replace(/\s+/g, ' ')
+        .trim();
+      const optionId = optionHandle(handle, index);
+      registry.options.set(optionId, {
+        observationId: registry.observationId,
+        elementId: handle,
+        index,
+        label,
+        value: input.value,
+        node: input,
+        owner: element,
+      });
+      return {
+        optionId,
+        index,
+        label: label.slice(0, 300),
+        value: input.value.slice(0, 1000),
+        disabled: input.disabled,
+        selected: input.checked,
+      };
+    });
+    return { options, known: true, searchInput: null };
+  }
+
+  if (element && element.getAttribute('role') === 'radiogroup') {
+    const radios = Array.from(element.querySelectorAll<HTMLElement>('[role="radio"]'));
+    const options = radios.map((radio, index) => {
+      const label = (radio.getAttribute('aria-label') ?? radio.textContent ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const optionId = optionHandle(handle, index);
+      registry.options.set(optionId, {
+        observationId: registry.observationId,
+        elementId: handle,
+        index,
+        label,
+        value: radio.getAttribute('data-value') ?? label,
+        node: radio,
+        owner: element,
+      });
+      return {
+        optionId,
+        index,
+        label,
+        value: radio.getAttribute('data-value') ?? label,
+        disabled: radio.getAttribute('aria-disabled') === 'true',
+        selected: radio.getAttribute('aria-checked') === 'true',
+      };
+    });
+    return { options, known: true, searchInput: null };
   }
 
   // A custom control that is *currently open*.
@@ -278,12 +402,29 @@ export function optionsOf(
       if (live.length > 0 || searchInput) {
         return {
           searchInput,
-          options: live.map((option, index) => ({
-            optionId: optionHandle(handle, index),
-            label: option.label.slice(0, 300),
-            disabled: option.disabled,
-            selected: option.selected,
-          })),
+          options: live.map((option, index) => {
+            const optionId = optionHandle(handle, index);
+            const node = optionItemsIn(menu).filter(isVisible)[index];
+            if (node) {
+              registry.options.set(optionId, {
+                observationId: registry.observationId,
+                elementId: handle,
+                index,
+                label: option.label,
+                value: option.value,
+                node,
+                owner: element,
+              });
+            }
+            return {
+              optionId,
+              index,
+              label: option.label.slice(0, 300),
+              value: option.value.slice(0, 1000),
+              disabled: option.disabled,
+              selected: option.selected,
+            };
+          }),
           known: true,
         };
       }
@@ -302,15 +443,26 @@ export function optionsOf(
  */
 export const SEARCH_HANDLE_SUFFIX = '::search';
 
-export function optionHandle(elementHandle: string, index: number): string {
-  return `${elementHandle}::option::${index}`;
+export function optionHandle(
+  elementHandle: string,
+  index: number,
+  observationId = registry.observationId,
+): string {
+  const token = observationId.replace(/^obs-/, '') || 'unobserved';
+  return `${elementHandle}::${token}::option::${index}`;
 }
 
 /** The element and index a choice handle refers to, or null if it is not one. */
-export function parseOptionHandle(optionId: string): { elementId: string; index: number } | null {
-  const match = /^(.+)::option::(\d+)$/.exec(optionId);
-  if (!match?.[1] || match[2] === undefined) return null;
-  return { elementId: match[1], index: Number(match[2]) };
+export function parseOptionHandle(
+  optionId: string,
+): { elementId: string; observationId?: string; index: number } | null {
+  const current = /^(.+?)::([^:]+)::option::(\d+)$/.exec(optionId);
+  if (current?.[1] && current[2] && current[3] !== undefined) {
+    return { elementId: current[1], observationId: `obs-${current[2]}`, index: Number(current[3]) };
+  }
+  const legacy = /^(.+)::option::(\d+)$/.exec(optionId);
+  if (!legacy?.[1] || legacy[2] === undefined) return null;
+  return { elementId: legacy[1], index: Number(legacy[2]) };
 }
 
 /**
@@ -342,6 +494,18 @@ function currentValueOf(field: DetectedField): string {
     element instanceof HTMLInputElement &&
     (element.type === 'checkbox' || element.type === 'radio')
   ) {
+    if (element.type === 'radio' || inputsInGroup(element).length > 1) {
+      return inputsInGroup(element)
+        .filter((input) => input.checked)
+        .map(
+          (input) =>
+            (input.labels?.[0]?.textContent ?? input.getAttribute('aria-label') ?? input.value)
+              .replace(/\s+/g, ' ')
+              .trim(),
+        )
+        .join(', ')
+        .slice(0, 300);
+    }
     return element.checked ? 'Yes' : '';
   }
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
@@ -483,6 +647,9 @@ function holdsCommittedValue(element: HTMLElement): boolean {
   }
   const inner = element.querySelector('select');
   if (inner instanceof HTMLSelectElement) return holdsCommittedValue(inner);
+  if (element instanceof HTMLInputElement && (element.type === 'radio' || element.type === 'checkbox')) {
+    return inputsInGroup(element).some((input) => input.checked);
+  }
 
   // React-select and its imitators submit through a hidden input. It is the
   // widget's real answer, and an empty one is the widget saying it has none.
@@ -491,11 +658,18 @@ function holdsCommittedValue(element: HTMLElement): boolean {
 
   // A listbox that marks its chosen row, or a trigger still pointing at one
   // after the menu shut. Either is the widget having recorded a choice.
-  if (element.querySelector('[aria-selected="true"],[data-selected="true"]')) return true;
+  if (element.querySelector('[aria-selected="true"],[aria-checked="true"],[data-selected="true"]')) return true;
   const trigger = resolveTrigger(element);
-  if ((trigger.getAttribute('aria-activedescendant') ?? '').length > 0) return true;
+  if (
+    (trigger.getAttribute('aria-activedescendant') ?? '').length > 0 &&
+    trigger.getAttribute('aria-expanded') !== 'true'
+  ) return true;
   if (trigger instanceof HTMLInputElement && trigger.type !== 'hidden') {
-    return trigger.value.trim().length > 0;
+    // While a searchable menu is open, this value is a query, not an answer.
+    // It becomes evidence only after the popup has closed and the widget kept
+    // the selected option in the trigger.
+    if (findListbox(trigger)) return false;
+    return trigger.value.trim().length > 0 && trigger.getAttribute('aria-expanded') !== 'true';
   }
   return true;
 }
@@ -635,6 +809,7 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
     fields: new Map(),
     elements: new Map(),
     repeaterKinds: new Map(),
+    options: new Map(),
   };
 
   const { fields } = await scanDom(document, 'agent-observation', new AbortController().signal);
@@ -753,8 +928,24 @@ export async function observePage(input: ObserveInput = {}): Promise<PageObserva
     const parentHandle = field.dependsOn ? handleByFieldId.get(field.dependsOn.fieldId) : undefined;
     const observed = elements[index];
     if (!observed || !parentHandle) continue;
+    const parent = elements.find((element) => element.elementId === parentHandle);
+    const parentValue = parent?.currentValue.trim() ?? '';
+    const expected = field.dependsOn?.value?.toLowerCase().trim() ?? '';
+    const inferredActive =
+      parentValue.length > 0 &&
+      (expected === '__any_answer__' ||
+        expected === '*' ||
+        (expected === '__affirmative__' && /^(yes|true|y|1)$/.test(parentValue.toLowerCase())) ||
+        parentValue.toLowerCase() === expected ||
+        (/^(yes|true|y|1)$/.test(parentValue.toLowerCase()) && /^(yes|true|y|1)$/.test(expected)));
+    const active = input.dependencyActive?.[field.id] ?? inferredActive;
     observed.dependsOnElementId = parentHandle;
-    observed.dependencyActive = input.dependencyActive?.[field.id] ?? false;
+    observed.dependencyActive = active;
+    observed.dependencyStatus = active
+      ? 'ACTIVE'
+      : parentValue.length === 0
+        ? 'WAITING_FOR_DEPENDENCY'
+        : 'NOT_APPLICABLE';
   }
 
   // Appended only now, after the dependency pass — that loop walks `elements`

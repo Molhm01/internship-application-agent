@@ -758,7 +758,7 @@ describe('a current role does not get today’s date', () => {
     const current = element({
       label: 'I currently work here',
       kind: 'checkbox',
-      interactionType: 'CHECKBOX',
+      interactionType: 'SINGLE_CHECKBOX',
       intent: 'currently_employed',
       blockIndex: 0,
     });
@@ -772,7 +772,7 @@ describe('a current role does not get today’s date', () => {
     const current = element({
       label: 'I currently work here',
       kind: 'checkbox',
-      interactionType: 'CHECKBOX',
+      interactionType: 'SINGLE_CHECKBOX',
       policy: 'KNOWN_FACT',
       proposedValue: 'Yes',
     });
@@ -782,7 +782,8 @@ describe('a current role does not get today’s date', () => {
       trustedValues: new Map([[current.elementId, 'Yes']]),
     });
     expect(decision.kind).toBe('ACTION');
-    expect(decision.action?.tool).toBe('click');
+    expect(decision.action?.tool).toBe('set_checked');
+    expect(decision.action?.checked).toBe(true);
     expect(decision.action?.elementId).toBe(current.elementId);
   });
 

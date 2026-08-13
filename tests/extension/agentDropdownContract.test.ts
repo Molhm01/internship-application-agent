@@ -220,7 +220,7 @@ describe('selecting requires the list to have been read', () => {
     });
     const verdict = select(target, 'e1::option::99');
     expect(verdict.allowed).toBe(false);
-    expect(verdict.code).toBe('OPTION_HANDLE_UNKNOWN');
+    expect(verdict.code).toBe('INVALID_OPTION_ID');
   });
 
   it('permits selecting an option the control actually offers', () => {
@@ -287,8 +287,9 @@ describe('the decider opens before it chooses', () => {
     const decision = decide([target]);
     expect(decision.action?.tool).toBe('select_option');
     expect(decision.action?.optionId).toBe('x::option::1');
-    // The value carried is the option's own label, not the profile's wording.
-    expect(decision.action?.value).toBe('New Jersey');
+    // The optionId is the whole answer contract; no label is carried as a
+    // writable fallback.
+    expect(decision.action?.value).toBeUndefined();
   });
 
   it('never chooses the placeholder', () => {

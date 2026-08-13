@@ -96,6 +96,12 @@ export async function observeAcrossFrames(
         ...(element.dependsOnElementId
           ? { dependsOnElementId: `f${frame.frameId}:${element.dependsOnElementId}` }
           : {}),
+        ...(element.searchInputId
+          ? { searchInputId: namespace(element.searchInputId) }
+          : {}),
+        ...(element.searchInputFor
+          ? { searchInputFor: `f${frame.frameId}:${element.searchInputFor}` }
+          : {}),
         frameId: frame.frameId,
       });
     }
