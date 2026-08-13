@@ -8,6 +8,7 @@ import {
   type DayConvention,
   agentActionTraceSchema,
   agentMarkerRecordSchema,
+  agentRepeatedActionFailureDetailSchema,
   agentRunSummarySchema,
   agentRunTraceSchema,
   type AgentRunSummary,
@@ -129,6 +130,7 @@ export interface AgentLoopHost {
 export async function decideWithChoiceFallback(
   input: DecisionInput,
   chooseChoice?: AgentLoopHost['chooseChoice'],
+  onChoiceRequest?: (request: AgentChoiceRequest) => void,
 ): Promise<AgentDecision> {
   const deterministic = decideDeterministically(input);
   if (
@@ -146,6 +148,7 @@ export async function decideWithChoiceFallback(
     return deterministic;
   }
   const request = choiceRequestFor(element);
+  onChoiceRequest?.(request);
   const validation = validateModelChoiceDecision(request, await chooseChoice(request));
   if (!validation.valid) {
     if (validation.errorCode === 'INVALID_OPTION_ID') {
@@ -205,6 +208,55 @@ function isListControl(element: ObservedElement): boolean {
   return (OPTION_INTERACTION_TYPES as readonly string[]).includes(element.interactionType);
 }
 
+/** State names only: this function never returns the current or proposed value. */
+function currentStateCategory(element: ObservedElement | undefined): ObservedFieldStateName {
+  if (!element) return 'UNKNOWN';
+  if (element.validationError.trim().length > 0) return 'REJECTED_BY_FORM';
+  if (element.currentValue.trim().length === 0) {
+    return isListControl(element) ? 'PLACEHOLDER' : 'EMPTY';
+  }
+  if (isListControl(element) && !element.selectionCommitted) return 'HOLDS_OTHER';
+  return describeFieldState({
+    found: true,
+    currentValue: element.currentValue,
+    expected: element.proposedValue ?? element.currentValue,
+    validationError: element.validationError,
+  });
+}
+
+/** Hash a transient comparison and discard the underlying page text. */
+function diagnosticSignature(parts: readonly string[]): string {
+  let hash = 0x811c9dc5;
+  const input = parts.join('\u001f');
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function observationSignatureFor(element: ObservedElement | undefined): string {
+  if (!element) return 'missing';
+  return diagnosticSignature([
+    element.interactionType,
+    currentStateCategory(element),
+    element.dropdownState,
+    String(element.required),
+    String(element.disabled),
+    String(element.visible),
+    String(element.selectionCommitted),
+    String(element.validationError.trim().length > 0),
+    String(element.options.length),
+  ]);
+}
+
+function optionSetSignatureFor(element: ObservedElement | undefined): string {
+  if (!element || !isListControl(element)) return 'not-a-list';
+  return diagnosticSignature(
+    element.options.map((option) => `${option.label}\u001e${option.disabled}`),
+  );
+}
+
 /**
  * How one dropdown interaction went, for the exported trace.
  *
@@ -224,6 +276,8 @@ function dropdownTraceFor(input: {
   toolAllowed?: boolean;
   rejectionCode?: ErrorCode;
   llmCalled?: boolean;
+  optionsPassedToDecisionProvider?: boolean;
+  freshObservation?: boolean;
 }): AgentDropdownTrace {
   const { before, after, call, execution } = input;
   const now = after?.elements.find(
@@ -239,6 +293,18 @@ function dropdownTraceFor(input: {
   );
   const chosen = call?.optionId;
   const chosenIds = call?.optionIds ?? (chosen ? [chosen] : []);
+  const selectionRequested = call?.tool === 'select_option' || call?.tool === 'select_options';
+  const optionIdsGeneratedCount = Math.max(
+    before.options.filter((option) => option.optionId.trim().length > 0).length,
+    execution?.options.filter((option) => option.optionId.trim().length > 0).length ?? 0,
+  );
+  const actualOptionNodeFound =
+    selectionRequested &&
+    Boolean(execution) &&
+    execution?.errorCode !== 'INVALID_OPTION_ID' &&
+    execution?.errorCode !== 'STALE_OPTION_REFERENCE' &&
+    execution?.errorCode !== 'CONTROL_NOT_FOUND' &&
+    execution?.errorCode !== 'STALE_ELEMENT';
   const deterministicMatch = matchActualChoice(before).strategy;
   return agentDropdownTraceSchema.parse({
     elementId: before.elementId,
@@ -251,13 +317,25 @@ function dropdownTraceFor(input: {
     ...(input.requestedTool ? { requestedTool: input.requestedTool } : {}),
     toolAllowed: input.toolAllowed ?? true,
     ...(input.rejectionCode ? { rejectionCode: input.rejectionCode } : {}),
-    // The tool resolved something to press, which is the only sense in which a
-    // trigger is "found" from out here.
-    triggerFound: execution?.executed ?? false,
+    // The target was present in the authoritative observation. Executor errors
+    // can still prove it went stale before the action reached the page.
+    triggerFound:
+      Boolean(call) &&
+      execution?.errorCode !== 'CONTROL_NOT_FOUND' &&
+      execution?.errorCode !== 'STALE_ELEMENT',
     openAttempted: call?.tool === 'open_dropdown',
+    openDropdownRequested: call?.tool === 'open_dropdown',
     opened: (execution?.optionsSeen ?? 0) > 0 || (execution?.options.length ?? 0) > 0,
     menuFound: optionCount > 0,
     optionCount,
+    optionsFoundCount: optionCount,
+    optionIdsGeneratedCount,
+    optionsPassedToDecisionProvider: input.optionsPassedToDecisionProvider ?? false,
+    ...(call?.tool ? { decisionReturnedTool: call.tool } : {}),
+    decisionReturnedOptionIdPresent: chosenIds.length > 0,
+    optionIdExistsInCurrentOptions:
+      chosenIds.length > 0 &&
+      chosenIds.every((id) => before.options.some((option) => option.optionId === id)),
     searchable: before.searchable,
     // More rows than a menu shows at once is the only scrollability this layer
     // can honestly assert without measuring the page.
@@ -271,17 +349,11 @@ function dropdownTraceFor(input: {
         : deterministicMatch,
     llmCalled: input.llmCalled ?? false,
     semanticMatchType: matchTypeOf(before, chosen),
-    optionClicked:
-      (call?.tool === 'select_option' || call?.tool === 'select_options') &&
-      (execution?.executed ?? false),
-    actualOptionNodeFound:
-      (call?.tool === 'select_option' || call?.tool === 'select_options') &&
-      Boolean(execution) &&
-      (execution?.errorCode !== 'INVALID_OPTION_ID' &&
-        execution?.errorCode !== 'STALE_OPTION_REFERENCE'),
-    clickExecuted:
-      (call?.tool === 'select_option' || call?.tool === 'select_options') &&
-      (execution?.executed ?? false),
+    optionClicked: selectionRequested && (execution?.executed ?? false),
+    actualOptionNodeFound,
+    clickExecuted: selectionRequested && (execution?.executed ?? false),
+    optionClickAttempted: actualOptionNodeFound,
+    optionClickCompleted: selectionRequested && (execution?.executed ?? false),
     frameworkEventsDispatched: execution?.executed ?? false,
     displayedSelectionChanged: now !== undefined && now.currentValue !== before.currentValue,
     // The pair that makes the live failure legible in an exported trace. A
@@ -290,7 +362,14 @@ function dropdownTraceFor(input: {
     // the whole defect in two booleans.
     selectionCommitted: now?.selectionCommitted ?? false,
     committedValueDetected: now?.selectionCommitted ?? false,
+    freshCommittedValueObserved:
+      selectionRequested &&
+      (input.freshObservation ?? Boolean(after)) &&
+      (now?.selectionCommitted ?? false) &&
+      (now?.currentValue.trim().length ?? 0) > 0,
     validationErrorPresent: (now?.validationError ?? '').trim().length > 0,
+    requiredValidationErrorStillPresent:
+      before.required && (now?.validationError ?? '').trim().length > 0,
     verified: input.verification === 'VERIFIED',
     reobservationPerformed: Boolean(after),
     finalStatus: input.verification ?? 'NOT_APPLICABLE',
@@ -416,21 +495,39 @@ function actionTraceFor(input: {
   observationAfter: string;
   accepted: boolean;
   rejectionCode?: ErrorCode;
+  validatorResult?: AgentActionTrace['toolValidatorResult'];
+  retryCount: number;
+  retryFingerprint: string;
 }): AgentActionTrace {
   const { call, target, execution, outcome } = input;
   const errorCode = input.rejectionCode ?? outcome?.errorCode ?? execution?.errorCode;
   return agentActionTraceSchema.parse({
     step: input.step,
+    observationId: input.observationBefore,
     decisionTool: call.tool,
+    toolRequested: call.tool,
     targetControlType: target?.interactionType ?? 'UNKNOWN',
+    controlType: target?.interactionType ?? 'UNKNOWN',
+    fieldLabel: (target?.label ?? '').slice(0, 200),
     targetIntent: (target?.intent ?? '').slice(0, 80),
+    fieldIntent: (target?.intent ?? '').slice(0, 80),
+    currentStateCategory: currentStateCategory(target),
     logicalKey: target ? logicalFieldKey(target).slice(0, 300) : '',
     actionAccepted: input.accepted,
+    toolValidatorResult:
+      input.validatorResult ?? (input.accepted ? 'ALLOWED' : 'REJECTED'),
     executionStarted: input.accepted,
     executionFinished: input.accepted && execution !== undefined,
     // The executor's own report, kept strictly separate from the verdict. A
     // page can accept every typing event and then reset the box.
     executionSuccess: execution?.executed ?? false,
+    toolExecuted: execution?.executed ?? false,
+    executionResult:
+      execution === undefined
+        ? 'NOT_EXECUTED'
+        : execution.executed
+          ? 'SUCCEEDED'
+          : 'FAILED',
     domChanged: execution?.pageChanged ?? false,
     observationBefore: input.observationBefore.slice(0, 60),
     observationAfter: input.observationAfter.slice(0, 60),
@@ -444,7 +541,10 @@ function actionTraceFor(input: {
     verificationObservedState: outcome?.observed ?? ('UNKNOWN' satisfies ObservedFieldStateName),
     verified: outcome?.verification === 'VERIFIED',
     verification: outcome?.verification ?? 'NOT_APPLICABLE',
+    verificationResult: outcome?.verification ?? 'NOT_APPLICABLE',
     ...(errorCode ? { errorCode } : {}),
+    retryCount: input.retryCount,
+    retryFingerprint: input.retryFingerprint,
     durationMs: execution?.durationMs ?? 0,
   });
 }
@@ -1067,6 +1167,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
     const decisionStarted = Date.now();
     mark('AGENT_DECISION_REQUEST_STARTED', step, observation, { decisionProvider: provider });
     let decided: AgentDecision;
+    let choiceOptionsPassedToDecisionProvider = false;
     try {
       decided = host.decide
         ? await host.decide(input)
@@ -1075,6 +1176,12 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
             host.chooseChoice
               ? (request) => host.chooseChoice!(request)
               : undefined,
+            () => {
+              // This callback runs at the exact point the current option list
+              // is handed to the choice provider. It carries no option text
+              // into the trace; only the fact that the handoff occurred.
+              choiceOptionsPassedToDecisionProvider = true;
+            },
           );
       decisionProviderCalled = true;
       mark('AGENT_DECISION_REQUEST_FINISHED', step, observation, {
@@ -1167,8 +1274,15 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
         ? observation.elements.find((entry) => entry.elementId === decided.action?.elementId)
         : undefined;
       rejectedActions += 1;
-      history.record(
-        agentStepTraceSchema.parse({
+      const refusedLabel = (refusedTarget?.label ?? '').slice(0, 200);
+      const refusedTool = decided.action?.tool;
+      const refusedRetryCount = refusedTool
+        ? history.nextRetryCount(refusedTool, refusedLabel)
+        : 1;
+      const refusedRetryFingerprint = refusedTool
+        ? history.retryFingerprint(refusedTool, refusedLabel)
+        : '';
+      const refusedStep = agentStepTraceSchema.parse({
           step,
           observationId: observation.observationId,
           observedElements: observation.elements.length,
@@ -1177,7 +1291,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
           reason: verdict.reason.slice(0, 300),
           tool: decided.action?.tool,
           ...(refusedTarget ? { targetKind: refusedTarget.kind } : {}),
-          targetLabel: (refusedTarget?.label ?? '').slice(0, 200),
+          targetLabel: refusedLabel,
           targetSection: refusedTarget?.section ?? '',
           ...(refusedTarget?.blockIndex === undefined
             ? {}
@@ -1199,6 +1313,9 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
                   toolAllowed: false,
                   ...(verdict.code ? { rejectionCode: verdict.code } : {}),
                   llmCalled: choiceLlmCalled,
+                  optionsPassedToDecisionProvider:
+                    choiceOptionsPassedToDecisionProvider ||
+                    Boolean(host.decide && refusedTarget.options.length > 0),
                 }),
               }
             : {}),
@@ -1232,15 +1349,34 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
                   observationBefore: observation.observationId,
                   observationAfter: '',
                   accepted: false,
+                  validatorResult: 'REJECTED',
+                  retryCount: refusedRetryCount,
+                  retryFingerprint: refusedRetryFingerprint,
                   ...(verdict.code ? { rejectionCode: verdict.code } : {}),
                 }),
               }
             : {}),
-        }),
+        });
+      history.record(
+        refusedStep,
         // Recorded as an *action* decision so the history counts the failure
         // against this tool and this control, which is what makes the next
         // cycle choose differently rather than repeating itself.
         decided,
+        undefined,
+        refusedTool
+          ? {
+              logicalField: refusedTarget
+                ? logicalFieldKey(refusedTarget)
+                : refusedLabel,
+              controlType: refusedTarget?.interactionType ?? 'UNKNOWN',
+              ...(verdict.code ? { errorCode: verdict.code } : {}),
+              observationSignature: observationSignatureFor(refusedTarget),
+              optionSetSignature: optionSetSignatureFor(refusedTarget),
+              // The production choice request has no failure-feedback member.
+              modelReceivedFailureFeedback: false,
+            }
+          : undefined,
       );
       mark('AGENT_ACTION_SELECTED', step, observation, {
         decisionType: 'BLOCKED',
@@ -1427,8 +1563,13 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       history.recordSubmitPress();
     }
 
-    history.record(
-      agentStepTraceSchema.parse({
+    const actionRetryCount = history.nextRetryCount(call.tool, targetLabel);
+    const actionRetryFingerprint = history.retryFingerprint(call.tool, targetLabel);
+    const actionErrorCode =
+      verification === 'VERIFIED' ? undefined : (outcome.errorCode ?? execution.errorCode);
+    const freshObservation =
+      observation.observationId.length > 0 && observation.observationId !== observationBefore;
+    const actionStep = agentStepTraceSchema.parse({
         step,
         observationId: observation.observationId,
         observedElements: observation.elements.length,
@@ -1488,6 +1629,9 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
           observationBefore,
           observationAfter: observation.observationId,
           accepted: true,
+          validatorResult: 'ALLOWED',
+          retryCount: actionRetryCount,
+          retryFingerprint: actionRetryFingerprint,
         }),
         ...(target && isListControl(target)
           ? {
@@ -1500,6 +1644,10 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
                 requestedTool: call.tool,
                 toolAllowed: true,
                 llmCalled: choiceLlmCalled,
+                optionsPassedToDecisionProvider:
+                  choiceOptionsPassedToDecisionProvider ||
+                  Boolean(host.decide && target.options.length > 0),
+                freshObservation,
               }),
             }
           : {}),
@@ -1517,9 +1665,21 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
               }),
             }
           : {}),
-      }),
+      });
+    history.record(
+      actionStep,
       decision,
       execution,
+      {
+        logicalField: target ? logicalFieldKey(target) : targetLabel,
+        controlType: target?.interactionType ?? 'UNKNOWN',
+        ...(actionErrorCode ? { errorCode: actionErrorCode } : {}),
+        observationSignature: observationSignatureFor(target),
+        optionSetSignature: optionSetSignatureFor(target),
+        // Neither AgentChoiceRequest nor the production endpoint carries a
+        // previous executor/verifier failure. Record that absence explicitly.
+        modelReceivedFailureFeedback: false,
+      },
     );
 
     if (verification === 'VERIFIED' && targetLabel) {
@@ -1643,6 +1803,13 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       : (summary?.headline ?? 'Stopped'),
   );
 
+  const repeatedActionFailureDetails =
+    failure === 'AGENT_REPEATED_ACTION_FAILURE'
+      ? history
+          .repeatedActionFailureDetails()
+          .map((detail) => agentRepeatedActionFailureDetailSchema.parse(detail))
+      : [];
+
   return {
     status,
     trace: agentRunTraceSchema.parse({
@@ -1668,6 +1835,7 @@ export async function runAgentLoop(host: AgentLoopHost): Promise<AgentRunOutcome
       ...(summary ? { summary } : {}),
       pendingQuestions: [...history.allQuestions()],
       steps: [...history.all()],
+      repeatedActionFailureDetails,
       openQuestions: [...history.openQuestions()],
       totalDurationMs: Math.max(0, Date.now() - startedMs),
     }),

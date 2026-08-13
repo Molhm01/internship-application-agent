@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type {
   AnswerGenerationStore,
+  AgentRunTrace,
   ApplicationScanResult,
   AutofillRunTraceExport,
   DeterministicFillPlan,
@@ -58,6 +59,9 @@ export function DiagnosticsSection(): JSX.Element {
   const [exported, setExported] = useState<AutofillRunTraceExport | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
+  const [agentTrace, setAgentTrace] = useState<AgentRunTrace | null>(null);
+  const [agentTraceExporting, setAgentTraceExporting] = useState(false);
+  const [agentTraceError, setAgentTraceError] = useState('');
   const [pageTrace, setPageTrace] = useState<PageControlTrace | null>(null);
   const [tracing, setTracing] = useState(false);
   const [traceError, setTraceError] = useState('');
@@ -163,6 +167,33 @@ export function DiagnosticsSection(): JSX.Element {
       setExportError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setExporting(false);
+    }
+  };
+
+  /** Downloads the production Agent loop trace while the worker still holds it. */
+  const exportAgentTrace = async (): Promise<void> => {
+    setAgentTraceExporting(true);
+    setAgentTraceError('');
+    try {
+      const result = await sendMessage({ type: 'EXPORT_AGENT_TRACE' });
+      if ('error' in result) {
+        setAgentTraceError(result.error.message);
+        return;
+      }
+      const blob = new Blob([JSON.stringify(result.trace, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `agent-run-trace-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setAgentTrace(result.trace);
+    } catch (cause) {
+      setAgentTraceError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setAgentTraceExporting(false);
     }
   };
 
@@ -407,6 +438,36 @@ export function DiagnosticsSection(): JSX.Element {
         Adds the run-trace and dropdown-trace exports, the fill-plan builder, and raw confidence and
         validation output. No personal data is shown either way.
       </p>
+
+      <h3>Agent run trace</h3>
+      <p className="muted">
+        Downloads the most recent production Agent run, including sanitized action retries and the
+        repeated-action loop-breaker detail. Export it immediately after the run, before the
+        extension service worker restarts.
+      </p>
+      {developerMode ? (
+        <button
+          type="button"
+          onClick={() => void exportAgentTrace()}
+          disabled={agentTraceExporting}
+        >
+          {agentTraceExporting ? 'Collecting the Agent runâ€¦' : 'Export Agent Run Trace'}
+        </button>
+      ) : (
+        <p className="muted">Turn on developer mode above to export the production Agent run.</p>
+      )}
+      {agentTraceError ? (
+        <p className="result result--bad" role="alert">
+          {agentTraceError}
+        </p>
+      ) : null}
+      {agentTrace ? (
+        <p className="muted">
+          Exported {agentTrace.actionCount} action(s), {agentTrace.verifiedCount} verified, status{' '}
+          {agentTrace.status}
+          {agentTrace.failureCode ? `, failure ${agentTrace.failureCode}` : ''}.
+        </p>
+      ) : null}
 
       <h3>Autofill run traces</h3>
       {/*

@@ -306,14 +306,19 @@ describe('choice hierarchy, model contract, and ASK_USER safety', () => {
       'Bachelor of Applied Science',
     );
     let received: unknown;
+    let diagnosticHandoff = false;
     const decision = await decideWithChoiceFallback(
       { observation: observation([unresolved]), history: new AgentHistory(), trustedValues: new Map([['e1', 'Bachelor of Applied Science']]) },
       (request) => { received = request; return Promise.resolve({ decision: 'SELECT', optionId: 'e1::o::option::1', confidence: 0.98, reason: 'Trusted degree context corresponds to BAS.' }); },
+      () => {
+        diagnosticHandoff = true;
+      },
     );
     expect(received).toMatchObject({
       question: 'Education Type',
       choices: expect.arrayContaining([{ optionId: 'e1::o::option::1', label: 'BAS' }]),
     });
+    expect(diagnosticHandoff).toBe(true);
     expect(decision.action).toMatchObject({ tool: 'select_option', optionId: 'e1::o::option::1' });
   });
 

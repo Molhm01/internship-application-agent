@@ -80,12 +80,15 @@ class FakePage {
   value = '';
   executions: AgentToolCall[] = [];
 
+  constructor(readonly proposedValue = STATE) {}
+
   observe(): PageObservation {
     const state = element({
       currentValue: this.value,
       dropdownState: this.open ? 'OPEN' : 'CLOSED',
       options: this.open ? OPTIONS : [],
       optionsKnown: this.open,
+      proposedValue: this.proposedValue,
     });
     return observation([state], `obs-${this.executions.length}`);
   }
@@ -140,7 +143,7 @@ async function run(
     buildId: 'test',
     observe: () => Promise.resolve(page.observe()),
     execute: (call) => Promise.resolve(page.execute(call)),
-    trustedValues: () => Promise.resolve(new Map([['e1', STATE]])),
+    trustedValues: () => Promise.resolve(new Map([['e1', page.proposedValue]])),
     decide: (input) => Promise.resolve(decide(input)),
   };
   return runAgentLoop(host);
@@ -240,9 +243,63 @@ describe('a decider that types into a dropdown is corrected, and the run continu
     expect(selected?.dropdown?.optionIdChosen).toBe('e1::option::2');
     expect(selected?.dropdown?.verified).toBe(true);
     expect(selected?.dropdown?.displayedSelectionChanged).toBe(true);
+    expect(selected?.dropdown).toMatchObject({
+      openDropdownRequested: false,
+      triggerFound: true,
+      menuFound: true,
+      optionsFoundCount: 3,
+      optionIdsGeneratedCount: 3,
+      optionsPassedToDecisionProvider: true,
+      decisionReturnedTool: 'select_option',
+      decisionReturnedOptionIdPresent: true,
+      optionIdExistsInCurrentOptions: true,
+      actualOptionNodeFound: true,
+      optionClickAttempted: true,
+      optionClickCompleted: true,
+      freshCommittedValueObserved: true,
+      requiredValidationErrorStillPresent: false,
+    });
+
+    const opened = outcome.trace.steps.find((step) => step.tool === 'open_dropdown');
+    expect(opened?.dropdown).toMatchObject({
+      openDropdownRequested: true,
+      triggerFound: true,
+      menuFound: true,
+      optionsFoundCount: 3,
+      optionIdsGeneratedCount: 3,
+      optionClickAttempted: false,
+    });
 
     // Handles and counts only. The applicant's state is not in the export.
     expect(JSON.stringify(outcome.trace.steps.map((step) => step.dropdown))).not.toContain(STATE);
+  });
+
+  it('records when current option handles were actually passed to the choice provider', async () => {
+    const page = new FakePage('A saved degree description with no deterministic alias');
+    const outcome = await runAgentLoop({
+      runId: '11111111-1111-4111-8111-111111111111',
+      buildId: 'test',
+      observe: () => Promise.resolve(page.observe()),
+      execute: (call) => Promise.resolve(page.execute(call)),
+      trustedValues: () => Promise.resolve(new Map([['e1', page.proposedValue]])),
+      chooseChoice: () =>
+        Promise.resolve({
+          decision: 'SELECT',
+          optionId: 'e1::option::2',
+          confidence: 0.9,
+          reason: 'The current choice is the intended one.',
+        }),
+    });
+
+    const selected = outcome.trace.steps.find((step) => step.tool === 'select_option');
+    expect(selected?.dropdown).toMatchObject({
+      llmCalled: true,
+      optionsPassedToDecisionProvider: true,
+      optionIdsGeneratedCount: 3,
+      decisionReturnedTool: 'select_option',
+      decisionReturnedOptionIdPresent: true,
+      optionIdExistsInCurrentOptions: true,
+    });
   });
 
   it('does not report ready while the dropdown is still on its placeholder', async () => {

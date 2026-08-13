@@ -5,7 +5,11 @@ import {
   logicalFieldKey,
   type AgentDecision,
   type AgentPendingQuestion,
+  type AgentRepeatedActionFailureDetail,
   type AgentStepTrace,
+  type AgentTool,
+  type ErrorCode,
+  type InteractionType,
   type PageObservation,
   type ToolExecutionResult,
 } from '@internship-agent/shared';
@@ -34,9 +38,35 @@ export interface AttemptRecord {
   succeeded: boolean;
 }
 
+/** Private inputs used only to compare failed retries without retaining values. */
+export interface AttemptDiagnosticContext {
+  logicalField: string;
+  controlType: InteractionType;
+  errorCode?: ErrorCode;
+  observationSignature: string;
+  optionSetSignature: string;
+  modelReceivedFailureFeedback: boolean;
+}
+
+interface FailedAttemptDiagnostic extends AttemptDiagnosticContext {
+  tool: AgentTool;
+  retryFingerprint: string;
+}
+
+/** FNV-1a is sufficient here: this is an opaque correlation key, not security. */
+function diagnosticFingerprint(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `retry-${(hash >>> 0).toString(36)}`;
+}
+
 export class AgentHistory {
   private readonly steps: AgentStepTrace[] = [];
   private readonly failures = new Map<string, number>();
+  private readonly failedAttemptDiagnostics = new Map<string, FailedAttemptDiagnostic[]>();
   private readonly successes = new Set<string>();
   /** Actions that reached the page. What the run reports having done. */
   private actions = 0;
@@ -60,7 +90,12 @@ export class AgentHistory {
     return `${tool}::${label.toLowerCase().trim()}`;
   }
 
-  record(step: AgentStepTrace, decision: AgentDecision, execution?: ToolExecutionResult): void {
+  record(
+    step: AgentStepTrace,
+    decision: AgentDecision,
+    execution?: ToolExecutionResult,
+    diagnostics?: AttemptDiagnosticContext,
+  ): void {
     this.steps.push(step);
     if (decision.kind === 'ACTION' && decision.action) {
       // Two different counts, and conflating them was wrong.
@@ -82,8 +117,27 @@ export class AgentHistory {
       if (execution?.executed && step.verification === 'VERIFIED') {
         this.successes.add(key);
         this.failures.delete(key);
+        this.failedAttemptDiagnostics.delete(key);
       } else {
         this.failures.set(key, (this.failures.get(key) ?? 0) + 1);
+        const fallbackError = step.errorCode ?? execution?.errorCode;
+        const detail: FailedAttemptDiagnostic = {
+          tool: decision.action.tool,
+          logicalField: diagnostics?.logicalField ?? step.action?.logicalKey ?? step.targetLabel,
+          controlType:
+            diagnostics?.controlType ?? step.action?.controlType ?? step.action?.targetControlType ?? 'UNKNOWN',
+          ...(diagnostics?.errorCode ?? fallbackError
+            ? { errorCode: diagnostics?.errorCode ?? fallbackError }
+            : {}),
+          observationSignature: diagnostics?.observationSignature ?? '',
+          optionSetSignature: diagnostics?.optionSetSignature ?? '',
+          modelReceivedFailureFeedback:
+            diagnostics?.modelReceivedFailureFeedback ?? false,
+          retryFingerprint: this.retryFingerprint(decision.action.tool, step.targetLabel),
+        };
+        const attempts = this.failedAttemptDiagnostics.get(key) ?? [];
+        attempts.push(detail);
+        this.failedAttemptDiagnostics.set(key, attempts);
       }
     }
     if (decision.kind === 'ASK_USER' && decision.question) {
@@ -214,6 +268,48 @@ export class AgentHistory {
    */
   exhausted(tool: string, label: string): boolean {
     return (this.failures.get(this.key(tool, label)) ?? 0) >= AGENT_MAX_REPEATED_FAILURES;
+  }
+
+  /** Number assigned to the next attempt under the unchanged loop-breaker key. */
+  nextRetryCount(tool: string, label: string): number {
+    return (this.failures.get(this.key(tool, label)) ?? 0) + 1;
+  }
+
+  /** Opaque export-safe form of the exact existing `tool + normalized label` key. */
+  retryFingerprint(tool: string, label: string): string {
+    return diagnosticFingerprint(this.key(tool, label));
+  }
+
+  /** Sanitized explanation for every key that reached the existing threshold. */
+  repeatedActionFailureDetails(): AgentRepeatedActionFailureDetail[] {
+    const details: AgentRepeatedActionFailureDetail[] = [];
+    for (const [key, count] of this.failures) {
+      if (count < AGENT_MAX_REPEATED_FAILURES) continue;
+      const attempts = this.failedAttemptDiagnostics.get(key) ?? [];
+      const first = attempts[0];
+      const latest = attempts.at(-1);
+      if (!first || !latest) continue;
+      details.push({
+        event: 'REPEATED_ACTION_FAILURE_DETAIL',
+        logicalField: latest.logicalField.slice(0, 300),
+        controlType: latest.controlType,
+        repeatedTool: latest.tool,
+        retryCount: count,
+        ...(first.errorCode ? { firstErrorCode: first.errorCode } : {}),
+        ...(latest.errorCode ? { latestErrorCode: latest.errorCode } : {}),
+        observationChangedBetweenRetries:
+          new Set(attempts.map((attempt) => attempt.observationSignature)).size > 1,
+        availableOptionsChangedBetweenRetries:
+          new Set(attempts.map((attempt) => attempt.optionSetSignature)).size > 1,
+        modelReceivedFailureFeedback: attempts.some(
+          (attempt) => attempt.modelReceivedFailureFeedback,
+        ),
+        equivalentBecause:
+          'The existing loop breaker uses the same tool and normalized field label; element, observation, section, and block identifiers do not participate.',
+        retryFingerprint: latest.retryFingerprint,
+      });
+    }
+    return details;
   }
 
   /**

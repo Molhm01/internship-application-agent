@@ -3,6 +3,7 @@ import {
   AGENT_ACTION_BUDGET,
   observedElementSchema,
   agentDecisionSchema,
+  agentStepTraceSchema,
   agentToolCallSchema,
   type AgentDecision,
   type AgentToolCall,
@@ -538,6 +539,19 @@ describe('the loop', () => {
           errorCode: 'VALUE_NOT_VERIFIED',
           durationMs: 1,
         } satisfies ToolExecutionResult),
+      decide: (input) =>
+        Promise.resolve(
+          input.history.exhausted('type', 'First Name')
+            ? agentDecisionSchema.parse({
+                kind: 'BLOCKED',
+                reason: 'The existing repeated-action guard exhausted this field.',
+              })
+            : agentDecisionSchema.parse({
+                kind: 'ACTION',
+                reason: 'Retry the known field.',
+                action: { tool: 'type', elementId: 'e1', value: 'Robin' },
+              }),
+        ),
     });
     const outcome = await runAgentLoop(subject);
     // Bounded well below the budget: the history refuses a tool that has failed
@@ -548,6 +562,80 @@ describe('the loop', () => {
     // And it reaches a terminal state rather than spinning.
     expect(['READY_FOR_REVIEW', 'BLOCKED']).toContain(outcome.status);
     expect(outcome.trace.verifiedCount).toBe(0);
+
+    const attempts = outcome.trace.steps.flatMap((step) => (step.action ? [step.action] : []));
+    expect(attempts.map((attempt) => attempt.retryCount)).toEqual([1, 2, 3]);
+    expect(new Set(attempts.map((attempt) => attempt.retryFingerprint)).size).toBe(1);
+    expect(attempts[0]).toMatchObject({
+      step: 0,
+      observationId: 'obs-1',
+      fieldLabel: 'First Name',
+      fieldIntent: '',
+      currentStateCategory: 'EMPTY',
+      toolRequested: 'type',
+      toolValidatorResult: 'ALLOWED',
+      toolExecuted: false,
+      executionResult: 'FAILED',
+      errorCode: 'VALUE_NOT_VERIFIED',
+      freshObservation: false,
+      verificationResult: 'NOT_VERIFIED',
+      durationMs: 1,
+    });
+
+    expect(outcome.trace.failureCode).toBe('AGENT_REPEATED_ACTION_FAILURE');
+    expect(outcome.trace.repeatedActionFailureDetails).toEqual([
+      expect.objectContaining({
+        event: 'REPEATED_ACTION_FAILURE_DETAIL',
+        logicalField: expect.stringContaining('first name'),
+        repeatedTool: 'type',
+        retryCount: 3,
+        firstErrorCode: 'VALUE_NOT_VERIFIED',
+        latestErrorCode: 'VALUE_NOT_VERIFIED',
+        observationChangedBetweenRetries: false,
+        availableOptionsChangedBetweenRetries: false,
+        modelReceivedFailureFeedback: false,
+      }),
+    ]);
+  });
+
+  it('reports changed observations and option sets without exporting option text', () => {
+    const history = new AgentHistory();
+    const decision = agentDecisionSchema.parse({
+      kind: 'ACTION',
+      reason: 'Retry the current option.',
+      action: { tool: 'select_option', elementId: 'e1', optionId: 'e1::option::1' },
+    });
+    for (const [index, optionSetSignature] of ['options-a', 'options-b', 'options-b'].entries()) {
+      const step = agentStepTraceSchema.parse({
+        step: index,
+        observationId: `obs-${index}`,
+        observedElements: 1,
+        requiredOutstanding: 1,
+        decisionType: 'ACTION',
+        tool: 'select_option',
+        targetLabel: 'Education Type',
+        targetSection: 'Education',
+        executed: false,
+        verification: 'NOT_VERIFIED',
+        errorCode: 'OPTION_SELECTION_NOT_COMMITTED',
+      });
+      history.record(step, decision, undefined, {
+        logicalField: 'frame:0|section:education|block:0|intent:education_type',
+        controlType: 'CUSTOM_SELECT',
+        errorCode: 'OPTION_SELECTION_NOT_COMMITTED',
+        observationSignature: index === 0 ? 'state-a' : 'state-b',
+        optionSetSignature,
+        modelReceivedFailureFeedback: false,
+      });
+    }
+
+    expect(history.repeatedActionFailureDetails()[0]).toMatchObject({
+      observationChangedBetweenRetries: true,
+      availableOptionsChangedBetweenRetries: true,
+      modelReceivedFailureFeedback: false,
+    });
+    expect(JSON.stringify(history.repeatedActionFailureDetails())).not.toContain('options-a');
+    expect(JSON.stringify(history.repeatedActionFailureDetails())).not.toContain('options-b');
   });
 
   it('stops when the user cancels', async () => {

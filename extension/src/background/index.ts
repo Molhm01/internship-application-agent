@@ -1776,6 +1776,19 @@ async function runAgentAutofill(targetUrl?: string, requestedRunId?: string): Pr
     });
 
     lastAgentTrace = outcome.trace;
+    // One sanitized production diagnostic per proposed action. These objects
+    // contain field wording, state names, counts, booleans and error codes;
+    // the strict trace schema has nowhere to store an answer or option label.
+    for (const step of outcome.trace.steps) {
+      if (!step.action) continue;
+      console.info('[agent] AGENT_ACTION_DETAIL', {
+        ...step.action,
+        ...(step.dropdown ? { dropdown: step.dropdown } : {}),
+      });
+    }
+    for (const detail of outcome.trace.repeatedActionFailureDetails) {
+      console.info('[agent] REPEATED_ACTION_FAILURE_DETAIL', detail);
+    }
     // Counts and outcomes only — never an answer. `submitActions` is the line
     // that matters: it must be zero, and it is measured rather than asserted.
     console.info('[agent] agent run', {

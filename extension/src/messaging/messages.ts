@@ -26,6 +26,7 @@ import type {
   DropdownSeed,
   AgentToolCall,
   AgentProgress,
+  AgentRunTrace,
   RepeaterDirective,
   ScanApplicationResponse,
   ScanMessage,
@@ -390,6 +391,8 @@ export type ExtensionResponse<M extends ExtensionMessage['type']> = M extends
                                     ? { traces: RunTrace[] }
                                     : M extends 'EXPORT_AUTOFILL_RUN_TRACE'
                                       ? { export: AutofillRunTraceExport } | { error: AgentError }
+                                      : M extends 'EXPORT_AGENT_TRACE'
+                                        ? { trace: AgentRunTrace } | { error: AgentError }
                                       : M extends 'CLEAR_RUN_TRACES'
                                         ? { cleared: true }
                                         : M extends 'GET_AUTOFILL_RUN'
