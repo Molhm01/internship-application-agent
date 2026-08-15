@@ -1,14 +1,18 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ATS_DISPLAY_NAMES, RECONNECT_MESSAGE } from '@internship-agent/shared';
 import { BUILD_ID, BUILD_INFO } from '../generated/buildInfo.js';
 import { useBuildAgreement } from './useBuildAgreement.js';
 import { StatusRow, type StatusTone } from './StatusRow.js';
 import { usePopupState } from './usePopupState.js';
 import { useAutofillState } from './useAutofillState.js';
+import { useAgentProgress } from './useAgentProgress.js';
 import { usePortalRoute } from './usePortalRoute.js';
 import { AutofillPanel } from './AutofillPanel.js';
 import { DocumentsPanel } from './DocumentsPanel.js';
 import { useDocumentState } from './useDocumentState.js';
+import { QuestionQueue, looksSensitive, type QuestionAnswer } from '../components/QuestionQueue.js';
+import { Icon } from '../components/Icon.js';
+import { sendMessage } from '../messaging/messages.js';
 
 const NOT_YET = 'Not analyzed yet';
 
@@ -45,6 +49,10 @@ export function App(): JSX.Element {
   const { status, tab, loading, refresh, scanState, scan, progress, scanError, cancel } =
     usePopupState();
   const autofill = useAutofillState(tab.url);
+  // The agent loop's own broadcasts. Read-only: subscribing to a message the
+  // loop already sends is the whole integration, and nothing here can change
+  // what a run does.
+  const agentProgress = useAgentProgress();
   // Deliberately not conditioned on a bundle, a scan, or a route. The user's own
   // documents are available on any application page, including one reached
   // through a redirect that no bundle can be matched to.
@@ -54,6 +62,8 @@ export function App(): JSX.Element {
   // components are covered, and neither can reach a different verdict because
   // both call `compareBuilds`.
   const buildAgreement = useBuildAgreement();
+  const [savingAnswers, setSavingAnswers] = useState(false);
+  const [answerError, setAnswerError] = useState<string | null>(null);
   // Development detail goes to the console only, and carries no field values —
   // a scan holds whatever the user typed, which can be a password.
   useEffect(() => {
@@ -187,15 +197,76 @@ export function App(): JSX.Element {
   // the whole fix.
   const disconnected = Boolean(tab.url?.startsWith('http')) && !tab.contentScriptReachable;
 
+  /**
+   * Saves the applicant's answers, then runs the agent again over this page.
+   *
+   * There is no channel that injects an answer into a loop already in flight,
+   * and this deliberately does not pretend otherwise: the answers go to the
+   * approved answers library — which the pipeline searches before it asks the
+   * model anything — and the run is started again, where it finds them waiting.
+   *
+   * Nothing here decides that an answer is safe to reuse. `autoFillAllowed` is
+   * true only for an answer the applicant typed for a question the agent asked,
+   * which is the definition of an explicitly given answer; a question that
+   * looks sensitive is stored for review rather than for automatic use.
+   */
+  const submitAnswers = useCallback(
+    async (answers: readonly QuestionAnswer[]): Promise<void> => {
+      setSavingAnswers(true);
+      setAnswerError(null);
+      try {
+        for (const entry of answers) {
+          // A sensitive answer is stored as sensitive. The applicant gave it
+          // explicitly, so it may be used — but it is flagged for review on
+          // every future application rather than reused silently, which is the
+          // difference between an explicit policy and an inference.
+          const sensitive = looksSensitive(entry.question);
+          const result = await sendMessage({
+            type: 'ANSWER_CREATE',
+            answer: {
+              canonicalQuestion: entry.question.question || entry.question.label,
+              aliases: entry.question.label ? [entry.question.label] : [],
+              answerType: 'text',
+              answer: entry.value,
+              category: entry.question.section || 'application',
+              approved: true,
+              autoFillAllowed: true,
+              sensitive,
+              tailoringAllowed: false,
+              requiresReview: sensitive,
+              ...(entry.scope === 'company' && autofill.bundle?.company
+                ? { scope: 'company' as const, scopeReference: autofill.bundle.company }
+                : { scope: 'general' as const }),
+            },
+          });
+          if (result.error) {
+            setAnswerError(result.error.message);
+            return;
+          }
+        }
+        await autofill.run();
+      } finally {
+        setSavingAnswers(false);
+      }
+    },
+    [autofill],
+  );
+
   return (
     <main className="popup">
       <header className="popup__header">
-        <h1>Internship Application Agent</h1>
-        <button className="link-button" onClick={refresh} disabled={loading} type="button">
+        <div className="popup__brand">
+          <span className="popup__mark" aria-hidden="true">
+            <Icon name="activity" size={13} />
+          </span>
+          <h1>Internship Application Agent</h1>
+        </div>
+        <button className="btn--ghost btn--sm" onClick={refresh} disabled={loading} type="button">
           {loading ? 'Checking…' : 'Refresh'}
         </button>
       </header>
       <section aria-label="Connection status" className="panel">
+        <p className="eyebrow">System</p>
         <StatusRow
           label="Agent Server"
           tone={serverTone}
@@ -235,6 +306,7 @@ export function App(): JSX.Element {
         />
       </section>
       <section aria-label="Current page" className="panel">
+        <p className="eyebrow">Page</p>
         <StatusRow
           label="Current Site"
           tone={tab.domain ? 'ok' : 'idle'}
@@ -274,14 +346,22 @@ export function App(): JSX.Element {
       {scanState === 'scanning' ? (
         <section className="panel scan-progress" aria-live="polite">
           <strong>{progress?.message ?? 'Starting read-only scan…'}</strong>
-          <progress max="100" value={progress?.percent ?? 5} />
-          <button type="button" onClick={() => void cancel()}>
+          <div
+            className="progress-track"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress?.percent ?? 5}
+          >
+            <div className="progress-fill" style={{ width: `${progress?.percent ?? 5}%` }} />
+          </div>
+          <button type="button" className="btn--sm" onClick={() => void cancel()}>
             Cancel scan
           </button>
         </section>
       ) : null}
       {scanError ? (
-        <section className="result result--bad" role="alert">
+        <section className="callout callout--bad" role="alert">
           {/*
             A recoverable scan failure says one thing and nothing else. The
             error's own `message` can be a schema rejection, and rendering that
@@ -300,7 +380,7 @@ export function App(): JSX.Element {
         two commits behind a green test suite.
       */}
       {buildAgreement && !buildAgreement.agreed ? (
-        <section aria-label="Application" className="panel result result--bad" role="alert">
+        <section aria-label="Application" className="panel callout callout--bad" role="alert">
           <p>{buildAgreement.message}</p>
         </section>
       ) : disconnected ? (
@@ -317,18 +397,41 @@ export function App(): JSX.Element {
           followingRoute={portal.following}
           onFollowRoute={() => void portal.follow()}
           agentStatus={agentStatus}
+          agentProgress={agentProgress}
         />
       ) : scanState === 'scanning' || loading ? (
         <section aria-label="Application" className="panel">
-          <button type="button" className="primary" disabled>
+          <button type="button" className="primary btn--block" disabled>
             Detecting application form…
           </button>
         </section>
       ) : (
         <section aria-label="Application" className="panel">
-          <p>No supported application form detected on this page</p>
+          <p className="empty-state__body">No supported application form detected on this page</p>
         </section>
       )}
+      {/*
+        The questions the run stopped to ask, rendered from the loop's own
+        pending queue. An unanswered factual question is not an error and is not
+        drawn as one — it is the agent refusing to invent a fact, which is the
+        behaviour this product is built on.
+      */}
+      {agentProgress && agentProgress.pendingQuestions.length > 0 ? (
+        <section aria-label="Agent questions" className="panel">
+          {answerError ? (
+            <p className="callout callout--bad" role="alert">
+              {answerError}
+            </p>
+          ) : null}
+          <QuestionQueue
+            questions={agentProgress.pendingQuestions}
+            {...(autofill.bundle?.company ? { company: autofill.bundle.company } : {})}
+            onSubmit={submitAnswers}
+            submitting={savingAnswers}
+            disabled={autofill.running}
+          />
+        </section>
+      ) : null}
       {/*
         Always rendered, above the bundle-dependent panel. Whether an
         application bundle could be matched to this page has nothing to do with
@@ -337,7 +440,7 @@ export function App(): JSX.Element {
       */}
       <DocumentsPanel state={documents} eligible={eligible} />
       <section aria-label="Actions" className="popup__actions">
-        <button type="button" className="primary" onClick={openSettings}>
+        <button type="button" className="btn--block" onClick={openSettings}>
           Open Settings
         </button>
       </section>
@@ -350,7 +453,10 @@ export function App(): JSX.Element {
           thing that touches the page.
         */}
         <p>AI decides the answer; the deterministic executor is what changes a field.</p>
-        <p>This agent never submits an application.</p>
+        <p className="popup__pledge">
+          <Icon name="shield" size={11} aria-hidden="true" />
+          This agent never submits an application.
+        </p>
         {/*
           Which build this actually is. A stale unpacked extension loaded from a
           sibling copy of the repository is otherwise indistinguishable from a

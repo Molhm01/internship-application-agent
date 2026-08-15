@@ -7,6 +7,8 @@ import {
 } from '@internship-agent/shared';
 import { sendMessage } from '../../messaging/messages.js';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from '../../storage/settings.js';
+import { Field } from '../components/Field.js';
+import { StatusBadge } from '../../components/StatusBadge.js';
 
 /** One rule for "is this the configured model", shared with the server. */
 const matchesInstalledModel = matchesModelName;
@@ -113,6 +115,61 @@ export function AiSettingsSection(): JSX.Element {
         Generated answers use only selected saved evidence, always require review, and are never
         submitted automatically.
       </p>
+
+      {/*
+        What the model layer can do right now, before any of the settings that
+        change it. Three facts, and each is observed rather than configured:
+        whether generation is on, whether Ollama answered, and how many models
+        it reported.
+      */}
+      <section className="connection" aria-label="AI status">
+        <header className="connection__head">
+          <StatusBadge
+            tone={!aiGenerationEnabled ? 'idle' : models === null ? 'danger' : 'verified'}
+            label={
+              !aiGenerationEnabled
+                ? 'AI disabled'
+                : models === null
+                  ? 'Ollama unreachable'
+                  : 'Ollama connected'
+            }
+            size="lg"
+          />
+        </header>
+        <dl className="diagnostics-grid">
+          <div>
+            <dt>Ollama URL</dt>
+            <dd className="mono">{ollamaUrl || 'Unavailable until the server responds'}</dd>
+          </div>
+          <div>
+            <dt>Installed models</dt>
+            <dd className="mono">{models ? models.models.length : '—'}</dd>
+          </div>
+          <div>
+            <dt>Selected model</dt>
+            <dd className="mono">{settings.generationModel || 'None'}</dd>
+          </div>
+        </dl>
+      </section>
+
+      {/*
+        A configured model the server does not have is stated, not absorbed. It
+        is the difference between "the AI is off" and "the AI is on and pointed
+        at something that is not there", and silently keeping the stale name
+        would let a run fail later for a reason the settings page already knew.
+      */}
+      {configuredModelMissing ? (
+        <div className="callout callout--warning" role="alert">
+          <p className="callout__title">Model unavailable</p>
+          <p>
+            <code>{settings.generationModel}</code> is saved as the generation model and Ollama does
+            not report it as installed. Pull it with{' '}
+            <code>ollama pull {settings.generationModel}</code>, or choose one of the installed
+            models below and save.
+          </p>
+        </div>
+      ) : null}
+
       <label className="checkbox-field">
         <input
           type="checkbox"
@@ -124,9 +181,10 @@ export function AiSettingsSection(): JSX.Element {
         />
         Enable grounded AI answer generation
       </label>
-      <label>
-        Generation model
+
+      <Field id="generationModel" label="Generation model">
         <select
+          id="generationModel"
           value={settings.generationModel}
           onChange={(event) => patch({ generationModel: event.target.value })}
           disabled={working || models === null}
@@ -145,10 +203,8 @@ export function AiSettingsSection(): JSX.Element {
             <option value="">No installed models found</option>
           ) : null}
         </select>
-      </label>
-      <p className="section-note">
-        Ollama URL: <code>{ollamaUrl || 'Unavailable until the server responds'}</code>
-      </p>
+      </Field>
+
       <div className="button-row">
         <button type="button" disabled={working} onClick={() => void refreshModels()}>
           Refresh available models
@@ -157,93 +213,106 @@ export function AiSettingsSection(): JSX.Element {
           Test AI generation
         </button>
       </div>
-      <label>
-        Optional validation model
-        <input
-          value={settings.validationModel ?? ''}
-          onChange={(event) => patch({ validationModel: event.target.value.trim() || undefined })}
-        />
-      </label>
-      <label>
-        Temperature
-        <input
-          type="number"
-          min="0"
-          max="1"
-          step="0.05"
-          value={settings.temperature}
-          onChange={(event) => patch({ temperature: Number(event.target.value) })}
-        />
-      </label>
-      <label>
-        Maximum generation tokens
-        <input
-          type="number"
-          min="64"
-          max="8192"
-          value={settings.maximumGenerationTokens}
-          onChange={(event) => patch({ maximumGenerationTokens: Number(event.target.value) })}
-        />
-      </label>
-      <label>
-        Default answer length
-        <select
-          value={settings.defaultAnswerLength}
-          onChange={(event) =>
-            patch({
-              defaultAnswerLength: event.target
-                .value as AiGenerationSettings['defaultAnswerLength'],
-            })
-          }
-        >
-          <option value="very_short">Very short (25–50 words)</option>
-          <option value="short">Short (50–100 words)</option>
-          <option value="medium">Medium (100–175 words)</option>
-          <option value="detailed">Detailed (175–300 words)</option>
-          <option value="field_limit">Use field limit</option>
-        </select>
-      </label>
-      <label>
-        Timeout in seconds
-        <input
-          type="number"
-          min="5"
-          max="180"
-          value={Math.round(settings.generationTimeoutMs / 1000)}
-          onChange={(event) => patch({ generationTimeoutMs: Number(event.target.value) * 1000 })}
-        />
-      </label>
-      <label>
-        Maximum retries
-        <select
-          value={settings.maximumRetries}
-          onChange={(event) => patch({ maximumRetries: Number(event.target.value) })}
-        >
-          <option value="0">No retry</option>
-          <option value="1">One retry</option>
-        </select>
-      </label>
-      <label>
-        Concurrent generations
-        <select
-          value={settings.maximumConcurrentGenerations}
-          onChange={(event) => patch({ maximumConcurrentGenerations: Number(event.target.value) })}
-        >
-          <option value="1">1</option>
-          <option value="2">2</option>
-        </select>
-      </label>
-      <label>
-        Preferred tone
-        <input
-          value={settings.preferredTone}
-          onChange={(event) => patch({ preferredTone: event.target.value })}
-        />
-      </label>
-      <button className="primary" type="button" disabled={working} onClick={() => void save()}>
-        Save AI settings
-      </button>
-      {status ? <p role="status">{status}</p> : null}
+
+      <h3>Generation</h3>
+      <div className="grid grid--2">
+        <Field id="validationModel" label="Optional validation model">
+          <input
+            id="validationModel"
+            value={settings.validationModel ?? ''}
+            onChange={(event) => patch({ validationModel: event.target.value.trim() || undefined })}
+          />
+        </Field>
+        <Field id="preferredTone" label="Preferred tone">
+          <input
+            id="preferredTone"
+            value={settings.preferredTone}
+            onChange={(event) => patch({ preferredTone: event.target.value })}
+          />
+        </Field>
+        <Field id="temperature" label="Temperature">
+          <input
+            id="temperature"
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={settings.temperature}
+            onChange={(event) => patch({ temperature: Number(event.target.value) })}
+          />
+        </Field>
+        <Field id="maximumGenerationTokens" label="Maximum generation tokens">
+          <input
+            id="maximumGenerationTokens"
+            type="number"
+            min="64"
+            max="8192"
+            value={settings.maximumGenerationTokens}
+            onChange={(event) => patch({ maximumGenerationTokens: Number(event.target.value) })}
+          />
+        </Field>
+        <Field id="defaultAnswerLength" label="Default answer length">
+          <select
+            id="defaultAnswerLength"
+            value={settings.defaultAnswerLength}
+            onChange={(event) =>
+              patch({
+                defaultAnswerLength: event.target
+                  .value as AiGenerationSettings['defaultAnswerLength'],
+              })
+            }
+          >
+            <option value="very_short">Very short (25–50 words)</option>
+            <option value="short">Short (50–100 words)</option>
+            <option value="medium">Medium (100–175 words)</option>
+            <option value="detailed">Detailed (175–300 words)</option>
+            <option value="field_limit">Use field limit</option>
+          </select>
+        </Field>
+        <Field id="generationTimeout" label="Timeout in seconds">
+          <input
+            id="generationTimeout"
+            type="number"
+            min="5"
+            max="180"
+            value={Math.round(settings.generationTimeoutMs / 1000)}
+            onChange={(event) => patch({ generationTimeoutMs: Number(event.target.value) * 1000 })}
+          />
+        </Field>
+        <Field id="maximumRetries" label="Maximum retries">
+          <select
+            id="maximumRetries"
+            value={settings.maximumRetries}
+            onChange={(event) => patch({ maximumRetries: Number(event.target.value) })}
+          >
+            <option value="0">No retry</option>
+            <option value="1">One retry</option>
+          </select>
+        </Field>
+        <Field id="maximumConcurrentGenerations" label="Concurrent generations">
+          <select
+            id="maximumConcurrentGenerations"
+            value={settings.maximumConcurrentGenerations}
+            onChange={(event) =>
+              patch({ maximumConcurrentGenerations: Number(event.target.value) })
+            }
+          >
+            <option value="1">1</option>
+            <option value="2">2</option>
+          </select>
+        </Field>
+      </div>
+
+      <div className="options__buttons">
+        <button className="primary" type="button" disabled={working} onClick={() => void save()}>
+          Save AI settings
+        </button>
+      </div>
+      {status ? (
+        <p className="result" role="status">
+          {status}
+        </p>
+      ) : null}
     </>
   );
 }

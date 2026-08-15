@@ -98,7 +98,27 @@ export function SensitiveSection({
         profile.
       </p>
 
-      <div className="policy-table" role="table" aria-label="Sensitive answer policies">
+      {/*
+        Said once, plainly, above the controls. This is the one screen where the
+        product's central rule is the subject rather than the background, and a
+        user who reads nothing else here should still come away knowing that a
+        blank category means the question comes back to them.
+      */}
+      <div className="callout callout--sensitive">
+        <p className="callout__title">The agent never infers these answers</p>
+        <p>
+          Only a choice you have explicitly saved here may be used. A category with no policy is
+          asked, never guessed — and no value stored on this page is ever included in a diagnostic
+          export.
+        </p>
+      </div>
+
+      {/*
+        A group rather than a table role: these rows are a select and sometimes
+        a text box, and announcing them as table cells describes a structure a
+        screen reader user cannot navigate.
+      */}
+      <div className="policy-table" role="group" aria-label="Sensitive answer policies">
         {SENSITIVE_CATEGORIES.map((category) => {
           const policy = policyFor(category);
           const selectId = `policy-${category}`;

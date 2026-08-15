@@ -1,0 +1,752 @@
+/*
+ * The agent's own components.
+ *
+ * `base.css` holds what every product has — a button, an input, a card. This
+ * file holds the four things only this product has, and each one exists to keep
+ * a specific claim honest:
+ *
+ * - `.stages`   Observe → Decide → Act → Verify, driven by run state.
+ * - `.fieldrow` one control, and whether the page *kept* what was written.
+ * - `.question-card` a fact nobody holds, asked rather than invented.
+ * - `.timeline` what actually happened, in order, after the fact.
+ *
+ * The rule from `base.css` continues here: no raw colour, size, radius or
+ * duration. If a value is not a token, it does not belong.
+ */
+
+/* ==========================================================================
+   Observe → Decide → Act → Verify
+
+   Four equal columns, because the four stages are equal. Weighting Act over
+   Verify would be the interface disagreeing with the architecture: this product
+   exists because writing a value and confirming it are different events.
+   ========================================================================== */
+
+.stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4) var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  transition: border-color var(--duration-normal) var(--ease-out);
+}
+
+.stage__marker {
+  display: flex;
+  align-items: center;
+  height: var(--space-3);
+}
+
+.stage__dot {
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--text-faint);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.stage__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.stage__detail {
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-secondary);
+  /* Two lines, then clipped. A stage detail that grows the strip mid-run makes
+     everything below it jump while the user is reading it. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Behind the current stage: done, and quietly so. */
+.stage--done {
+  border-top-color: var(--verified-border);
+}
+
+.stage--done .stage__dot {
+  background: var(--verified);
+}
+
+.stage--done .stage__label {
+  color: var(--text-secondary);
+}
+
+/* The stage actually in flight. The only animated thing on the screen. */
+.stage--active {
+  border-top-color: var(--running);
+}
+
+.stage--active .stage__dot {
+  background: var(--running);
+  box-shadow: 0 0 0 3px var(--running-subtle);
+  animation: stage-pulse 1.6s var(--ease-in-out) infinite;
+}
+
+.stage--active .stage__label {
+  color: var(--running-text);
+}
+
+.stage--ahead .stage__dot,
+.stage--idle .stage__dot {
+  background: var(--border-strong);
+}
+
+@keyframes stage-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px var(--running-subtle);
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+/*
+ * Reduced motion does not remove the marker, it freezes it. The dot is how the
+ * user knows which stage is running; hiding the animation must not hide the
+ * state.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .stage--active .stage__dot {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--running-subtle);
+  }
+}
+
+.stages--compact .stage {
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-3);
+}
+
+/* ==========================================================================
+   Field rows
+
+   The row that has to make "attempted" and "verified" impossible to confuse.
+   The glyph carries it, the word repeats it, and the colour is the third
+   signal rather than the only one.
+   ========================================================================== */
+
+.fieldgroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fieldgroup + .fieldgroup {
+  margin-top: var(--space-6);
+}
+
+.fieldgroup__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.fieldgroup__count {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  font-size: var(--text-3xs);
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+.fieldgroup__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fieldrow {
+  display: grid;
+  grid-template-columns: var(--space-6) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.fieldrow:hover {
+  background: var(--surface-hover);
+}
+
+.fieldrow__glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--space-6);
+  color: var(--text-muted);
+}
+
+.fieldrow__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.fieldrow__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-height: var(--space-6);
+}
+
+.fieldrow__label {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+/* The label is a button when the control can be scrolled to. It must not look
+   like one — the affordance is the underline on hover, not a box. */
+button.fieldrow__label {
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: var(--radius-xs);
+}
+
+button.fieldrow__label:hover {
+  background: none;
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fieldrow__required {
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.fieldrow__section {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/*
+ * The value line, printed only for a settled field. The word "Verified" sits
+ * inside it rather than beside the label so the two cannot be separated by a
+ * later layout change: a value without its verification word is a claim nothing
+ * checked.
+ */
+.fieldrow__value {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.fieldrow__verified {
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--verified-text);
+}
+
+.fieldrow__reason {
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-muted);
+}
+
+/* The live sentence: "Reading available choices". Present tense, and an
+   animated ellipsis so a slow control reads as slow rather than as stopped. */
+.fieldrow__activity {
+  display: inline-flex;
+  align-items: baseline;
+  font-size: var(--text-xs);
+  color: var(--running-text);
+}
+
+.fieldrow__ellipsis::after {
+  content: '';
+  animation: ellipsis 1.4s steps(4, end) infinite;
+}
+
+@keyframes ellipsis {
+  0% {
+    content: '';
+  }
+  25% {
+    content: '.';
+  }
+  50% {
+    content: '..';
+  }
+  75%,
+  100% {
+    content: '...';
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fieldrow__ellipsis::after {
+    content: '…';
+    animation: none;
+  }
+}
+
+.fieldrow__status {
+  padding-top: var(--space-1);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* One tone per row: the glyph and the status word, and nothing else. Filling
+   the row's background with a status colour turns a form of thirty fields into
+   thirty coloured bars, which is unreadable at exactly the moment it matters. */
+.fieldrow--verified .fieldrow__glyph,
+.fieldrow--verified .fieldrow__status {
+  color: var(--verified-text);
+}
+
+.fieldrow--success .fieldrow__glyph,
+.fieldrow--success .fieldrow__status {
+  color: var(--success-text);
+}
+
+.fieldrow--running .fieldrow__glyph,
+.fieldrow--running .fieldrow__status {
+  color: var(--running-text);
+}
+
+.fieldrow--pending .fieldrow__glyph,
+.fieldrow--pending .fieldrow__status {
+  color: var(--pending-text);
+}
+
+.fieldrow--warning .fieldrow__glyph,
+.fieldrow--warning .fieldrow__status {
+  color: var(--warning-text);
+}
+
+.fieldrow--danger .fieldrow__glyph,
+.fieldrow--danger .fieldrow__status {
+  color: var(--danger-text);
+}
+
+.fieldrow--sensitive .fieldrow__glyph,
+.fieldrow--sensitive .fieldrow__status {
+  color: var(--sensitive-text);
+}
+
+.fieldrow--idle .fieldrow__glyph,
+.fieldrow--idle .fieldrow__status {
+  color: var(--text-faint);
+}
+
+/* A row the agent is working on right now gets a rail, so it is findable in a
+   long list without scanning every glyph. */
+.fieldrow--running {
+  background: var(--running-subtle);
+  border-color: var(--running-border);
+}
+
+.fieldrow--pending {
+  background: var(--pending-subtle);
+  border-color: var(--pending-border);
+}
+
+.spinner-glyph {
+  transform-origin: center;
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ==========================================================================
+   Question queue
+
+   The pending tone throughout, deliberately. A question the agent asked rather
+   than guessed is the product working, and rendering it in the failure colour
+   would teach the opposite.
+   ========================================================================== */
+
+.question-queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.question-queue__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.question-queue__head h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.question-queue__lede {
+  margin: var(--space-2) 0 0;
+  max-width: 64ch;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+
+.question-queue__count {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--pending-border);
+  border-radius: var(--radius-md);
+  background: var(--pending-subtle);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--pending-text);
+}
+
+.question-queue__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.question-queue__foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.question-queue__foot .muted {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+}
+
+.question-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border: 1px solid var(--border-default);
+  border-left: 2px solid var(--pending);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+/* Sensitive questions are a different category, not a louder one. The left
+   edge and the badge change; nothing else does. */
+.question-card--sensitive {
+  border-left-color: var(--sensitive);
+}
+
+.question-card__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.question-card__counter {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.question-card__section {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.question-card__head .badge {
+  margin-left: auto;
+}
+
+/* The employer's own wording, and the largest thing on the card. */
+.question-card__question {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  color: var(--text-primary);
+}
+
+.question-card__reason {
+  margin: 0;
+  max-width: 70ch;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+
+.question-card__privacy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--sensitive-border);
+  border-radius: var(--radius-md);
+  background: var(--sensitive-subtle);
+  font-size: var(--text-xs);
+  color: var(--sensitive-text);
+}
+
+.question-card__answer .field {
+  margin: 0;
+}
+
+.question-card__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.question-card__choices button {
+  min-width: var(--space-12);
+}
+
+.question-card__choices .question-card__choice--picked {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+}
+
+.question-card__scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.question-card__scope-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+}
+
+.question-card__scope-choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   Activity timeline
+
+   The record, read after the fact. Quiet by construction: it is the thing the
+   user consults when the summary above it was not enough.
+   ========================================================================== */
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.timeline__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.timeline__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline__event {
+  display: grid;
+  grid-template-columns: auto var(--space-6) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+}
+
+.timeline__time {
+  padding-top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The rail is the vertical line every event hangs off, drawn by the icon cell
+   rather than by a pseudo-element on the list, so a filtered list never leaves
+   a line running past its last event. */
+.timeline__rail {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--space-6);
+  color: var(--text-muted);
+}
+
+.timeline__rail::before,
+.timeline__rail::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 1px;
+  background: var(--border-subtle);
+  transform: translateX(-50%);
+}
+
+.timeline__rail::before {
+  top: calc(var(--space-6) * -1);
+  height: var(--space-4);
+}
+
+.timeline__rail::after {
+  top: calc(var(--space-6) - var(--space-1));
+  height: var(--space-6);
+}
+
+.timeline__event:first-child .timeline__rail::before,
+.timeline__event:last-child .timeline__rail::after {
+  display: none;
+}
+
+.timeline__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.timeline__text {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--text-secondary);
+}
+
+.timeline__detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+.timeline__error {
+  color: var(--danger-text);
+}
+
+.timeline__event--verified .timeline__rail {
+  color: var(--verified-text);
+}
+
+.timeline__event--verified .timeline__text {
+  color: var(--text-primary);
+}
+
+.timeline__event--running .timeline__rail {
+  color: var(--running-text);
+}
+
+.timeline__event--pending .timeline__rail {
+  color: var(--pending-text);
+}
+
+.timeline__event--danger .timeline__rail {
+  color: var(--danger-text);
+}
+
+.timeline__event--warning .timeline__rail {
+  color: var(--warning-text);
+}
+
+.timeline__empty {
+  margin: 0;
+  padding: var(--space-6) 0;
+  font-size: var(--text-sm);
+}
+
+/* ==========================================================================
+   Loading
+
+   A label and a bar. Never a bare spinner: a spinner with no sentence beside it
+   cannot be told apart from a hang.
+   ========================================================================== */
+
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6) 0;
+}
+
+.loading-state__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+}
+
+.loading-state__detail {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}

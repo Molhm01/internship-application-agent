@@ -21,6 +21,7 @@ import {
 import { sendMessage, type ExtensionResponse } from '../../messaging/messages.js';
 import { loadSettings, saveSettings } from '../../storage/settings.js';
 import { BUILD_ID, BUILD_INFO } from '../../generated/buildInfo.js';
+import { ActivityTimeline, eventsFromTrace } from '../../components/ActivityTimeline.js';
 
 interface Diagnostics {
   extensionVersion: string;
@@ -49,6 +50,30 @@ const SYNC_STATUS_ORDER: readonly ProfileFieldStatus[] = [
   'missing',
 ];
 
+/**
+ * The paste a bug report starts with.
+ *
+ * Versions, reachability and the last run's timestamps — the same facts the
+ * grid above prints, in the same order. Deliberately built from the
+ * `Diagnostics` record rather than from the DOM, so a value can never reach the
+ * clipboard that the page does not also show.
+ */
+function debugSummary(diagnostics: Diagnostics): string {
+  return [
+    `Extension ${diagnostics.extensionVersion} · build ${BUILD_ID}`,
+    `Built at ${BUILD_INFO.builtAt} from ${BUILD_INFO.sourceRoot}`,
+    `Server ${value(diagnostics.server?.version)} at ${diagnostics.serverUrl} · status ${value(
+      diagnostics.server?.status,
+    )}`,
+    `Database schema v${value(diagnostics.server?.database.schemaVersion)}`,
+    `AI ${diagnostics.aiEnabled ? 'enabled' : 'disabled'} · Ollama ${value(
+      diagnostics.server?.ollama.state,
+    )} at ${value(diagnostics.server?.ollama.baseUrl)} · model ${value(diagnostics.selectedModel)}`,
+    `Last scan ${value(diagnostics.lastScan?.createdAt)}`,
+    `Last run ${value(diagnostics.lastReport?.completedAt)}`,
+  ].join('\n');
+}
+
 export function DiagnosticsSection(): JSX.Element {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [error, setError] = useState('');
@@ -76,6 +101,7 @@ export function DiagnosticsSection(): JSX.Element {
    * bug can turn it on without a rebuild.
    */
   const [developerMode, setDeveloperMode] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   /**
    * Runs the profile import and shows what it did, key by key.
@@ -273,10 +299,36 @@ export function DiagnosticsSection(): JSX.Element {
   return (
     <section aria-labelledby="diagnostics-heading">
       <h2 id="diagnostics-heading">Diagnostics</h2>
-      <p className="muted">No authentication token or answer text is shown here.</p>
-      <button type="button" onClick={() => setRefresh((current) => current + 1)}>
-        Refresh diagnostics
-      </button>
+      <p className="section-note">
+        A technical summary of this machine's agent: what is installed, what answered, and what the
+        last run did. No authentication token or answer text is shown here.
+      </p>
+      <div className="options__buttons">
+        <button type="button" onClick={() => setRefresh((current) => current + 1)}>
+          Refresh diagnostics
+        </button>
+        {/*
+          A bug report needs the versions and the last outcome, and asking for
+          them one screenshot at a time is how half of them arrive incomplete.
+          Assembled from the same values shown above — nothing is collected here
+          that is not already on the page.
+        */}
+        <button
+          type="button"
+          disabled={!diagnostics}
+          onClick={() => {
+            if (!diagnostics) return;
+            void navigator.clipboard
+              .writeText(debugSummary(diagnostics))
+              .then(() => setCopied(true))
+              .catch((cause: unknown) =>
+                setError(cause instanceof Error ? cause.message : String(cause)),
+              );
+          }}
+        >
+          {copied ? 'Debug summary copied' : 'Copy debug summary'}
+        </button>
+      </div>
       {error ? (
         <p className="result result--bad" role="alert">
           {error}
@@ -451,7 +503,7 @@ export function DiagnosticsSection(): JSX.Element {
           onClick={() => void exportAgentTrace()}
           disabled={agentTraceExporting}
         >
-          {agentTraceExporting ? 'Collecting the Agent runâ€¦' : 'Export Agent Run Trace'}
+          {agentTraceExporting ? 'Collecting the Agent run…' : 'Export Agent Run Trace'}
         </button>
       ) : (
         <p className="muted">Turn on developer mode above to export the production Agent run.</p>
@@ -462,11 +514,23 @@ export function DiagnosticsSection(): JSX.Element {
         </p>
       ) : null}
       {agentTrace ? (
-        <p className="muted">
-          Exported {agentTrace.actionCount} action(s), {agentTrace.verifiedCount} verified, status{' '}
-          {agentTrace.status}
-          {agentTrace.failureCode ? `, failure ${agentTrace.failureCode}` : ''}.
-        </p>
+        <>
+          <p className="muted">
+            Exported {agentTrace.actionCount} action(s), {agentTrace.verifiedCount} verified, status{' '}
+            {agentTrace.status}
+            {agentTrace.failureCode ? `, failure ${agentTrace.failureCode}` : ''}.
+          </p>
+          {/*
+            The same run, in the order it happened. Built from the exported
+            trace's own steps — every line is an event the run recorded, and
+            "verified" appears only where the trace says the page kept the
+            value. Reading the JSON is still possible; needing to is not.
+          */}
+          <ActivityTimeline
+            events={eventsFromTrace(agentTrace)}
+            emptyLabel="This run recorded no steps."
+          />
+        </>
       ) : null}
 
       <h3>Autofill run traces</h3>
@@ -503,124 +567,132 @@ export function DiagnosticsSection(): JSX.Element {
         </p>
       ) : null}
       {exported ? (
-        <ul className="diagnostics-traces">
-          <li>
-            <strong>
-              {exported.trace.fields.length} field
-              {exported.trace.fields.length === 1 ? '' : 's'} exported
-            </strong>{' '}
-            · build {exported.buildId} ·{' '}
-            {Object.entries(exported.trace.finalStatusCounts)
-              .filter(([, count]) => count > 0)
-              .map(([status, count]) => `${count} ${status}`)
-              .join(', ')}
-            {exported.trace.pendingAtCompletion > 0
-              ? ` · ${exported.trace.pendingAtCompletion} still pending`
-              : ''}
-            <ul>
-              {exported.summary.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-            {/*
-              The Repeater Engine Trace.
+        <details className="trace-detail">
+          {/*
+            Collapsed by default. The summary above answers "did the run go
+            well"; this answers "what happened to each control, and why", which
+            is a long read nobody wants unless they are debugging one.
+          */}
+          <summary>Run detail — field by field, dropdowns, dependencies</summary>
+          <ul className="diagnostics-traces">
+            <li>
+              <strong>
+                {exported.trace.fields.length} field
+                {exported.trace.fields.length === 1 ? '' : 's'} exported
+              </strong>{' '}
+              · build {exported.buildId} ·{' '}
+              {Object.entries(exported.trace.finalStatusCounts)
+                .filter(([, count]) => count > 0)
+                .map(([status, count]) => `${count} ${status}`)
+                .join(', ')}
+              {exported.trace.pendingAtCompletion > 0
+                ? ` · ${exported.trace.pendingAtCompletion} still pending`
+                : ''}
+              <ul>
+                {exported.summary.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              {/*
+                The Repeater Engine Trace.
 
-              Shown separately because it is the one part of a run that cannot
-              be read off the field list: a Work Experience block that was never
-              created has no field to appear as unanswered, so "you have one job
-              saved" and "this page's Add button was never pressed" produced
-              identical field-by-field exports. These lines are the difference,
-              and they carry indices and counts only — never an employer or a
-              school.
-            */}
-            {/*
-              The Dependency Engine Trace.
+                Shown separately because it is the one part of a run that cannot
+                be read off the field list: a Work Experience block that was never
+                created has no field to appear as unanswered, so "you have one job
+                saved" and "this page's Add button was never pressed" produced
+                identical field-by-field exports. These lines are the difference,
+                and they carry indices and counts only — never an employer or a
+                school.
+              */}
+              {/*
+                The Dependency Engine Trace.
 
-              Its own list because it answers what the field list cannot:
-              "State is empty" is the same sentence whether Country was never
-              answered, whether the page never rebuilt the region list, or
-              whether the list was rebuilt and the saved state genuinely is not
-              on it. Identities, fingerprint counts and codes — never an option
-              text and never an answer.
-            */}
-            {exported.trace.dependencies.length > 0 ? (
-              <>
-                <strong>Dependency Engine</strong>
-                <ul className="diagnostics-dependencies">
-                  {exported.trace.dependencies.map((edge) => (
-                    <li key={`${edge.parent.nodeId}→${edge.dependent.nodeId}`}>
-                      {describeDependency(edge)}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : null}
-            {exported.trace.repeaters.length > 0 ? (
-              <>
-                <strong>Repeater Engine</strong>
-                <ul className="diagnostics-repeaters">
-                  {exported.trace.repeaters.map((section) => (
-                    <li key={`${section.type}:${section.frameId ?? 0}`}>
-                      {describeRepeaterSection(section)}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : null}
-            {/*
-              The Live Dropdown Trace.
+                Its own list because it answers what the field list cannot:
+                "State is empty" is the same sentence whether Country was never
+                answered, whether the page never rebuilt the region list, or
+                whether the list was rebuilt and the saved state genuinely is not
+                on it. Identities, fingerprint counts and codes — never an option
+                text and never an answer.
+              */}
+              {exported.trace.dependencies.length > 0 ? (
+                <>
+                  <strong>Dependency Engine</strong>
+                  <ul className="diagnostics-dependencies">
+                    {exported.trace.dependencies.map((edge) => (
+                      <li key={`${edge.parent.nodeId}→${edge.dependent.nodeId}`}>
+                        {describeDependency(edge)}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {exported.trace.repeaters.length > 0 ? (
+                <>
+                  <strong>Repeater Engine</strong>
+                  <ul className="diagnostics-repeaters">
+                    {exported.trace.repeaters.map((section) => (
+                      <li key={`${section.type}:${section.frameId ?? 0}`}>
+                        {describeRepeaterSection(section)}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {/*
+                The Live Dropdown Trace.
 
-              The record a failure on a real employer page is diagnosed from
-              without another rewrite. One line per option control, naming which
-              pass found it, how the control is built, how its menu was located,
-              and the *first* stage that did not happen — because everything
-              after that stage is a consequence of it.
+                The record a failure on a real employer page is diagnosed from
+                without another rewrite. One line per option control, naming which
+                pass found it, how the control is built, how its menu was located,
+                and the *first* stage that did not happen — because everything
+                after that stage is a consequence of it.
 
-              Stage names, counts and codes only. `liveDropdownTraceSchema` is
-              strict and has no member able to hold an option label, a displayed
-              value, or an answer, so this list cannot leak one even if a future
-              caller tries.
-            */}
-            {/*
-              What the profile could answer, before anything about controls.
+                Stage names, counts and codes only. `liveDropdownTraceSchema` is
+                strict and has no member able to hold an option label, a displayed
+                value, or an answer, so this list cannot leak one even if a future
+                caller tries.
+              */}
+              {/*
+                What the profile could answer, before anything about controls.
 
-              The first thing to read when a run comes back with unfilled
-              dropdowns, because two different failures look identical from
-              outside: a control that could not be driven, and a control with
-              nothing to be filled from. Two of Lincoln Electric's — Education
-              Country and Education State — are the second kind, and no repair
-              to a dropdown would ever have fixed them.
+                The first thing to read when a run comes back with unfilled
+                dropdowns, because two different failures look identical from
+                outside: a control that could not be driven, and a control with
+                nothing to be filled from. Two of Lincoln Electric's — Education
+                Country and Education State — are the second kind, and no repair
+                to a dropdown would ever have fixed them.
 
-              Booleans and counts. Nothing here can hold a saved value.
-            */}
-            {exported.trace.profileAvailability ? (
-              <>
-                <strong>Profile data available to this run</strong>
-                <ul className="diagnostics-availability">
-                  {describeAvailabilityGaps(exported.trace.profileAvailability).map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </>
-            ) : null}
-            {exported.trace.dropdownEngineTraces.length > 0 ? (
-              <>
-                <strong>Dropdown Engine — live trace</strong>
-                <p className="muted">
-                  {exported.trace.optionActionsDeferred} option action
-                  {exported.trace.optionActionsDeferred === 1 ? '' : 's'} deferred to this engine ·{' '}
-                  {exported.trace.legacyOptionExecutions} driven by the retired executor
-                  {exported.trace.legacyOptionExecutions === 0 ? ' (as it must be)' : ''}
-                </p>
-                <ul className="diagnostics-dropdowns">
-                  {exported.trace.dropdownEngineTraces.map((entry) => (
-                    <li key={entry.dropdownId}>{describeLiveDropdown(entry)}</li>
-                  ))}
-                </ul>
-              </>
-            ) : null}
-          </li>
-        </ul>
+                Booleans and counts. Nothing here can hold a saved value.
+              */}
+              {exported.trace.profileAvailability ? (
+                <>
+                  <strong>Profile data available to this run</strong>
+                  <ul className="diagnostics-availability">
+                    {describeAvailabilityGaps(exported.trace.profileAvailability).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {exported.trace.dropdownEngineTraces.length > 0 ? (
+                <>
+                  <strong>Dropdown Engine — live trace</strong>
+                  <p className="muted">
+                    {exported.trace.optionActionsDeferred} option action
+                    {exported.trace.optionActionsDeferred === 1 ? '' : 's'} deferred to this engine
+                    · {exported.trace.legacyOptionExecutions} driven by the retired executor
+                    {exported.trace.legacyOptionExecutions === 0 ? ' (as it must be)' : ''}
+                  </p>
+                  <ul className="diagnostics-dropdowns">
+                    {exported.trace.dropdownEngineTraces.map((entry) => (
+                      <li key={entry.dropdownId}>{describeLiveDropdown(entry)}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+            </li>
+          </ul>
+        </details>
       ) : null}
       {traces.length === 0 ? (
         <p className="muted">No autofill run has been recorded yet.</p>

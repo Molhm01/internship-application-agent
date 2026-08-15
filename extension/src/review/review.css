@@ -1,6 +1,15 @@
+/*
+ * The detected-field preview.
+ *
+ * A developer surface — it is reached only with developer mode on — and it is
+ * held to the same palette as the rest of the product. It previously painted
+ * white cards on a pale blue page against variables that no longer exist, which
+ * under the dark token set rendered as white boxes with invisible borders.
+ */
+
 body {
   min-width: 760px;
-  background: #f4f7fb;
+  background: var(--surface-base);
 }
 
 .review-shell {
@@ -23,11 +32,11 @@ body {
 
 .eyebrow {
   margin: 0;
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 700;
+  color: var(--accent-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--tracking-wider);
 }
 
 .review-actions {
@@ -38,7 +47,7 @@ body {
 }
 
 .danger {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .scan-banner {
@@ -54,15 +63,15 @@ body {
   grid-template-columns: repeat(5, minmax(150px, 1fr));
   gap: 1px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--border);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--border-default);
 }
 
 .summary div {
   min-width: 0;
   padding: 12px;
-  background: white;
+  background: var(--surface-raised);
 }
 
 .summary span,
@@ -88,9 +97,9 @@ body {
   gap: 12px;
   margin: 20px 0;
   padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: white;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
 }
 
 .filters label {
@@ -125,9 +134,9 @@ body {
 .field-card {
   overflow: hidden;
   padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: white;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
 }
 
 .field-card header {
@@ -175,28 +184,28 @@ body {
   align-self: flex-start;
   flex: 0 0 auto;
   padding: 4px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .confidence--high {
-  color: #17603a;
-  background: #dff5e8;
+  color: var(--success-text);
+  background: var(--success-subtle);
 }
 
 .confidence--medium {
-  color: #775a00;
-  background: #fff1bd;
+  color: var(--warning-text);
+  background: var(--warning-subtle);
 }
 
 .confidence--low {
-  color: #8b2424;
-  background: #ffe1e1;
+  color: var(--danger-text);
+  background: var(--danger-subtle);
 }
 
 .warnings {
-  color: #8b4c00;
+  color: var(--warning-text);
 }
 
 @media (max-width: 1000px) {

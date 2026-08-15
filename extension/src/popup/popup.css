@@ -1,170 +1,440 @@
+/*
+ * The popup.
+ *
+ * A 400px column that sits beside an employer's application page. Everything in
+ * it answers one of three questions, in this order: can the agent work right
+ * now, what is it doing to this page, and what is left for me. Anything that
+ * answers none of those belongs in settings.
+ *
+ * Composed entirely from `base.css` and `components.css`. Nothing here restates
+ * a button, an input or a badge, and nothing here introduces a raw value.
+ */
+
 body {
-  width: 360px;
-  min-height: 200px;
+  /* Wide enough for a field row — label, live activity sentence and status word
+     on one line — and narrow enough to stay a popup. */
+  width: 400px;
+  min-height: 220px;
 }
 
 .popup {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
+  gap: var(--space-5);
+  padding: var(--space-5);
 }
+
+/* --------------------------------------------------------------- header --- */
 
 .popup__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.popup__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.popup__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-7);
+  height: var(--space-7);
+  flex-shrink: 0;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--accent-subtle);
+  color: var(--accent-text);
 }
 
 .popup__header h1 {
-  font-size: 14px;
-  line-height: 1.3;
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.005em;
+  line-height: var(--leading-tight);
+}
+
+/* ---------------------------------------------------------------- panels --- */
+
+/* The eyebrow that names a panel. Set on the panel itself rather than in a
+   header element so a panel of status rows stays one flat list. */
+.panel > .eyebrow {
+  margin: 0 0 var(--space-3);
 }
 
 .popup__actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
+/* ---------------------------------------------------------------- footer --- */
+
 .popup__footer {
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .popup__footer p {
-  margin: 0 0 4px;
-  line-height: 1.4;
+  margin: 0;
+  line-height: var(--leading-snug);
+}
+
+/* The one promise the product makes, and it is never a decoration: given its
+   own line, its own glyph, and a colour that is not the failure colour. */
+.popup__pledge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--verified-text);
+}
+
+.popup__build {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+.popup__build--path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scan-progress {
   display: grid;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
-.scan-progress progress {
-  width: 100%;
+.scan-progress strong {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
 }
 
-@media (max-width: 340px) {
-  .popup__actions {
-    grid-template-columns: 1fr;
-  }
+/* ============================================================== the agent ===
+   The panel the popup exists for: which application, what state the run is in,
+   and what it left behind.
+   ========================================================================== */
+
+.agent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
 }
 
-/* The application panel: which job is loaded and what a run left behind. */
+.agent__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.agent__identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.agent__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  letter-spacing: -0.01em;
+}
+
+.agent__meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.agent__pledge {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--verified-text);
+}
+
+.agent__pledge svg {
+  flex-shrink: 0;
+  margin-top: var(--space-1);
+}
+
 .autofill__ready {
   display: grid;
-  gap: 4px;
-  line-height: 1.4;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
 }
 
 .autofill__documents {
-  list-style: none;
+  display: grid;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
   color: var(--text-muted);
-  font-size: 11px;
-}
-
-.autofill__documents li {
-  padding: 1px 0;
 }
 
 .autofill__analysis {
-  color: var(--text-muted);
-  font-size: 11px;
   margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-muted);
 }
 
 .autofill__never-submits {
-  color: var(--text-muted);
-  font-size: 11px;
-  margin: 4px 0 0;
-}
-
-/* One row per field still needing a person. Clicking a row scrolls to it. */
-.review-list {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-
-.review-list li {
-  display: grid;
-  gap: 2px;
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-}
-
-.review-list__badge {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
   color: var(--text-muted);
 }
 
-.review-list__reason {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-/* A card, not a row: these are the two or three questions the run could not
-   answer, and they should read as things to do rather than as list entries. */
-.review-list__card {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px;
-}
-
-/* The five numbers after a run. Laid out as a plain list so the labels stay
-   legible at popup width instead of collapsing into one run-on line. */
-.autofill__summary {
+.autofill__routes {
   display: grid;
-  gap: 2px;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+/* ------------------------------------------------------------ live run --- */
+
+.agentrun {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--running-border);
+  border-radius: var(--radius-lg);
+  background: var(--running-subtle);
+}
+
+.agentrun__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.agentrun__phase {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.agentrun__elapsed {
+  flex-shrink: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.agentrun__meter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.agentrun__meter .progress-track {
+  flex: 1;
+}
+
+.agentrun__count {
+  flex-shrink: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-secondary);
+}
+
+.agentrun__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+}
+
+/* Inside the run card the rows sit on the card's own ground, so the hover and
+   the running tint of `.fieldrow` would fight it. */
+.agentrun__fields .fieldrow {
+  padding-left: 0;
+  padding-right: 0;
+  background: none;
+  border-color: transparent;
+}
+
+.agentrun__fields .fieldrow:hover {
+  background: none;
+}
+
+.agentrun__more {
+  margin: 0;
+  font-size: var(--text-2xs);
+}
+
+.agentrun__cancel {
+  align-self: flex-start;
+}
+
+/* ---------------------------------------------------------- run report --- */
+
+.runreport {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.runreport__verdict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.runreport__headline {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+
+/* The run's numbers. One line each, separated by hairlines, with a status dot
+   carrying the tone — a table without the table furniture. */
+.autofill__summary {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.runstat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.runstat:last-child {
+  border-bottom: 0;
+}
+
+.runstat .dot {
+  flex-shrink: 0;
+  /* Baseline-aligned rather than centred: the row is one line of text, and a
+     dot floating above it reads as a bullet on a list of its own. */
+  transform: translateY(-1px);
+}
+
+.runstat__line {
+  font-variant-numeric: tabular-nums;
+}
+
+.runstat--verified {
+  color: var(--text-primary);
+}
+
+.runstat--pending .runstat__line {
+  color: var(--pending-text);
+}
+
+.runstat--danger .runstat__line {
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------ documents --- */
+
+.documents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .documents__header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-4);
 }
 
 .documents__header h2 {
-  font-size: 13px;
   margin: 0;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .documents .primary {
-  margin-top: 10px;
   width: 100%;
+  margin-top: var(--space-3);
 }
 
-.documents__hint,
-.documents__error {
-  font-size: 11px;
-  line-height: 1.4;
-  margin: 6px 0 0;
+.documents__hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--text-muted);
 }
 
 .documents__error {
-  color: #b3261e;
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--danger-text);
 }
 
 .documents__result {
-  margin-top: 10px;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  padding-top: 8px;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ==========================================================================
+   Narrow windows
+
+   A popup can be rendered narrower than its requested width — on a small
+   screen, and in a side panel. The strip is the only thing that cannot
+   survive it, so it stacks; nothing else changes.
+   ========================================================================== */
+
+@media (max-width: 360px) {
+  .stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent__head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }

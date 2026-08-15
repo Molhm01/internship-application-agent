@@ -3,6 +3,7 @@ import {
   PAGE_KIND_LABELS,
   PORTAL_ROUTE_LABELS,
   isSettledStatus,
+  type AgentProgress,
   type ApplicationAutofillReport,
   type FinalFieldStatus,
   type NavigationState,
@@ -10,6 +11,11 @@ import {
   type PortalRouteResponse,
   type Profile,
 } from '@internship-agent/shared';
+import { AgentRun } from './AgentRun.js';
+import { FieldStatusRow } from '../components/FieldStatusRow.js';
+import { StatusBadge } from '../components/StatusBadge.js';
+import { Icon } from '../components/Icon.js';
+import { displayStatusFor, type FieldDisplayStatus } from '../components/fieldStatus.js';
 import type { AutofillState } from './useAutofillState.js';
 import type { AutofillRunPhaseState } from '../storage/runState.js';
 
@@ -87,6 +93,8 @@ interface AutofillPanelProps {
   onFollowRoute?: () => void;
   /** One sentence about the AI agent, or null while it is still unknown. */
   agentStatus: string | null;
+  /** The agent loop's own live progress, when a run is broadcasting it. */
+  agentProgress?: AgentProgress | null;
   /** Shows the diagnostic surfaces. Off for anyone applying for a job. */
   developerMode?: boolean;
 }
@@ -134,7 +142,7 @@ function RouteChoices({
 
   if (route.decision === 'blocked') {
     return (
-      <section className="result result--bad" role="alert">
+      <section className="callout callout--bad" role="alert">
         {route.reason}
       </section>
     );
@@ -148,7 +156,12 @@ function RouteChoices({
             ? `${PORTAL_ROUTE_LABELS[route.takenIntent]}: ${route.reason}`
             : route.reason}
         </p>
-        <button type="button" className="primary" disabled={following} onClick={onFollow}>
+        <button
+          type="button"
+          className="primary btn--block"
+          disabled={following}
+          onClick={onFollow}
+        >
           {following ? 'Continuing…' : 'Continue on this page'}
         </button>
       </div>
@@ -186,15 +199,9 @@ function RouteChoices({
  * whose status is settled cannot appear here, because "settled" and "not on this
  * list" are now the same statement.
  *
- * One card per unresolved question, in the page's own words, so dealing with it
+ * One row per unresolved question, in the page's own words, so dealing with it
  * takes a click rather than a trip through the form.
  */
-const OUTSTANDING_BADGES: Record<string, string> = {
-  USER_CONFIRMATION_REQUIRED: 'Needs your answer',
-  FAILED_EXECUTION: 'Autofill failed',
-  BLOCKED: 'Blocked — needs you',
-};
-
 function ReviewList({
   report,
   onFocus,
@@ -211,21 +218,27 @@ function ReviewList({
           ? 'One field still needs you:'
           : `${outstanding.length} fields still need you:`}
       </p>
-      <ul className="review-list">
-        {outstanding.map((outcome) => (
-          <li key={outcome.fieldId} className="review-list__card">
-            <strong className="review-list__badge">
-              {outcome.annotation === 'sensitive_decision'
-                ? 'Your decision'
-                : (OUTSTANDING_BADGES[outcome.status] ?? 'Needs your answer')}
-              {outcome.required ? ' · required' : ''}
-            </strong>
-            <button type="button" className="link-button" onClick={() => onFocus(outcome.fieldId)}>
-              {outcome.label || 'Unlabelled question'}
-            </button>
-            {outcome.reason ? <span className="review-list__reason">{outcome.reason}</span> : null}
-          </li>
-        ))}
+      <ul className="fieldgroup__list">
+        {outstanding.map((outcome) => {
+          // The annotation is the run's own reading of *why* a field is
+          // outstanding, and it outranks the status for one case only: a
+          // sensitive decision is the applicant's to make rather than a fact
+          // the agent failed to find.
+          const status: FieldDisplayStatus =
+            outcome.annotation === 'sensitive_decision'
+              ? 'SENSITIVE'
+              : displayStatusFor(outcome.status);
+          return (
+            <FieldStatusRow
+              key={outcome.fieldId}
+              label={outcome.label || 'Unlabelled question'}
+              status={status}
+              required={outcome.required}
+              {...(outcome.reason ? { reason: outcome.reason } : {})}
+              onFocus={() => onFocus(outcome.fieldId)}
+            />
+          );
+        })}
       </ul>
     </>
   );
@@ -256,6 +269,35 @@ export function summarize(
   };
 }
 
+/**
+ * One line of the run summary.
+ *
+ * The label and the number stay inside a single element on purpose. Splitting
+ * them into two would let the layout separate a number from the thing it
+ * counts, and it would break the reading of the line as the one sentence it is
+ * — "Filled and verified: 12" is a claim, not a label and a figure that happen
+ * to sit on the same row. The tone is carried by a dot, which is an element and
+ * therefore adds nothing to the text.
+ */
+function Stat({
+  label,
+  value,
+  tone = 'idle',
+}: {
+  label: string;
+  value: number | string;
+  tone?: 'verified' | 'pending' | 'danger' | 'idle';
+}): JSX.Element {
+  return (
+    <li className={`runstat runstat--${tone}`}>
+      <span className={`dot dot--${tone}`} aria-hidden="true" />
+      <span className="runstat__line">
+        {label}: {value}
+      </span>
+    </li>
+  );
+}
+
 export function AutofillPanel({
   state,
   eligible,
@@ -265,6 +307,7 @@ export function AutofillPanel({
   followingRoute = false,
   onFollowRoute,
   agentStatus,
+  agentProgress = null,
   developerMode = false,
 }: AutofillPanelProps): JSX.Element {
   const { bundle, loadingBundle, progress, report, error } = state;
@@ -288,16 +331,55 @@ export function AutofillPanel({
     navigation.kind === 'application_form' ||
     navigation.kind === 'account_creation' ||
     navigation.kind === 'unknown';
+  const outstanding =
+    summary.USER_CONFIRMATION_REQUIRED + summary.FAILED_EXECUTION + summary.BLOCKED;
 
   return (
-    <section aria-label="Application" className="panel">
-      {loadingBundle ? (
-        <p className="autofill__ready">Checking for a loaded application…</p>
-      ) : bundle ? (
+    <section aria-label="Application" className="panel agent">
+      {/*
+        The identity strip. The employer and the role, when a bundle names them,
+        because a panel that says "Application" over an unnamed form is exactly
+        as informative as no panel at all.
+      */}
+      <header className="agent__head">
+        <div className="agent__identity">
+          <span className="eyebrow">Application agent</span>
+          {loadingBundle ? (
+            <p className="agent__title muted">Checking for a loaded application…</p>
+          ) : bundle ? (
+            <h2 className="agent__title">
+              Ready for {bundle.company} — {bundle.jobTitle}
+            </h2>
+          ) : (
+            <h2 className="agent__title">Saved profile</h2>
+          )}
+        </div>
+        <StatusBadge
+          tone={
+            active
+              ? 'running'
+              : state.runState === 'FAILED'
+                ? 'danger'
+                : state.runState === 'COMPLETED'
+                  ? 'verified'
+                  : 'idle'
+          }
+          label={
+            active
+              ? 'Running'
+              : state.runState === 'FAILED'
+                ? 'Failed'
+                : state.runState === 'COMPLETED'
+                  ? 'Complete'
+                  : 'Idle'
+          }
+          icon={active ? 'spinner' : state.runState === 'COMPLETED' ? 'check-double' : 'circle'}
+          live={active}
+        />
+      </header>
+
+      {!loadingBundle && bundle ? (
         <div className="autofill__ready">
-          <strong>
-            Ready for {bundle.company} — {bundle.jobTitle}
-          </strong>
           <ul className="autofill__documents">
             <li>
               {bundle.resume ? '✓' : '—'} Tailored résumé
@@ -338,19 +420,41 @@ export function AutofillPanel({
             </p>
           ) : null}
         </div>
-      ) : (
+      ) : null}
+
+      {!loadingBundle && !bundle ? (
         <p className="autofill__ready">
           No application loaded from Internship Pilot, so no tailored résumé or cover letter is
           available here. Autofill still works from your saved profile on any application page.
         </p>
-      )}
-
-      {navigation ? (
-        <p className="autofill__analysis">Page: {PAGE_KIND_LABELS[navigation.kind]}</p>
       ) : null}
 
+      {/*
+        The page facts, in one strip rather than as four separate sentences: the
+        kind of page, what the scan found on it, and what the AI can do here.
+      */}
+      <div className="agent__meta">
+        {navigation ? (
+          <p className="autofill__analysis">Page: {PAGE_KIND_LABELS[navigation.kind]}</p>
+        ) : null}
+
+        {fieldsDetected !== null ? (
+          <p className="autofill__analysis">
+            Page analysis: {fieldsDetected} {fieldsDetected === 1 ? 'question' : 'questions'} found
+            {navigation?.actions.length
+              ? `, ${navigation.actions.length} navigation ${
+                  navigation.actions.length === 1 ? 'control' : 'controls'
+                }`
+              : ''}
+            .
+          </p>
+        ) : null}
+
+        {agentStatus ? <p className="autofill__analysis">{agentStatus}</p> : null}
+      </div>
+
       {navigation?.blockedReason ? (
-        <section className="result result--bad" role="alert">
+        <section className="callout callout--bad" role="alert">
           {navigation.blockedReason}
         </section>
       ) : null}
@@ -366,20 +470,6 @@ export function AutofillPanel({
         </p>
       ) : null}
 
-      {agentStatus ? <p className="autofill__analysis">{agentStatus}</p> : null}
-
-      {fieldsDetected !== null ? (
-        <p className="autofill__analysis">
-          Page analysis: {fieldsDetected} {fieldsDetected === 1 ? 'question' : 'questions'} found
-          {navigation?.actions.length
-            ? `, ${navigation.actions.length} navigation ${
-                navigation.actions.length === 1 ? 'control' : 'controls'
-              }`
-            : ''}
-          .
-        </p>
-      ) : null}
-
       {/*
         Driven by the run state, not by a separate `running` flag. The two used
         to be able to disagree — an adopted run left `running` true while the
@@ -387,30 +477,46 @@ export function AutofillPanel({
         button reading "Ready", a frozen 2/27 bar and 0s elapsed.
       */}
       {active ? (
-        <div className="scan-progress" aria-live="polite">
-          <strong>{RUN_STATE_LABELS[state.runState]}</strong>
-          <span className="autofill__analysis">
-            {formatElapsed(state.elapsedMs)} elapsed
-            {progress?.fieldsTotal
-              ? ` · ${progress.fieldsCompleted}/${progress.fieldsTotal} fields`
-              : ''}
-          </span>
-          <progress max={progress?.fieldsTotal || 1} value={progress?.fieldsCompleted ?? 0} />
-          <button type="button" onClick={() => void state.cancel()}>
-            Cancel
-          </button>
-        </div>
+        <AgentRun
+          runState={state.runState}
+          progress={agentProgress}
+          fieldsDetected={fieldsDetected}
+          {...(progress?.fieldsCompleted === undefined
+            ? {}
+            : { fieldsCompleted: progress.fieldsCompleted })}
+          {...(progress?.fieldsTotal === undefined ? {} : { fieldsTotal: progress.fieldsTotal })}
+          phaseLabel={RUN_STATE_LABELS[state.runState]}
+          elapsed={`${formatElapsed(state.elapsedMs)} elapsed`}
+          onCancel={() => void state.cancel()}
+        />
       ) : null}
 
       {error && !active ? (
-        <section className="result result--bad" role="alert">
-          <strong>{error.code}</strong> {error.message}
-          <span className="status-row__action">{error.suggestedAction}</span>
+        <section className="error-state" role="alert">
+          <p className="error-state__title">{RUN_STATE_LABELS.FAILED}</p>
+          <p className="error-state__body">{error.message}</p>
+          <p className="error-state__action">{error.suggestedAction}</p>
+          <p className="error-state__detail mono">{error.code}</p>
         </section>
       ) : null}
 
       {report && !active ? (
-        <section className="result" role="status">
+        <section className="runreport" role="status">
+          {/*
+            The verdict, said once and in the product's own words. "Ready for
+            review" is a claim about every field on the page, so it is only made
+            when nothing is outstanding; anything else says how much is left.
+          */}
+          <div className="runreport__verdict">
+            <span className="eyebrow">
+              {outstanding === 0 ? 'Application ready for review' : 'Run finished'}
+            </span>
+            <p className="runreport__headline">
+              {outstanding === 0
+                ? 'Every question the agent could reach is answered and confirmed against the page.'
+                : `${outstanding} ${outstanding === 1 ? 'question needs' : 'questions need'} you before this application is complete.`}
+            </p>
+          </div>
           {/*
             Warnings first. "Almost nothing could be answered from saved data"
             is the one sentence that explains a page of unanswered questions,
@@ -420,12 +526,6 @@ export function AutofillPanel({
           {report.warnings.length > 0 ? (
             <p className="autofill__never-submits">{report.warnings[0]}</p>
           ) : null}
-          {/*
-            The five numbers the user actually wants after a run, named rather
-            than abbreviated. "Needs confirmation" is the only one that asks
-            anything of them, and the list below it holds exactly those fields —
-            not all 26.
-          */}
           {/*
             The status lines — filled, already correct, optional, needs you,
             could not fill, blocked — partition the fields, so they sum to
@@ -437,21 +537,25 @@ export function AutofillPanel({
             filled.
           */}
           <ul className="autofill__summary">
-            <li>Detected: {summary.detected}</li>
-            <li>Filled and verified: {summary.FILLED_VERIFIED}</li>
-            <li>Optional blank: {summary.OPTIONAL_LEFT_BLANK}</li>
-            <li>Needs your answer: {summary.USER_CONFIRMATION_REQUIRED}</li>
-            <li>Failed: {summary.FAILED_EXECUTION}</li>
-            <li>Blocked: {summary.BLOCKED}</li>
-            <li>Already valid: {summary.SKIPPED_ALREADY_VALID}</li>
-            <li>Elapsed time: {formatElapsed(report.totalDurationMs)}</li>
+            <Stat label="Detected" value={summary.detected} />
+            <Stat label="Filled and verified" value={summary.FILLED_VERIFIED} tone="verified" />
+            <Stat label="Optional blank" value={summary.OPTIONAL_LEFT_BLANK} tone="idle" />
+            <Stat
+              label="Needs your answer"
+              value={summary.USER_CONFIRMATION_REQUIRED}
+              tone="pending"
+            />
+            <Stat label="Failed" value={summary.FAILED_EXECUTION} tone="danger" />
+            <Stat label="Blocked" value={summary.BLOCKED} tone="danger" />
+            <Stat label="Already valid" value={summary.SKIPPED_ALREADY_VALID} />
+            <Stat label="Elapsed time" value={formatElapsed(report.totalDurationMs)} />
             {/*
               Not part of the partition: an upload that verified is already
               counted under "Filled and verified". It is here because "did my
               résumé actually go in?" is the one question the six statuses
               cannot answer on their own.
             */}
-            <li>Documents uploaded: {report.documentsAttached}</li>
+            <Stat label="Documents uploaded" value={report.documentsAttached} />
           </ul>
           {/*
             Shown, not hidden. A summary whose parts do not add up is the
@@ -459,12 +563,13 @@ export function AutofillPanel({
             the popup says so rather than letting the user work it out.
           */}
           {summary.total !== summary.detected ? (
-            <p className="result result--bad" role="alert">
+            <p className="callout callout--bad" role="alert">
               This summary does not add up: {summary.total} field results against {summary.detected}{' '}
               detected. Export the run trace from Settings → Diagnostics.
             </p>
           ) : null}
-          <p className="autofill__never-submits">
+          <p className="autofill__never-submits agent__pledge">
+            <Icon name="shield" size={12} aria-hidden="true" />
             The final Submit button was never clicked. Review the application and submit it
             yourself.
           </p>
@@ -483,7 +588,7 @@ export function AutofillPanel({
 
       <button
         type="button"
-        className="primary"
+        className="primary btn--lg btn--block"
         disabled={!eligible || active || !fillable}
         onClick={() => void state.run()}
       >

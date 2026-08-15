@@ -1,7 +1,13 @@
+/*
+ * The deterministic fill-plan preview — a developer surface, held to the same
+ * palette as everything else. It carried its own light-mode colours, which the
+ * token set turned into white cards on a near-black page.
+ */
+
 body {
   margin: 0;
-  background: #f5f7fb;
-  color: #172033;
+  background: var(--surface-base);
+  color: var(--text-primary);
 }
 
 .fill-shell {
@@ -23,11 +29,11 @@ body {
 }
 
 .eyebrow {
-  color: #4b5fc7;
-  font-weight: 700;
+  color: var(--accent-text);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 0.78rem;
+  letter-spacing: var(--tracking-wider);
+  font-size: var(--text-2xs);
 }
 
 .toolbar button,
@@ -47,17 +53,17 @@ body {
 .report,
 .progress,
 .empty {
-  background: white;
-  border: 1px solid #dbe1ed;
-  border-radius: 10px;
-  padding: 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
 }
 
 .summary span,
 dt {
   display: block;
-  color: #5d6678;
-  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
   text-transform: capitalize;
 }
 
@@ -78,7 +84,7 @@ dt {
 }
 
 .plan-card--sensitive {
-  border-left: 5px solid #b56b00;
+  border-left: 2px solid var(--sensitive);
 }
 
 .plan-card h3,
@@ -114,20 +120,20 @@ dt {
 }
 
 .warnings {
-  color: #8a4e00;
+  color: var(--warning-text);
 }
 
 footer {
-  margin-top: 24px;
-  color: #5d6678;
+  margin-top: var(--space-8);
+  color: var(--text-muted);
 }
 
 .ai-warning {
   margin: 1rem 0;
   padding: 0.9rem 1rem;
-  border: 1px solid #b98900;
-  border-radius: 0.6rem;
-  background: #fff8d6;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-md);
+  background: var(--warning-subtle);
 }
 
 .answer-review {
@@ -146,9 +152,9 @@ footer {
 .answer-card {
   margin: 1rem 0;
   padding: 1rem;
-  border: 1px solid #a9b8cf;
-  border-radius: 0.75rem;
-  background: #f8fbff;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
 }
 
 .answer-card textarea {
